@@ -7,8 +7,7 @@ export { createHud } from './hud.js';
 export { createPortrait, CHARACTERS } from './portrait.js';
 
 export async function create(ctx) {
-  const { camera, input, size, scene } = ctx;
-  scene.background = new THREE.Color(0x03060f);
+  const { camera, input } = ctx;
   const backdrop = createBackdrop(ctx);
   const hud = createHud(ctx);
 
@@ -20,7 +19,7 @@ export async function create(ctx) {
     if (c > 6 && c < 8.2) buttons.push('boost');
     if (c > 11 && c < 12.4) buttons.push('brake');
     if (c > 14.5 && c < 15.3) buttons.push('rollR');
-    if (Math.floor(t * 4) % 3 === 0) buttons.push('fire');
+    if (Math.floor(t * 4) % 3 === 0 && c > 2.5) buttons.push('fire');
     return { x, y, buttons };
   };
 
@@ -37,7 +36,7 @@ export async function create(ctx) {
     [8.6, () => { hud.damage(0.22); }],
     [9.3, () => { hud.damage(0.18); hud.say('Slippy', "Fox! Get this guy off me!", { mood: 'alarm' }); }],
     [10.2, () => hud.setLockTarget(2)],
-    [11.6, () => hud.damage(0.3)],
+    [11.6, () => hud.damage(0.34)],
     [12.4, () => hud.addHit(3)],
     [13.0, () => hud.setLockTarget(null)],
     [13.4, () => hud.say('Peppy', 'Do a barrel roll!', { mood: 'happy', speed: 0.05 })],
