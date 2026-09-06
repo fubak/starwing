@@ -63,8 +63,10 @@ export function createStage(ctx, audio) {
   const D = (o) => (disposables.push(o), o);
 
   scene.fog = null;
-  bloom.strength = 0.6; bloom.radius = 0.5; bloom.threshold = 0.72;
-  renderer.toneMappingExposure = 1.0;
+  // bloom is a garnish here, not the lighting model: tight radius, high threshold, and every emissive below is capped
+  // so a tutti + explosion can never fuse ship, blades and ring into one white smear
+  bloom.strength = 0.42; bloom.radius = 0.32; bloom.threshold = 0.86;
+  renderer.toneMappingExposure = 0.95;
 
   // ---------------------------------------------------------------- look: grade pass from lookdev
   const preset = resolvePreset(THREE, 'space');
@@ -135,8 +137,8 @@ export function createStage(ctx, audio) {
   group.add(sky);
 
   // planet Corneria (lookdev's shaded planet: crisp continents, clouds, city lights, limb scattering)
-  const planet = makePlanet({ radius: 150, seed: 7, preset });
-  planet.position.set(0.25, -0.34, -1.0).normalize().multiplyScalar(345);
+  const planet = makePlanet({ radius: 150, seed: 7, preset, renderer });
+  planet.position.set(0.25, -0.30, -1.0).normalize().multiplyScalar(385);
   planet.rotation.set(0.35, 0.6, -0.3); planet.name = 'planet';
   planet.lightDir = SUN_D.clone();
   planet.setPreset(preset);
@@ -206,13 +208,13 @@ export function createStage(ctx, audio) {
         // spectrum footlight under the blades
         float u = fract((ang/6.2831853)+0.5);
         vec4 sp = texture2D(uSpec, vec2(u,0.5));
-        float near = exp(-pow((r-uRing)/(0.7+sp.r*1.4),2.0));
-        col += mix(uColA, uColB, sp.g) * near * sp.r * 0.6;
+        float near = exp(-pow((r-uRing)/(0.6+sp.r*1.0),2.0));
+        col += mix(uColA, uColB, sp.g) * near * sp.r * 0.35;
         // hero pool: ship light falls on the deck
         vec3 toShip = uShip - vW; float dS = length(toShip);
-        col += uShipCol * (0.9/(1.0+dS*dS*0.35)) * max(0.0, toShip.y/dS) * (0.6+0.4*uBeat);
+        col += uShipCol * (0.55/(1.0+dS*dS*0.35)) * max(0.0, toShip.y/dS) * (0.6+0.4*uBeat);
         // beat shockwaves
-        for(int i=0;i<4;i++){ float age=uTime-uShock[i].x; if(age>0.0 && age<2.2){ float rr=age*9.0; float w=exp(-pow((r-rr)/0.35,2.0)); col += uShockCol[i]*w*uShock[i].y*(1.0-age/2.2)*0.9; } }
+        for(int i=0;i<4;i++){ float age=uTime-uShock[i].x; if(age>0.0 && age<2.2){ float rr=age*9.0; float w=exp(-pow((r-rr)/0.35,2.0)); col += uShockCol[i]*w*uShock[i].y*(1.0-age/2.2)*0.45; } }
         // specular: sun + ship key on bevelled hex normals, plus horizon fresnel picking up nebula
         vec3 H = normalize(V + uSun);
         float spec = pow(max(0.0,dot(N,H)), 180.0) * 1.2 + pow(max(0.0,dot(N,H)), 12.0)*0.06;
@@ -278,13 +280,14 @@ export function createStage(ctx, audio) {
         vec3 N = normalize(vN); vec3 V = normalize(vV);
         float ndv = abs(dot(N, V));
         float fres = pow(1.0 - ndv, 2.5);
-        float body = 0.10 + 0.55 * pow(vY, 1.5);              // energy rises toward the tip
-        float tip = pow(vY, 18.0) * 0.9;                        // hot cap
+        float body = 0.08 + 0.45 * pow(vY, 1.5);              // energy rises toward the tip
+        float tip = pow(vY, 22.0) * 0.55;                       // cap: coloured, not white-hot
         vec3 H = normalize(V + uSun);
-        float glint = pow(max(0.0, dot(N, H)), 90.0) * 0.6;
+        float glint = pow(max(0.0, dot(N, H)), 90.0) * 0.35;
         float scan = 0.9 + 0.1 * sin(vY * vH * 14.0 - uTime * 4.0);
-        vec3 col = vC * (body * scan + fres * 0.7) + mix(vC, vec3(1.0), 0.5) * tip + vec3(1.0, 0.95, 0.85) * glint;
-        gl_FragColor = vec4(col * uEm, 1.0);
+        vec3 col = vC * (body * scan + fres * 0.6) + mix(vC, vec3(1.0), 0.35) * tip + vec3(1.0, 0.95, 0.85) * glint;
+        col = min(col * uEm, vec3(1.05));                      // hard cap: blades never bloom into a wall
+        gl_FragColor = vec4(col, 1.0);
       }`,
   }));
   const barMat = makeBladeMat(1.0);
@@ -312,11 +315,12 @@ export function createStage(ctx, audio) {
   const waveGeo = new LineGeometry();
   const wavePos = new Float32Array((WN + 1) * 3), waveCol = new Float32Array((WN + 1) * 3);
   waveGeo.setPositions(wavePos); waveGeo.setColors(waveCol);
-  const waveMat = D(new LineMaterial({ vertexColors: true, linewidth: 2.2, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, worldUnits: false }));
+  const waveMat = D(new LineMaterial({ vertexColors: true, linewidth: 1.8, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false, worldUnits: false }));
   waveMat.resolution.set(ctx.size.x, ctx.size.y);
   const HERO_Y = 4.15;   // ship floats clear above the blade ring (max blade height ~2.1)
   const halo = new Line2(waveGeo, waveMat); halo.position.y = HERO_Y - 1.9; group.add(halo);
   const halo2 = new Line2(waveGeo, waveMat); halo2.position.y = HERO_Y - 1.9; halo2.rotation.z = Math.PI; halo2.scale.set(0.84, 0.84, 0.84); group.add(halo2);
+  const waveSmooth = new Float32Array(WN);
 
   // ---------------------------------------------------------------- hero: Arwing on a holo-pedestal
   const hero = new THREE.Group(); hero.position.y = HERO_Y; hero.name = 'hero'; group.add(hero);
@@ -366,8 +370,12 @@ export function createStage(ctx, audio) {
 
   // ---------------------------------------------------------------- lights
   const hemi = new THREE.HemisphereLight(0x3a4c8a, 0x0a0d1c, 0.7); group.add(hemi);
-  const key = new THREE.DirectionalLight(0xfff1d6, 2.2); key.position.copy(SUN_D).multiplyScalar(20).add(new THREE.Vector3(0, 6, 0)); group.add(key);
-  const fill = new THREE.DirectionalLight(0x9ec8ff, 0.9); fill.position.set(8, 6, 9); group.add(fill);
+  const key = new THREE.DirectionalLight(0xfff1d6, 2.6); key.position.copy(SUN_D).multiplyScalar(20).add(new THREE.Vector3(0, 6, 0)); group.add(key);
+  const fill = new THREE.DirectionalLight(0x9ec8ff, 0.7); fill.position.set(8, 6, 9); group.add(fill);
+  // planet bounce: cool-blue light from below/behind so the hull's belly and wing undersides are not black plates
+  const bounce = new THREE.DirectionalLight(0x5f8fe0, 0.9); bounce.position.set(3, -4, -8); group.add(bounce);
+  // warm rim from the sun side low, catches the wing edges and canopy frame (the Star Fox 'edge light')
+  const rim = new THREE.DirectionalLight(0xffb070, 1.1); rim.position.set(-9, 2, -4); group.add(rim);
 
   // ---------------------------------------------------------------- particles
   const PN = 900;
@@ -383,7 +391,7 @@ export function createStage(ctx, audio) {
     vertexShader: `attribute float aSize; attribute float aLife; varying vec3 vC; varying float vA; uniform float uPx;
       void main(){ vC=color; vA=smoothstep(0.0,0.15,aLife)*smoothstep(0.0,0.6,aLife); vec4 mv=modelViewMatrix*vec4(position,1.0);
         gl_PointSize = aSize*uPx*220.0/(-mv.z); gl_Position=projectionMatrix*mv; }`,
-    fragmentShader: `varying vec3 vC; varying float vA; void main(){ vec2 d=gl_PointCoord-0.5; float r=length(d)*2.0; float a=exp(-r*r*4.0)*(1.0-r); gl_FragColor=vec4(vC*a*vA*1.6, a*vA); }`,
+    fragmentShader: `varying vec3 vC; varying float vA; void main(){ vec2 d=gl_PointCoord-0.5; float r=length(d)*2.0; float a=exp(-r*r*4.0)*(1.0-r); gl_FragColor=vec4(vC*a*vA*1.0, a*vA); }`,
     vertexColors: true,
   }));
   const particles = new THREE.Points(pGeo, pMat); particles.name = 'particles'; group.add(particles);
@@ -410,8 +418,8 @@ export function createStage(ctx, audio) {
   // ---------------------------------------------------------------- laser bolts from the Arwing's cannons
   const boltGeo = D(new THREE.CapsuleGeometry(0.05, 1.5, 4, 8)); boltGeo.rotateX(Math.PI / 2);
   const boltCoreGeo = D(new THREE.CapsuleGeometry(0.02, 1.3, 3, 6)); boltCoreGeo.rotateX(Math.PI / 2);
-  const boltMat = D(new THREE.MeshBasicMaterial({ color: new THREE.Color(0.4, 2.5, 1.2) }));
-  const boltCoreMat = D(new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 4, 3.5) }));
+  const boltMat = D(new THREE.MeshBasicMaterial({ color: new THREE.Color(0.25, 1.3, 0.7) }));
+  const boltCoreMat = D(new THREE.MeshBasicMaterial({ color: new THREE.Color(1.2, 1.5, 1.3) }));
   const bolts = [];
   for (let i = 0; i < 12; i++) {
     const b = new THREE.Mesh(boltGeo, boltMat); b.add(new THREE.Mesh(boltCoreGeo, boltCoreMat)); b.visible = false; group.add(b);
@@ -419,7 +427,7 @@ export function createStage(ctx, audio) {
   }
   const fwd = new THREE.Vector3();
   function fireBolts(charged) {
-    boltMat.color.setRGB(...(charged ? [0.9, 2.6, 0.5] : [0.4, 2.5, 1.2]));
+    boltMat.color.setRGB(...(charged ? [0.7, 1.4, 0.3] : [0.25, 1.3, 0.7]));
     ship.rig.getWorldDirection(fwd); fwd.multiplyScalar(-1);   // nose is -Z
     for (let k = 0; k < 2; k++) {
       const b = bolts.find((x) => !x.m.visible) ?? bolts[0];
@@ -457,8 +465,8 @@ export function createStage(ctx, audio) {
       const songHue = hueOf(palSong);
       if (kind === 'timpani') { punch.kick(2.2 * strength); bob.kick(-0.9 * strength); camZ.kick(0.5 * strength); if (strength > 0.9) shock(0.35 * strength, palSong); burst(6, 3, songHue, 0.6, 0.5, 0.14); }
       else if (kind === 'snare') { punch.kick(0.8 * strength); }
-      else if (kind === 'crash') { burst(90, 4, songHue + 0.04, 1.2); flash = Math.max(flash, 0.4); shock(0.9, palSong); }
-      else if (kind === 'boom') { burst(Math.floor(60 * strength + 30), 5 + 4 * strength, 0.06, 1.3); flash = Math.max(flash, 0.6 * strength); camZ.kick(2.5 * strength); camRoll.kick((Math.random() - 0.5) * 0.5 * strength); shock(Math.min(1.5, strength), C_BOOM); punch.kick(3 * strength); bob.kick(1.2 * strength); }
+      else if (kind === 'crash') { burst(70, 4, songHue + 0.04, 1.2); flash = Math.max(flash, 0.22); shock(0.7, palSong); }
+      else if (kind === 'boom') { burst(Math.floor(50 * strength + 24), 5 + 4 * strength, 0.06, 1.3); flash = Math.max(flash, 0.35 * strength); camZ.kick(2.5 * strength); camRoll.kick((Math.random() - 0.5) * 0.5 * strength); shock(Math.min(1.2, strength), C_BOOM); punch.kick(3 * strength); bob.kick(1.2 * strength); }
       else if (kind === 'laser') { fireBolts(strength > 0.9); bob.kick(-0.25); }
       else if (kind === 'boost') { camFov.kick(50 * strength); thrustBoost = 1; burst(40, 9, 0.08, 0.25, HERO_Y - 0.3, 0.16, 0, 2.2); }
       else if (kind === 'roll') { barrel.going = true; camRoll.kick(1.2); burst(30, 5, 0.38, 1.6, HERO_Y, 0.12); }
@@ -518,35 +526,51 @@ export function createStage(ctx, audio) {
     autoGain = 1 / peakTrack;
     // broadband bursts (explosions) flatten the spectrum: read them as a mid-height carpet, not a wall
     const flat = THREE.MathUtils.smoothstep(mean / Math.max(1e-3, mx), 0.45, 0.85);
-    const flatScale = 1 - 0.55 * flat;
+    const flatScale = 1 - 0.65 * flat;
+    // frame-rate independent attack/release (fast up, slow down) so shape survives slow frames
+    const kUp = 1 - Math.exp(-dt * 28), kDn = 1 - Math.exp(-dt * 7);
     for (let i = 0; i < BINS; i++) {
-      const local = (spec[Math.max(0, i - 3)] + spec[i] + spec[Math.min(BINS - 1, i + 3)]) / 3;
-      const target = Math.pow(Math.min(1, Math.max(0, spec[i] - 0.3 * local) * autoGain * 1.4), 0.85) * flatScale;
-      barLevel[i] += (target - barLevel[i]) * (target > barLevel[i] ? 0.6 : 0.18);
+      // local-contrast: subtract a wide neighbourhood mean so a dense tutti still shows the peaks as peaks
+      let nb = 0; for (let k = -5; k <= 5; k++) nb += spec[Math.max(0, Math.min(BINS - 1, i + k))]; nb /= 11;
+      const contrast = Math.max(0, spec[i] - 0.5 * nb);
+      let target = Math.min(1, contrast * autoGain * 1.6);
+      // broadband burst: break the flat carpet into a textured skyline (deterministic per-bin comb) rather than a wall
+      target = Math.pow(target, 1.15) * flatScale * (1 - flat * 0.6 * (((i * 7 + 3) % 5) / 4));
+      // silence the very top octave a little: the FFT there is mostly cymbal wash / reverb tail
+      target *= 1 - 0.25 * THREE.MathUtils.smoothstep(i / BINS, 0.8, 1.0);
+      barLevel[i] += (target - barLevel[i]) * (target > barLevel[i] ? kUp : kDn);
       const lvl = barLevel[i];
       barPeak[i] = Math.max(lvl, barPeak[i] - dt * 0.9);
       const a = (i / BINS) * Math.PI * 2 - Math.PI;
-      const h = 0.1 + lvl * 2.0;
+      const h = 0.08 + lvl * 2.0;
       tmpP.set(Math.cos(a) * RING_R, 0, Math.sin(a) * RING_R);
       tmpQ.setFromAxisAngle(Y_AXIS, -a);
       tmpS.set(1, h, 1);
       tmpM.compose(tmpP, tmpQ, tmpS); bars.setMatrixAt(i, tmpM);
       const k = i / BINS;
       const mixK = THREE.MathUtils.smoothstep(k, 0.28, 0.42);   // bass = accent, treble = song hue (RGB blend, no lime pass-through)
-      tmpC.copy(accentCol).lerp(songCol, mixK).multiplyScalar(0.3 + lvl * 0.6 + beatPulse * 0.08 + (barPeak[i] - lvl) * 0.3);
+      tmpC.copy(accentCol).lerp(songCol, mixK).multiplyScalar(0.28 + lvl * 0.5 + beatPulse * 0.06 + (barPeak[i] - lvl) * 0.25);
       bars.setColorAt(i, tmpC);
       data[i * 4] = Math.min(255, lvl * 230); data[i * 4 + 1] = mixK * 255; data[i * 4 + 2] = 0; data[i * 4 + 3] = 255;
     }
     bars.instanceMatrix.needsUpdate = true; bars.instanceColor.needsUpdate = true; specTex.needsUpdate = true;
 
     // waveform halo
+    // waveform halo: circular oscilloscope. Circularly box-smoothed and temporally eased so it reads as a
+    // breathing ring with a clean wave riding on it, never a scribble.
     const wave = audio.synth.wave; const R = 4.6 * punch.s;
+    const kW = 1 - Math.exp(-dt * 14);
+    for (let i = 0; i < WN; i++) {
+      let acc = 0; for (let k = -4; k <= 4; k++) acc += wave[(i + k + WN) % WN]; acc /= 9;
+      const target = Math.max(-1, Math.min(1, acc * 0.5));
+      waveSmooth[i] += (target - waveSmooth[i]) * kW;
+    }
     for (let i = 0; i <= WN; i++) {
       const kk = i % WN; const a = (i / WN) * Math.PI * 2;
-      const w = Math.max(-1, Math.min(1, wave[kk] * 0.6));
-      const r = R + w * 0.5 + Math.sin(a * 3 + t * 0.7) * 0.05;
-      wavePos[i * 3] = Math.cos(a) * r; wavePos[i * 3 + 1] = w * 0.35 + Math.sin(a * 2 + t) * 0.08; wavePos[i * 3 + 2] = Math.sin(a) * r;
-      tmpC.copy(palSong).lerp(WHITE, Math.abs(w) * 0.5).multiplyScalar(0.35 + Math.abs(w) * 0.55 + energy * 0.2);
+      const w = waveSmooth[kk];
+      const r = R + w * 0.32 + Math.sin(a * 3 + t * 0.7) * 0.04;
+      wavePos[i * 3] = Math.cos(a) * r; wavePos[i * 3 + 1] = w * 0.22 + Math.sin(a * 2 + t) * 0.06; wavePos[i * 3 + 2] = Math.sin(a) * r;
+      tmpC.copy(palSong).lerp(WHITE, Math.abs(w) * 0.35).multiplyScalar(0.3 + Math.abs(w) * 0.45 + energy * 0.15);
       waveCol[i * 3] = tmpC.r; waveCol[i * 3 + 1] = tmpC.g; waveCol[i * 3 + 2] = tmpC.b;
     }
     waveGeo.setPositions(wavePos); waveGeo.setColors(waveCol);
@@ -567,16 +591,16 @@ export function createStage(ctx, audio) {
     for (let i = 0; i < gyro.length; i++) gyro[i].scale.setScalar(punch.s * (1 + bass * 0.05));
     gyro[0].rotation.z += dt * (0.35 + bass * 1.2); gyro[1].rotation.z -= dt * (0.25 + energy * 0.8);
     tmpC.copy(palSong).lerp(WHITE, 0.15);
-    beacon.color.copy(tmpC); beacon.intensity = 8 + bass * 16 + flash * 22; beacon.position.set(0, hero.position.y - 1.5, 0);
-    ringMat.emissive.copy(tmpC).multiplyScalar(0.3 + bass * 0.4);
-    stripMat.color.copy(tmpC).multiplyScalar(0.9 + beatPulse * 1.1 + bass * 0.6);
+    beacon.color.copy(tmpC); beacon.intensity = 7 + bass * 9 + flash * 8; beacon.position.set(0, hero.position.y - 1.5, 0);
+    ringMat.emissive.copy(tmpC).multiplyScalar(0.25 + bass * 0.3);
+    stripMat.color.copy(tmpC).multiplyScalar(Math.min(1.1, 0.7 + beatPulse * 0.4 + bass * 0.3));
     underMat.uniforms.uCol.value.copy(tmpC); underMat.uniforms.uK.value = beatPulse + bass;
     pedMat.uniforms.uCol.value.copy(tmpC); pedMat.uniforms.uK.value = beatPulse * 0.5 + bass * 0.6 + (punch.s - 1) * 2; pedMat.uniforms.uTime.value = t;
     discMat.uniforms.uCol.value.copy(tmpC); discMat.uniforms.uK.value = beatPulse * 0.6 + bass * 0.6 + (punch.s - 1) * 2; discMat.uniforms.uTime.value = t;
     pedDisc.scale.setScalar(punch.s);
-    deckMat.uniforms.uShip.value.copy(hero.position); deckMat.uniforms.uShipCol.value.copy(tmpC).multiplyScalar(0.5 + bass * 0.6 + flash);
-    railMat.emissive.copy(tmpC).multiplyScalar(0.25 + beatPulse * 0.4);
-    grade.uniforms.uFlash.value = Math.min(0.35, flash * flash * 0.6); grade.uniforms.uTime.value = t; grade.uniforms.uAspect.value = ctx.size.x / ctx.size.y;
+    deckMat.uniforms.uShip.value.copy(hero.position); deckMat.uniforms.uShipCol.value.copy(tmpC).multiplyScalar(0.5 + bass * 0.5 + flash * 0.6);
+    railMat.emissive.copy(tmpC).multiplyScalar(0.2 + beatPulse * 0.3);
+    grade.uniforms.uFlash.value = Math.min(0.18, flash * flash * 0.35); grade.uniforms.uTime.value = t; grade.uniforms.uAspect.value = ctx.size.x / ctx.size.y;
     flash = Math.max(0, flash - dt * 2.2);
 
     // particles
@@ -604,11 +628,12 @@ export function createStage(ctx, audio) {
 
     // camera: slow orbit sweeping the planet-facing side + spring kicks (dolly, roll, fov)
     orbit = Math.PI / 2 + 0.08 + Math.sin(t * 0.11) * 0.7;
-    const rad = 13.4 - camZ.s * 0.3 - beatPulse * 0.06;
-    const camY = 4.9 + Math.sin(t * 0.31) * 0.45;
+    const rad = 13.6 - camZ.s * 0.3 - beatPulse * 0.06;
+    const camY = 5.1 + Math.sin(t * 0.31) * 0.4;
     camera.position.set(Math.cos(orbit) * rad, camY, Math.sin(orbit) * rad);
     camera.up.set(Math.sin(camRoll.s * 0.15), Math.cos(camRoll.s * 0.15), 0);
-    camera.lookAt(0, 2.75, 0);
+    // aim a little lower than before so the deck ring sits higher in frame, clear of the soundboard strip
+    camera.lookAt(0, 2.3, 0);
     camera.fov = 46 + camFov.s * 0.25; camera.updateProjectionMatrix();
   }
 

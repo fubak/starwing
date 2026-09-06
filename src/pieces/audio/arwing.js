@@ -13,7 +13,8 @@
 
 /** Loft a closed rounded-rectangle profile through a list of stations. */
 function loft(THREE, stations, segs = 24) {
-  const pos = [], nor = [], idx = [];
+  const pos = [], uv = [], idx = [];
+  const z0 = stations[0].z, z1 = stations[stations.length - 1].z;
   const ring = (s) => {
     const out = [];
     for (let i = 0; i < segs; i++) {
@@ -29,20 +30,44 @@ function loft(THREE, stations, segs = 24) {
     return out;
   };
   const rings = stations.map(ring);
-  for (let r = 0; r < rings.length; r++) for (let i = 0; i < segs; i++) pos.push(...rings[r][i]);
+  for (let r = 0; r < rings.length; r++) for (let i = 0; i < segs; i++) { pos.push(...rings[r][i]); uv.push(i / segs * 2.0, (stations[r].z - z0) / (z1 - z0) * 1.6); }
   for (let r = 0; r < rings.length - 1; r++) for (let i = 0; i < segs; i++) {
     const a = r * segs + i, b = r * segs + (i + 1) % segs, c = (r + 1) * segs + i, d = (r + 1) * segs + (i + 1) % segs;
     idx.push(a, c, b, b, c, d);
   }
   // caps
-  const capCenter = (r) => { const s = stations[r]; pos.push(0, s.y ?? 0, s.z); return pos.length / 3 - 1; };
+  const capCenter = (r) => { const s = stations[r]; pos.push(0, s.y ?? 0, s.z); uv.push(0.5, r ? 1.6 : 0); return pos.length / 3 - 1; };
   const c0 = capCenter(0), c1 = capCenter(stations.length - 1);
   for (let i = 0; i < segs; i++) { idx.push(c0, (i + 1) % segs, i); idx.push(c1, (stations.length - 1) * segs + i, (stations.length - 1) * segs + (i + 1) % segs); }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
   return g;
+}
+
+/** Procedural hull texture: off-white ceramic with faint panel lines, rivets and grime in the seams. Doubles as roughness map. */
+function makeHullTexture(THREE) {
+  const S = 512, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d');
+  g.fillStyle = '#d9dde3'; g.fillRect(0, 0, S, S);
+  // subtle mottling
+  for (let i = 0; i < 1800; i++) { g.fillStyle = `rgba(${170 + Math.random() * 50 | 0},${178 + Math.random() * 50 | 0},${195 + Math.random() * 40 | 0},0.07)`; const r = 8 + Math.random() * 40; g.fillRect(Math.random() * S, Math.random() * S, r, r * 0.35); }
+  // a few large, offset panel seams (not a grid): each seam is a dark hairline with a lighter highlight below it
+  const seam = (x0, y0, x1, y1) => {
+    g.strokeStyle = 'rgba(70,80,100,0.38)'; g.lineWidth = 1.6; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+    g.strokeStyle = 'rgba(255,255,255,0.22)'; g.lineWidth = 1; g.beginPath(); g.moveTo(x0, y0 + 2); g.lineTo(x1, y1 + 2); g.stroke();
+  };
+  for (let i = 0; i < 5; i++) { const y = (i + 0.5) * S / 5 + (Math.random() - 0.5) * 30; seam(0, y, S, y + (Math.random() - 0.5) * 10); }
+  for (let i = 0; i < 4; i++) { const x = (i + 0.5) * S / 4 + (Math.random() - 0.5) * 40, y0 = Math.random() * S * 0.5, len = S * (0.25 + Math.random() * 0.4); seam(x, y0, x + (Math.random() - 0.5) * 8, y0 + len); }
+  // small stencil marks + a handful of flush rivets along the seams
+  g.fillStyle = 'rgba(70,80,100,0.35)';
+  for (let i = 0; i < 120; i++) { g.beginPath(); g.arc(Math.random() * S, Math.random() * S, 1.2, 0, 6.283); g.fill(); }
+  g.fillStyle = 'rgba(50,70,120,0.28)';
+  for (let i = 0; i < 10; i++) g.fillRect(Math.random() * S, Math.random() * S, 6 + Math.random() * 30, 3);
+  const tex = new THREE.CanvasTexture(c); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(1, 1); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+  return tex;
 }
 
 /** Thin bevelled plate from a 2D outline (in the XZ plane, y = thickness). */
@@ -63,14 +88,23 @@ export function buildHeroArwing({ THREE }) {
   const D = (o) => (disposables.push(o), o);
 
   // ---- materials ------------------------------------------------------------------
-  const matHull = D(new THREE.MeshPhysicalMaterial({ color: 0xe6ecf3, metalness: 0.28, roughness: 0.32, clearcoat: 0.7, clearcoatRoughness: 0.18, envMapIntensity: 1.3 }));
-  const matBlue = D(new THREE.MeshPhysicalMaterial({ color: 0x2a5fe0, metalness: 0.35, roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.15, envMapIntensity: 1.3 }));
+  // Hull: painted ceramic-white with a clearcoat and a procedural panel-line / wear map so light has something to grab.
+  const hullMap = D(makeHullTexture(THREE));
+  const matHull = D(new THREE.MeshPhysicalMaterial({ color: 0xdfe7f0, map: hullMap, metalness: 0.22, roughness: 0.36, roughnessMap: hullMap, clearcoat: 0.85, clearcoatRoughness: 0.12, envMapIntensity: 1.6, sheen: 0.25, sheenColor: 0x9fc8ff, sheenRoughness: 0.6 }));
+  const matBlue = D(new THREE.MeshPhysicalMaterial({ color: 0x2456d8, metalness: 0.3, roughness: 0.28, clearcoat: 0.9, clearcoatRoughness: 0.1, envMapIntensity: 1.6 }));
   const matDark = D(new THREE.MeshStandardMaterial({ color: 0x232a3a, metalness: 0.7, roughness: 0.42 }));
   const matGun = D(new THREE.MeshStandardMaterial({ color: 0x8d97a8, metalness: 0.9, roughness: 0.3 }));
   const matGlass = D(new THREE.MeshPhysicalMaterial({ color: 0x0b2a5c, metalness: 0.1, roughness: 0.06, clearcoat: 1, clearcoatRoughness: 0.04, envMapIntensity: 2.2, transparent: true, opacity: 0.92, emissive: 0x06183a, emissiveIntensity: 0.6 }));
-  const matGlow = D(new THREE.MeshBasicMaterial({ color: new THREE.Color(0.9, 2.3, 3.0) }));          // G-diffuser / engine core (over 1 -> bloom)
-  const matGlowDim = D(new THREE.MeshBasicMaterial({ color: new THREE.Color(0.5, 1.4, 2.2) }));
-  const matRed = D(new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 0.4, 0.3) }));
+  // Emissives: a shaded glow (bright core, cooler saturated rim, capped at ~1.15) instead of a flat over-white blob.
+  const makeGlow = (core, rim, k = 1) => D(new THREE.ShaderMaterial({
+    uniforms: { uCore: { value: new THREE.Color(...core) }, uRim: { value: new THREE.Color(...rim) }, uK: { value: k } },
+    vertexShader: `varying vec3 vN; varying vec3 vV; void main(){ vec4 w=modelMatrix*vec4(position,1.0); vN=normalize(mat3(modelMatrix)*normal); vV=normalize(cameraPosition-w.xyz); gl_Position=projectionMatrix*viewMatrix*w; }`,
+    fragmentShader: `varying vec3 vN; varying vec3 vV; uniform vec3 uCore,uRim; uniform float uK;
+      void main(){ float f=pow(1.0-abs(dot(normalize(vN),normalize(vV))),1.6); vec3 c=mix(uCore,uRim,f)*uK; gl_FragColor=vec4(min(c,vec3(1.15)),1.0); }`,
+  }));
+  const matGlow = makeGlow([0.85, 1.0, 1.05], [0.2, 0.7, 1.1]);          // G-diffuser / engine core
+  const matGlowDim = makeGlow([0.4, 0.8, 1.0], [0.1, 0.4, 0.9]);
+  const matRed = makeGlow([1.1, 0.5, 0.4], [0.9, 0.15, 0.1]);
 
   // ---- fuselage: stubby wedge, wide shoulders, flat belly ---------------------------
   const body = D(loft(THREE, [
@@ -166,7 +200,7 @@ export function buildHeroArwing({ THREE }) {
     fragmentShader: `varying vec2 vUv; uniform float uK,uTime;
       void main(){ float y=vUv.y; float flick=0.85+0.15*sin(uTime*47.0+y*20.0);
         float a=pow(1.0-y,1.6)*(0.35+0.65*uK)*flick;
-        vec3 c=mix(vec3(0.4,1.6,2.6), vec3(1.4,1.8,2.2), pow(1.0-y,3.0));
+        vec3 c=mix(vec3(0.3,1.0,1.4), vec3(0.9,1.1,1.2), pow(1.0-y,3.0));
         gl_FragColor=vec4(c*a,a*0.8); }`,
   }));
   const plumeGeo = D(new THREE.CylinderGeometry(0.02, 0.3, 1.8, 20, 1, true));
@@ -174,7 +208,7 @@ export function buildHeroArwing({ THREE }) {
   const plume = new THREE.Mesh(plumeGeo, plumeMat); plume.position.set(0, 0, 2.0); plume.renderOrder = 10; rig.add(plume);
   const glowDiscMat = D(new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-    uniforms: { uK: { value: 0.5 }, uCol: { value: new THREE.Color(0.5, 1.6, 2.6) } },
+    uniforms: { uK: { value: 0.5 }, uCol: { value: new THREE.Color(0.35, 0.95, 1.3) } },
     vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `varying vec2 vUv; uniform float uK; uniform vec3 uCol; void main(){ float r=length(vUv-0.5)*2.0; float a=exp(-r*r*6.0)*(0.25+0.35*uK); gl_FragColor=vec4(uCol*a,a); }`,
   }));
@@ -198,8 +232,7 @@ export function buildHeroArwing({ THREE }) {
       for (let i = 0; i < 2; i++) flapPivots[i].rotation.z = (i ? -1 : 1) * (flapCur * 0.28 + Math.sin(t * 2.3 + i) * 0.015);
       plume.scale.set(1, 1, 0.5 + thrust * 1.3); plumeMat.uniforms.uK.value = thrust; plumeMat.uniforms.uTime.value = t;
       glowDiscMat.uniforms.uK.value = thrust;
-      const g = 0.7 + thrust * 0.6;
-      matGlow.color.setRGB(0.9 * g, 2.2 * g, 2.9 * g);
+      matGlow.uniforms.uK.value = 0.8 + thrust * 0.35;
       engDisc.scale.setScalar(0.8 + thrust * 0.6);
     },
     dispose() { for (const d of disposables) d.dispose?.(); },

@@ -56,8 +56,8 @@ export function createAudio(ctx, opts = {}) {
   if (real) {
     comp = ac.createDynamicsCompressor();
     comp.threshold.value = -14; comp.knee.value = 18; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.18;
-    analyser = ac.createAnalyser(); analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.72;
-    freqData = new Uint8Array(analyser.frequencyBinCount);
+    analyser = ac.createAnalyser(); analyser.fftSize = 4096; analyser.smoothingTimeConstant = 0.45; analyser.minDecibels = -100; analyser.maxDecibels = -10;
+    freqData = new Float32Array(analyser.frequencyBinCount);
     timeData = new Uint8Array(1024);
     comp.connect(analyser);
     analyser.connect(bus.master);
@@ -191,6 +191,9 @@ export function createAudio(ctx, opts = {}) {
   const binOf = (f) => Math.log(f / F_LO) / Math.log(F_HI / F_LO) * (BINS - 1);
   const spectrum = new Float32Array(BINS);
   const spectrumRaw = new Float32Array(BINS);
+  const liveFloor = new Float32Array(BINS).fill(-70);   // per-band adaptive noise floor (dB)
+  const liveCeil = new Float32Array(BINS).fill(-40);    // per-band adaptive ceiling (dB)
+  let liveLast = -1;
   const WAVE_N = 256;
   const wave = new Float32Array(WAVE_N);
   let energy = 0, bassEnergy = 0, hiEnergy = 0;
@@ -260,16 +263,40 @@ export function createAudio(ctx, opts = {}) {
     }
     // if real audio is available, blend in the analyser so what you hear == what you see
     if (real && ac.state === 'running') {
-      analyser.getByteFrequencyData(freqData);
+      // Live analysis in the dB domain: each log-spaced band averages the FFT bins it spans (so highs are not
+      // single noisy bins), gets a pink-noise tilt (+3 dB/oct) so a tutti does not read as a bass-heavy wall, then is
+      // normalised against a slowly-adapting per-band floor/ceiling window. Result: bass, mids and highs keep their
+      // own shape and the ring stays spiky even when everything is playing.
+      analyser.getFloatFrequencyData(freqData);
       analyser.getByteTimeDomainData(timeData);
-      const nyq = ac.sampleRate / 2;
+      const dtl = liveLast < 0 ? 1 / 60 : Math.min(0.5, Math.max(0, t - liveLast)); liveLast = t;
+      const nyq = ac.sampleRate / 2, N = freqData.length;
+      const ratio = Math.pow(F_HI / F_LO, 1 / (BINS - 1));
       for (let i = 0; i < BINS; i++) {
         const f = binFreq[i];
-        const idx = Math.min(freqData.length - 1, Math.round(f / nyq * freqData.length));
-        const v = freqData[idx] / 255;
-        spectrumRaw[i] = Math.max(spectrumRaw[i] * 0.5, v * v * 1.6);
+        const i0 = Math.max(0, Math.floor(f / Math.sqrt(ratio) / nyq * N)), i1 = Math.min(N - 1, Math.max(i0, Math.ceil(f * Math.sqrt(ratio) / nyq * N)));
+        let acc = 0, n = 0;
+        for (let k = i0; k <= i1; k++) { const d = freqData[k]; if (Number.isFinite(d)) { acc += Math.pow(10, d / 20); n++; } }
+        let db = n ? 20 * Math.log10(acc / n + 1e-9) : -120;
+        db += 3.0 * Math.log2(f / 200);            // pink tilt: flatten the natural 1/f slope of the mix
+        // adaptive window per band: floor rises slowly, ceiling decays slowly
+        const fl = liveFloor[i], ce = liveCeil[i];
+        liveFloor[i] = db < fl ? fl + (db - fl) * Math.min(1, dtl * 2.0) : fl + (db - fl) * Math.min(1, dtl * 0.05);
+        liveCeil[i] = db > ce ? ce + (db - ce) * Math.min(1, dtl * 6.0) : ce + (db - ce) * Math.min(1, dtl * 0.25);
+        if (liveCeil[i] < liveFloor[i] + 24) liveCeil[i] = liveFloor[i] + 24;       // never a zero-width window (-> wall)
+        const span = liveCeil[i] - liveFloor[i];
+        let v = (db - liveFloor[i] - span * 0.18) / (span * 0.82);
+        v = Math.max(0, Math.min(1, v));
+        v = v * v * (1.2 + 0.4 * v);                // concave curve: only real peaks reach the top
+        spectrumRaw[i] = Math.max(spectrumRaw[i] * 0.35, v * 1.3);
       }
-      for (let i = 0; i < WAVE_N; i++) wave[i] = wave[i] * 0.4 + (timeData[Math.floor(i / WAVE_N * timeData.length)] / 128 - 1) * 2.4;
+      // waveform: box-smoothed oscilloscope trace (raw 1024-sample slice would draw as scribbles)
+      const K = 9; let acc = 0;
+      for (let i = 0; i < WAVE_N; i++) {
+        acc = 0;
+        for (let k = -K; k <= K; k++) { const j = Math.floor(i / WAVE_N * timeData.length) + k; acc += timeData[Math.max(0, Math.min(timeData.length - 1, j))] / 128 - 1; }
+        wave[i] = wave[i] * 0.3 + (acc / (2 * K + 1)) * 1.6;
+      }
     }
     let en = 0, be = 0, he = 0;
     for (let i = 0; i < BINS; i++) {

@@ -7,6 +7,8 @@ export function createSoundboard(ctx, audio, onAction) {
   <style>
     .aud-root{position:absolute;inset:0;font-family:"Segoe UI",system-ui,sans-serif;color:#e8f4ff;pointer-events:none;--c:#3ee6ff}
     .aud-vig{position:absolute;inset:0;background:radial-gradient(ellipse at 50% 45%, rgba(0,0,0,0) 45%, rgba(2,4,12,.55) 100%)}
+    .aud-plinth{position:absolute;left:0;right:0;bottom:0;height:190px;background:linear-gradient(180deg,rgba(3,6,16,0) 0%,rgba(3,6,16,.55) 40%,rgba(3,6,16,.8) 100%)}
+    .aud-plinth::before{content:"";position:absolute;left:34px;right:34px;top:60px;height:1px;background:linear-gradient(90deg,transparent,var(--c),transparent);opacity:.35}
     .aud-tl{position:absolute;left:34px;top:26px}
     .aud-kicker{font-size:11px;letter-spacing:.42em;opacity:.7;font-weight:600}
     .aud-kicker b{color:var(--c);font-weight:700}
@@ -33,6 +35,8 @@ export function createSoundboard(ctx, audio, onAction) {
     .aud-board{position:absolute;left:34px;right:34px;bottom:28px;display:flex;gap:22px;align-items:flex-end;pointer-events:auto;justify-content:space-between}
     .aud-grp{display:flex;flex-direction:column;gap:8px}
     .aud-grp .h{font-size:10px;letter-spacing:.4em;opacity:.6;font-weight:700}
+    .aud-grp.sfx{flex-direction:row;align-items:stretch;gap:12px}
+    .aud-grp.sfx .h{writing-mode:vertical-rl;transform:rotate(180deg);text-align:center;border-left:2px solid var(--c);padding-left:6px;opacity:.75;color:var(--c);letter-spacing:.32em;font-size:9px;line-height:1}
     .aud-pads{display:grid;grid-template-columns:repeat(7,104px);gap:8px}
     .aud-music{display:flex;gap:8px}
     .aud-pad{--pc:#3ee6ff;position:relative;height:50px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:linear-gradient(180deg,rgba(20,32,64,.72),rgba(6,10,26,.82));backdrop-filter:blur(6px);
@@ -49,6 +53,7 @@ export function createSoundboard(ctx, audio, onAction) {
     @keyframes audlog{0%{opacity:0;transform:translateX(12px)}10%{opacity:1;transform:none}70%{opacity:1}100%{opacity:0}}
   </style>
   <div class="aud-vig"></div>
+  <div class="aud-plinth"></div>
   <div class="aud-tl">
     <div class="aud-kicker"><b>STARWING</b> &nbsp;//&nbsp; AUDIO LAB &nbsp;//&nbsp; PROCEDURAL SYNTH ENGINE</div>
     <div class="aud-title" id="aud-title">STANDBY</div>
@@ -65,7 +70,7 @@ export function createSoundboard(ctx, audio, onAction) {
   <div class="aud-log" id="aud-log"></div>
   <div class="aud-board">
     <div class="aud-grp"><div class="h">MUSIC</div><div class="aud-music" id="aud-music"></div></div>
-    <div class="aud-grp"><div class="h">SFX BANK</div><div class="aud-pads" id="aud-pads"></div></div>
+    <div class="aud-grp sfx"><div class="h">SFX BANK</div><div class="aud-pads" id="aud-pads"></div></div>
   </div>
   <div class="aud-hint">CLICK A PAD &nbsp;·&nbsp; SPACE LASER &nbsp;·&nbsp; B BOMB &nbsp;·&nbsp; SHIFT BOOST &nbsp;·&nbsp; CTRL BRAKE &nbsp;·&nbsp; Q/E ROLL &nbsp;·&nbsp; ENTER CONFIRM &nbsp;·&nbsp; 1/2 MUSIC &nbsp;·&nbsp; 0 STOP</div>`;
   ui.appendChild(root);
