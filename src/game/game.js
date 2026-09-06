@@ -32,6 +32,8 @@ export async function create(ctx) {
   const cine = await tryLoad('../pieces/cinematics/index.js');
   let audio = null;
   try { audio = audioMod?.createAudio ? audioMod.createAudio(ctx) : null; } catch (e) { console.warn('[game] audio disabled', e); }
+  // preload stage modules up front so stage switches are synchronous (no black frames in the fixed-step harness)
+  const mods = { rail: await tryLoad('./rail.js'), boss: await tryLoad('../pieces/boss/index.js'), space: await tryLoad('../pieces/spacesim/index.js'), onfoot: await tryLoad('../pieces/onfoot/index.js') };
   let hud = null; // created lazily per gameplay stage (it is a full-screen canvas; cinematics get their own overlay)
 
   const stats = { score: 0, hits: 0, shots: 0, landed: 0 };
@@ -99,7 +101,7 @@ export async function create(ctx) {
       return { update(dt, t) { d.update(dt, t); if (finished) game.next(); }, dispose() { d.dispose(); } };
     },
     async rail() {
-      const mod = await import('./rail.js');
+      const mod = mods.rail; if (!mod) return null;
       hud = hudMod?.createHud ? hudMod.createHud(ctx) : null; game.hud = hud;
       if (!hud) return null;
       overlay.raise();
@@ -107,7 +109,7 @@ export async function create(ctx) {
       return mod.createRail(ctx, game);
     },
     async boss() {
-      const mod = await tryLoad('../pieces/boss/index.js'); if (!mod?.create) return null;
+      const mod = mods.boss; if (!mod?.create) return null;
       audio?.playMusic?.('battle');
       const piece = await mod.create(ctx);
       overlay.raise();
@@ -125,7 +127,7 @@ export async function create(ctx) {
       };
     },
     async space() {
-      const mod = await tryLoad('../pieces/spacesim/index.js'); if (!mod?.create) return null;
+      const mod = mods.space; if (!mod?.create) return null;
       audio?.playMusic?.('battle');
       const piece = await mod.create(ctx);
       overlay.raise();
@@ -142,7 +144,7 @@ export async function create(ctx) {
       };
     },
     async onfoot() {
-      const mod = await tryLoad('../pieces/onfoot/index.js'); if (!mod?.create) return null;
+      const mod = mods.onfoot; if (!mod?.create) return null;
       audio?.playMusic?.('main');
       const piece = await mod.create(ctx);
       overlay.raise();

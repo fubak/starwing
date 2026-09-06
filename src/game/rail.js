@@ -12,7 +12,7 @@
  * authored relative to the origin, so they line up automatically.
  */
 import * as THREE from 'three';
-import { applyLook } from '../pieces/lookdev/index.js';
+import { applyLook, PRESETS } from '../pieces/lookdev/index.js';
 import { createWorld, SUN_DIR, FOG_DENSITY } from '../pieces/world/index.js';
 import { buildArwing } from '../pieces/ship/index.js';
 import { createEnemyManager } from '../pieces/enemies/index.js';
@@ -69,8 +69,7 @@ export async function createRail(ctx, game) {
   const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), tmp3 = new THREE.Vector3();
 
   // ---------- look: Corneria day, late-afternoon key over the left shoulder (same rig the world piece tunes for)
-  const lookdev = await import('../pieces/lookdev/index.js');
-  const base = lookdev.PRESETS.corneria;
+  const base = PRESETS.corneria;
   const look = applyLook(ctx, {
     ...base, name: 'corneria-mission',
     sun: { ...base.sun, dir: [SUN_DIR.x, SUN_DIR.y, SUN_DIR.z], color: 0xffd6a4, intensity: 3.9 },
