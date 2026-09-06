@@ -437,6 +437,8 @@ export function playIntro(ctx) { return getDirector(ctx).run(introSeq(director.s
 export function playComplete(ctx, stats) { return getDirector(ctx).run(completeSeq(director.stage, director.overlay, stats)); }
 /** Tear down the shared cinematic stage (call when leaving cinematics for gameplay). */
 export function disposeCinematics() { director?.dispose(); director = null; }
+/** The shared director (created on demand); the integrator drives `director.update(dt, t)` each frame. */
+export function getCinematics(ctx) { return getDirector(ctx); }
 
 export async function create(ctx) {
   director = new Director(ctx);
