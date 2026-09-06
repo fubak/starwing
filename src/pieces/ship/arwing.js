@@ -12,12 +12,91 @@ import * as THREE from 'three';
 // ---------------------------------------------------------------------------
 // Livery / panel-line textures (canvas)
 // ---------------------------------------------------------------------------
+// Deterministic rng so the colour map, roughness map and normal map all agree on
+// where every seam / hatch / rivet is.
+let _seed = 1337;
+const rnd = () => { _seed = (_seed * 1664525 + 1013904223) >>> 0; return _seed / 4294967296; };
+const reseed = (s) => { _seed = s >>> 0; };
+
 function grainDirt(g, W, H, n, a = 0.05) {
   for (let i = 0; i < n; i++) {
-    const x = Math.random() * W, y = Math.random() * H;
-    g.fillStyle = `rgba(${Math.random() < 0.5 ? '40,50,70' : '255,255,255'},${Math.random() * a})`;
-    g.fillRect(x, y, 2 + Math.random() * 30, 1 + Math.random() * 3);
+    const x = rnd() * W, y = rnd() * H;
+    g.fillStyle = `rgba(${rnd() < 0.5 ? '40,50,70' : '255,255,255'},${rnd() * a})`;
+    g.fillRect(x, y, 2 + rnd() * 30, 1 + rnd() * 3);
   }
+}
+
+/** Sobel a greyscale height canvas into a tangent-space normal map. */
+function normalFromHeight(hc, strength = 2.0) {
+  const W = hc.width, H = hc.height;
+  const src = hc.getContext('2d').getImageData(0, 0, W, H).data;
+  const out = document.createElement('canvas'); out.width = W; out.height = H;
+  const og = out.getContext('2d'); const img = og.createImageData(W, H); const d = img.data;
+  const h = (x, y) => src[(((y + H) % H) * W + ((x + W) % W)) * 4] / 255;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const dx = (h(x + 1, y - 1) + 2 * h(x + 1, y) + h(x + 1, y + 1)) - (h(x - 1, y - 1) + 2 * h(x - 1, y) + h(x - 1, y + 1));
+    const dy = (h(x - 1, y + 1) + 2 * h(x, y + 1) + h(x + 1, y + 1)) - (h(x - 1, y - 1) + 2 * h(x, y - 1) + h(x + 1, y - 1));
+    let nx = -dx * strength, ny = -dy * strength, nz = 1;
+    const l = Math.hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
+    const i = (y * W + x) * 4;
+    d[i] = (nx * 0.5 + 0.5) * 255; d[i + 1] = (ny * 0.5 + 0.5) * 255; d[i + 2] = (nz * 0.5 + 0.5) * 255; d[i + 3] = 255;
+  }
+  og.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(out);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.anisotropy = 8;
+  return tex;
+}
+
+// Shared hull panel layout (v rings nose->tail, u seams around).
+const HULL_RINGS = [0.14, 0.22, 0.33, 0.42, 0.53, 0.62, 0.72, 0.82, 0.905];
+const HULL_SEAMS = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1];
+function hullSeamSpans() { reseed(4242); return HULL_SEAMS.slice(1, -1).map(() => [0.16 + rnd() * 0.1, 0.9 - rnd() * 0.1]); }
+
+function grooveLine(g, x0, y0, x1, y1, w) {
+  g.lineCap = 'round';
+  g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = w * 2.2; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+  g.strokeStyle = 'rgba(0,0,0,0.8)'; g.lineWidth = w; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+}
+
+/** Height canvas for the hull: recessed panel grooves, hatches, vent louvres, rivets, plate offsets. */
+function hullHeightCanvas() {
+  const W = 1024, H = 1024;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#808080'; g.fillRect(0, 0, W, H);
+  reseed(99);
+  for (let i = 0; i < HULL_RINGS.length - 1; i++) for (let j = 0; j < HULL_SEAMS.length - 1; j++) {
+    const v = 120 + Math.floor(rnd() * 16);
+    g.fillStyle = `rgb(${v},${v},${v})`;
+    g.fillRect(W * HULL_SEAMS[j], H * HULL_RINGS[i], W * (HULL_SEAMS[j + 1] - HULL_SEAMS[j]), H * (HULL_RINGS[i + 1] - HULL_RINGS[i]));
+  }
+  for (const r of HULL_RINGS) grooveLine(g, 0, H * r, W, H * r, 5);
+  hullSeamSpans().forEach(([a, b], i) => { const s = HULL_SEAMS[i + 1]; grooveLine(g, W * s, H * a, W * s, H * b, 4); });
+  const hatch = (u, v, w, h, r = 6) => { g.strokeStyle = 'rgba(0,0,0,0.7)'; g.lineWidth = 3; g.beginPath(); g.roundRect(W * u - w / 2, H * v - h / 2, w, h, r); g.stroke(); };
+  hatch(0.25, 0.5, 60, 90); hatch(0.75, 0.5, 60, 90); hatch(0.5, 0.45, 80, 50);
+  hatch(0.27, 0.7, 40, 120); hatch(0.73, 0.7, 40, 120);
+  g.fillStyle = 'rgba(0,0,0,0.6)';
+  for (let i = 0; i < 6; i++) { g.fillRect(W * 0.3 - 30, H * (0.66 + i * 0.02), 60, 4); g.fillRect(W * 0.7 - 30, H * (0.66 + i * 0.02), 60, 4); }
+  g.fillStyle = 'rgba(255,255,255,0.55)';
+  for (const r of HULL_RINGS) for (let x = 12; x < W; x += 26) { g.beginPath(); g.arc(x, H * r + 12, 2.2, 0, 6.283); g.fill(); }
+  return c;
+}
+
+/** Height canvas for wings (planar uv tiles). */
+function wingHeightCanvas() {
+  const W = 512, H = 512;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#808080'; g.fillRect(0, 0, W, H);
+  reseed(7);
+  for (let i = 0; i < 24; i++) { const v = 122 + Math.floor(rnd() * 12); g.fillStyle = `rgb(${v},${v},${v})`; g.fillRect(W * (i % 6) / 6, H * Math.floor(i / 6) / 4, W / 6, H / 4); }
+  for (let i = 1; i < 6; i++) grooveLine(g, W * i / 6, 0, W * i / 6, H, 4);
+  for (let i = 1; i < 4; i++) grooveLine(g, 0, H * i / 4, W, H * i / 4, 4);
+  g.fillStyle = 'rgba(0,0,0,0.6)'; for (let i = 0; i < 5; i++) g.fillRect(W * 0.3, H * (0.4 + i * 0.03), 80, 4);
+  g.strokeStyle = 'rgba(0,0,0,0.7)'; g.lineWidth = 3; g.beginPath(); g.roundRect(W * 0.55, H * 0.55, 90, 60, 6); g.stroke();
+  g.fillStyle = 'rgba(255,255,255,0.5)';
+  for (let i = 1; i < 4; i++) for (let x = 10; x < W; x += 28) { g.beginPath(); g.arc(x, H * i / 4 + 10, 2, 0, 6.283); g.fill(); }
+  return c;
 }
 
 /** Fuselage: u (x) goes around the hull (0 = top-centre spine, .5 = belly), v (y) nose -> tail. */
@@ -25,7 +104,8 @@ function hullTexture() {
   const W = 1024, H = 1024;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d');
-  g.fillStyle = '#f2f4f8'; g.fillRect(0, 0, W, H);
+  reseed(2024);
+  g.fillStyle = '#eef0f3'; g.fillRect(0, 0, W, H);
   // grey belly (u .38..62)
   g.fillStyle = '#8c97a8'; g.fillRect(W * 0.40, 0, W * 0.20, H);
   g.fillStyle = '#7a8595'; g.fillRect(W * 0.40, H * 0.55, W * 0.20, H * 0.45);
@@ -43,22 +123,20 @@ function hullTexture() {
   g.fillStyle = '#d8342a';
   g.fillRect(0, H * 0.33, W, 7); g.fillRect(0, H * 0.905, W, 7);
   g.fillRect(W * 0.10, H * 0.28, W * 0.10, 8); g.fillRect(W * 0.80, H * 0.28, W * 0.10, 8);
-  grainDirt(g, W, H, 2600);
-  // per-panel tone variation
-  const rings = [0.14, 0.22, 0.33, 0.42, 0.53, 0.62, 0.72, 0.82, 0.905];
-  const seams = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1];
+  grainDirt(g, W, H, 2600, 0.04);
+  // per-panel tone variation (very subtle: the normal map does the panel work now)
+  const rings = HULL_RINGS, seams = HULL_SEAMS;
   for (let i = 0; i < rings.length - 1; i++) for (let j = 0; j < seams.length - 1; j++) {
-    const k = Math.random();
-    g.fillStyle = k < 0.3 ? 'rgba(160,178,205,0.16)' : k < 0.45 ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0)';
+    const k = rnd();
+    g.fillStyle = k < 0.3 ? 'rgba(160,178,205,0.08)' : k < 0.45 ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0)';
     g.fillRect(W * seams[j], H * rings[i], W * (seams[j + 1] - seams[j]), H * (rings[i + 1] - rings[i]));
   }
-  // panel lines
-  g.strokeStyle = 'rgba(24,30,46,0.9)'; g.lineWidth = 4;
+  // panel lines: thin, soft shadow lines (the groove itself is in the normal map)
+  g.strokeStyle = 'rgba(40,50,70,0.55)'; g.lineWidth = 2;
   for (const r of rings) { g.beginPath(); g.moveTo(0, H * r); g.lineTo(W, H * r); g.stroke(); }
-  for (const s of seams.slice(1, -1)) {
-    const y0 = H * (0.16 + Math.random() * 0.1), y1 = H * (0.9 - Math.random() * 0.1);
-    g.beginPath(); g.moveTo(W * s, y0); g.lineTo(W * s, y1); g.stroke();
-  }
+  hullSeamSpans().forEach(([a, b], i) => { const s = seams[i + 1]; g.beginPath(); g.moveTo(W * s, H * a); g.lineTo(W * s, H * b); g.stroke(); });
+  // grime shadow under each ring seam (weathering streaks trailing aft)
+  for (const r of rings) { const gr = g.createLinearGradient(0, H * r, 0, H * r + 22); gr.addColorStop(0, 'rgba(60,70,90,0.22)'); gr.addColorStop(1, 'rgba(60,70,90,0)'); g.fillStyle = gr; g.fillRect(0, H * r, W, 22); }
   // hatches / vents
   g.strokeStyle = 'rgba(30,38,55,0.6)'; g.lineWidth = 2;
   const hatch = (u, v, w, h, r = 6) => { g.beginPath(); g.roundRect(W * u - w / 2, H * v - h / 2, w, h, r); g.stroke(); };
@@ -81,14 +159,17 @@ function hullRoughnessTexture() {
   const W = 512, H = 512;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d');
-  g.fillStyle = '#5a5a5a'; g.fillRect(0, 0, W, H); // glossy base, panel lines + belly rougher
-  g.fillStyle = '#8a8a8a'; g.fillRect(W * 0.40, 0, W * 0.20, H);
+  reseed(555);
+  g.fillStyle = '#4a4a4a'; g.fillRect(0, 0, W, H); // glossy base, panel lines + belly rougher
+  g.fillStyle = '#7a7a7a'; g.fillRect(W * 0.40, 0, W * 0.20, H);
   for (let i = 0; i < 4000; i++) {
-    g.fillStyle = `rgba(${Math.random() < 0.5 ? 0 : 255},255,255,${Math.random() * 0.08})`;
-    g.fillRect(Math.random() * W, Math.random() * H, 1 + Math.random() * 40, 1 + Math.random() * 2);
+    g.fillStyle = `rgba(${rnd() < 0.5 ? 0 : 255},255,255,${rnd() * 0.08})`;
+    g.fillRect(rnd() * W, rnd() * H, 1 + rnd() * 40, 1 + rnd() * 2);
   }
   g.strokeStyle = 'rgba(255,255,255,0.9)'; g.lineWidth = 2;
-  for (const r of [0.14, 0.22, 0.33, 0.42, 0.53, 0.62, 0.72, 0.82, 0.905]) { g.beginPath(); g.moveTo(0, H * r); g.lineTo(W, H * r); g.stroke(); }
+  for (const r of HULL_RINGS) { g.beginPath(); g.moveTo(0, H * r); g.lineTo(W, H * r); g.stroke(); }
+  // grime under seams is rougher
+  for (const r of HULL_RINGS) { const gr = g.createLinearGradient(0, H * r, 0, H * r + 12); gr.addColorStop(0, 'rgba(255,255,255,0.5)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, H * r, W, 12); }
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = THREE.RepeatWrapping;
   return tex;
@@ -99,10 +180,11 @@ function wingTexture() {
   const W = 512, H = 512;
   const c = document.createElement('canvas'); c.width = W; c.height = H;
   const g = c.getContext('2d');
-  g.fillStyle = '#f2f4f8'; g.fillRect(0, 0, W, H);
-  grainDirt(g, W, H, 1200, 0.04);
-  for (let i = 0; i < 24; i++) { g.fillStyle = Math.random() < 0.45 ? 'rgba(160,178,205,0.14)' : Math.random() < 0.5 ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0)'; g.fillRect(W * (i % 6) / 6, H * Math.floor(i / 6) / 4, W / 6, H / 4); }
-  g.strokeStyle = 'rgba(24,30,46,0.8)'; g.lineWidth = 3;
+  reseed(31);
+  g.fillStyle = '#eef0f3'; g.fillRect(0, 0, W, H);
+  grainDirt(g, W, H, 1200, 0.035);
+  for (let i = 0; i < 24; i++) { g.fillStyle = rnd() < 0.45 ? 'rgba(160,178,205,0.07)' : rnd() < 0.5 ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0)'; g.fillRect(W * (i % 6) / 6, H * Math.floor(i / 6) / 4, W / 6, H / 4); }
+  g.strokeStyle = 'rgba(40,50,70,0.5)'; g.lineWidth = 2;
   for (let i = 1; i < 6; i++) { g.beginPath(); g.moveTo(W * i / 6, 0); g.lineTo(W * i / 6, H); g.stroke(); }
   for (let i = 1; i < 4; i++) { g.beginPath(); g.moveTo(0, H * i / 4); g.lineTo(W, H * i / 4); g.stroke(); }
   g.fillStyle = 'rgba(30,38,55,0.5)'; for (let i = 0; i < 5; i++) g.fillRect(W * 0.3, H * (0.4 + i * 0.03), 80, 3);
@@ -200,7 +282,7 @@ function wingRing(x, y, le, te, t, ridge = 0.35, camber = 0) {
 function wingGeo(stations, s = 1) {
   const rings = stations.map((st) => wingRing(st.x * s, st.y, st.le, st.te, st.t, st.ridge ?? 0.35, st.camber ?? 0));
   const g = facetLoft(rings);
-  planarUV(g, 0.3, 'xz');
+  planarUV(g, 0.21, 'xz');
   return g;
 }
 
@@ -229,13 +311,16 @@ function poly(pts, s) { const p = pts.map(([x, z]) => [x * s, z]); return s < 0 
 // ---------------------------------------------------------------------------
 // Shaders
 // ---------------------------------------------------------------------------
-const canopyMaterial = () => new THREE.MeshPhysicalMaterial({
-  color: 0x05122c, metalness: 0.0, roughness: 0.06, transparent: true, opacity: 0.8,
-  clearcoat: 1, clearcoatRoughness: 0.03, envMapIntensity: 2.2, ior: 1.5,
-  specularIntensity: 1, side: THREE.FrontSide,
-  emissive: 0x0a2a55, emissiveIntensity: 0.3,
+// Canopy glass: a tinted, near-black dielectric with a razor clear-coat. The studio
+// env map supplies the reflections; the fresnel patch below drives both the rim
+// colour and the opacity (glancing = mirror, head-on = see the pilot).
+const canopyMaterial = (envMap) => new THREE.MeshPhysicalMaterial({
+  color: 0x030812, metalness: 0.0, roughness: 0.04, transparent: true, opacity: 0.42,
+  clearcoat: 1, clearcoatRoughness: 0.02, envMap, envMapIntensity: 2.6, ior: 1.52,
+  specularIntensity: 1.2, specularColor: 0xcfe2ff, side: THREE.FrontSide,
+  emissive: 0x0b2a60, emissiveIntensity: 0.12,
 });
-// Fresnel rim on the canopy: brighten edges toward a cool reflective blue.
+// Fresnel rim: brighten grazing edges toward a cool reflective blue and (for glass) raise alpha.
 function patchFresnel(mat, col = [0.55, 0.75, 1.0], gain = 0.9, alpha = 0.6, pow = 3.0) {
   mat.onBeforeCompile = (sh) => {
     sh.fragmentShader = sh.fragmentShader.replace(
@@ -250,6 +335,25 @@ function patchFresnel(mat, col = [0.55, 0.75, 1.0], gain = 0.9, alpha = 0.6, pow
     );
   };
 }
+
+// Engine core disc: hot white/yellow centre -> saturated halo -> dark rim. Replaces
+// the old flat MeshBasic discs that blew out to pure white under bloom.
+const coreFrag = /* glsl */`
+  uniform float uTime; uniform float uThrust; uniform vec3 uHot; uniform vec3 uMid; uniform vec3 uEdge;
+  varying vec2 vUv; varying vec3 vN; varying vec3 vV;
+  float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+  float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+    return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
+  void main(){
+    vec2 p = vUv - 0.5; float d = length(p) * 2.0; float ang = atan(p.y, p.x);
+    float flick = 0.9 + 0.1 * noise(vec2(ang * 2.0, uTime * 6.0)) + 0.06 * sin(uTime * 41.0);
+    float core = exp(-d * d * 14.0) * (0.5 + 0.7 * uThrust);
+    float mid = smoothstep(1.0, 0.2, d);
+    float ring = smoothstep(0.07, 0.0, abs(d - 0.8)) * 0.18;      // thin bright annulus at the nozzle wall
+    vec3 c = uEdge * 0.4 + uMid * mid * (0.55 + 0.45 * uThrust) + uHot * core * 1.25 + uHot * ring;
+    c *= flick;
+    gl_FragColor = vec4(c, 1.0);
+  }`;
 
 const glowVert = /* glsl */`
   varying vec2 vUv; varying vec3 vN; varying vec3 vV;
@@ -302,47 +406,63 @@ const stripFrag = /* glsl */`
     gl_FragColor = vec4(c, 1.0);
   }`;
 
-// Sprite glow disc (billboard) — soft radial falloff.
+// Sprite glow disc (billboard) — hot core -> coloured halo, additive.
 const discFrag = /* glsl */`
-  uniform vec3 uCol; uniform float uIntensity; varying vec2 vUv;
-  void main(){ float d = length(vUv - 0.5) * 2.0; float a = pow(max(0.0, 1.0 - d), 2.6);
-    gl_FragColor = vec4(uCol * a * uIntensity, a * 0.9); }`;
+  uniform vec3 uCol; uniform vec3 uHot; uniform float uIntensity; varying vec2 vUv;
+  void main(){ float d = length(vUv - 0.5) * 2.0;
+    float halo = pow(max(0.0, 1.0 - d), 2.8);
+    float core = exp(-d * d * 30.0);
+    vec3 c = uCol * halo + uHot * core * 0.9;
+    gl_FragColor = vec4(c * uIntensity, (halo + core) * 0.9); }`;
 const discVert = /* glsl */`varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`;
 
 // ---------------------------------------------------------------------------
 // Build
 // ---------------------------------------------------------------------------
+/**
+ * buildArwing({ envMap }) — `envMap` (PMREM texture) is the reflection environment
+ * for the painted-metal materials. Pass one from makeStudioEnv() (or any bright
+ * PMREM); if omitted, materials fall back to scene.environment.
+ */
 export function buildArwing(opts = {}) {
   const group = new THREE.Group();
   group.name = 'arwing';
   const rig = new THREE.Group(); // idle hover / bank layer
   group.add(rig);
+  const envMap = opts.envMap ?? null;
 
   const hullTex = hullTexture();
   const roughTex = hullRoughnessTexture();
   const wingTex = wingTexture();
+  const hullNrm = normalFromHeight(hullHeightCanvas(), 2.2);
+  const wingNrm = normalFromHeight(wingHeightCanvas(), 2.2);
 
-  // Glossy clear-coated painted metal: real spec + env reflections + a cool rim so
-  // facet edges catch light. (Same material language as lookdev's hero chart.)
-  const matHull = new THREE.MeshPhysicalMaterial({ map: hullTex, roughnessMap: roughTex, color: 0xffffff, metalness: 0.08, roughness: 0.42, clearcoat: 1.0, clearcoatRoughness: 0.3, envMapIntensity: 1.4, specularIntensity: 0.8 });
-  const matWing = new THREE.MeshPhysicalMaterial({ map: wingTex, color: 0xffffff, metalness: 0.08, roughness: 0.36, clearcoat: 1.0, clearcoatRoughness: 0.3, envMapIntensity: 1.4, specularIntensity: 0.8 });
-  patchFresnel(matHull, [0.45, 0.62, 1.0], 0.22, 0, 4.0);
-  patchFresnel(matWing, [0.45, 0.62, 1.0], 0.22, 0, 4.0);
-  const matBlue = new THREE.MeshPhysicalMaterial({ color: 0x1a4ee0, metalness: 0.5, roughness: 0.32, clearcoat: 1.0, clearcoatRoughness: 0.28, envMapIntensity: 1.3 });
-  const matBlueDeep = new THREE.MeshPhysicalMaterial({ color: 0x0f2e9a, metalness: 0.55, roughness: 0.34, clearcoat: 0.8, clearcoatRoughness: 0.3, envMapIntensity: 1.2 });
-  const matGrey = new THREE.MeshStandardMaterial({ color: 0x8e99ab, metalness: 0.75, roughness: 0.32, envMapIntensity: 1.2 });
-  const matDark = new THREE.MeshStandardMaterial({ color: 0x1e242e, metalness: 0.8, roughness: 0.38, envMapIntensity: 1.0 });
-  const matRed = new THREE.MeshPhysicalMaterial({ color: 0xd8342a, metalness: 0.3, roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.15 });
-  const matCanopy = canopyMaterial(); patchFresnel(matCanopy);
+  // Painted metal under a clear-coat: low-ish base roughness so the key light forms
+  // a real highlight, panel grooves in the normal map so seams catch specular, and
+  // the studio env map for broad reflections across the white panels.
+  const matHull = new THREE.MeshPhysicalMaterial({ map: hullTex, roughnessMap: roughTex, normalMap: hullNrm, normalScale: new THREE.Vector2(0.8, 0.8), color: 0xffffff, metalness: 0.2, roughness: 0.55, clearcoat: 1.0, clearcoatRoughness: 0.24, envMap, envMapIntensity: 0.75, specularIntensity: 0.8 });
+  const matWing = new THREE.MeshPhysicalMaterial({ map: wingTex, normalMap: wingNrm, normalScale: new THREE.Vector2(0.8, 0.8), color: 0xffffff, metalness: 0.2, roughness: 0.4, clearcoat: 1.0, clearcoatRoughness: 0.24, envMap, envMapIntensity: 0.75, specularIntensity: 0.8 });
+  patchFresnel(matHull, [0.45, 0.62, 1.0], 0.16, 0, 4.0);
+  patchFresnel(matWing, [0.45, 0.62, 1.0], 0.16, 0, 4.0);
+  const matBlue = new THREE.MeshPhysicalMaterial({ color: 0x1d4fe6, normalMap: wingNrm, normalScale: new THREE.Vector2(0.3, 0.3), metalness: 0.35, roughness: 0.3, clearcoat: 1.0, clearcoatRoughness: 0.18, envMap, envMapIntensity: 1.1, specularIntensity: 1.0 });
+  const matBlueDeep = new THREE.MeshPhysicalMaterial({ color: 0x1236b8, normalMap: wingNrm, normalScale: new THREE.Vector2(0.3, 0.3), metalness: 0.4, roughness: 0.3, clearcoat: 1.0, clearcoatRoughness: 0.18, envMap, envMapIntensity: 1.1, specularIntensity: 1.0 });
+  const matGrey = new THREE.MeshStandardMaterial({ color: 0x8e99ab, metalness: 0.85, roughness: 0.28, envMap, envMapIntensity: 1.1 });
+  const matDark = new THREE.MeshStandardMaterial({ color: 0x1e242e, metalness: 0.85, roughness: 0.34, envMap, envMapIntensity: 1.0 });
+  const matRed = new THREE.MeshPhysicalMaterial({ color: 0xe0362a, metalness: 0.3, roughness: 0.28, clearcoat: 1.0, clearcoatRoughness: 0.1, envMap, envMapIntensity: 1.0 });
+  const matCanopy = canopyMaterial(envMap); patchFresnel(matCanopy, [0.6, 0.8, 1.1], 1.1, 0.58, 2.6);
 
   const uTime = { value: 0 }, uThrust = { value: 0.5 };
   const ringMat = (col, hot) => new THREE.ShaderMaterial({ vertexShader: glowVert, fragmentShader: ringFrag, uniforms: { uTime, uThrust, uCol: { value: new THREE.Color(...col) }, uHot: { value: new THREE.Color(...hot) } } });
   const stripMat = (col, hot) => new THREE.ShaderMaterial({ vertexShader: glowVert, fragmentShader: stripFrag, side: THREE.DoubleSide, uniforms: { uTime, uThrust, uCol: { value: new THREE.Color(...col) }, uHot: { value: new THREE.Color(...hot) } } });
-  const discMat = (col, intensity) => new THREE.ShaderMaterial({
+  const coreMat = (hot, mid, edge) => new THREE.ShaderMaterial({ vertexShader: glowVert, fragmentShader: coreFrag, uniforms: { uTime, uThrust, uHot: { value: new THREE.Color(...hot) }, uMid: { value: new THREE.Color(...mid) }, uEdge: { value: new THREE.Color(...edge) } } });
+  const discMat = (col, hot, intensity) => new THREE.ShaderMaterial({
     vertexShader: discVert, fragmentShader: discFrag, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    uniforms: { uCol: { value: new THREE.Color(col) }, uIntensity: { value: intensity } },
+    uniforms: { uCol: { value: new THREE.Color(...col) }, uHot: { value: new THREE.Color(...hot) }, uIntensity: { value: intensity } },
   });
-  const GD_BLUE = [0.25, 0.65, 1.6], GD_HOT = [0.9, 1.0, 1.3];
+  // Palette: main engine = white-hot core in a cobalt halo; G-diffusers = white/yellow core in a red-orange halo.
+  const ENG_HOT = [1.3, 1.3, 1.25], ENG_MID = [0.35, 0.7, 1.7], ENG_EDGE = [0.06, 0.18, 0.7];
+  const GD_HOT = [1.7, 1.3, 0.85], GD_MID = [1.6, 0.42, 0.08], GD_EDGE = [0.5, 0.06, 0.02];
+  const GD_ORANGE = [1.7, 0.55, 0.12];
 
   // --- Fuselage: faceted wedge (nose -Z, tail +Z). Needle nose, broad flat mid-body, tapered tail. Length ~7.4
   const hullSections = [
@@ -376,10 +496,10 @@ export function buildArwing(opts = {}) {
   nozzleLip.rotation.z = Math.PI / 8; nozzleLip.position.set(0, 0, 3.66); rig.add(nozzleLip);
   const throat = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.26, 0.34, 24, 1, true), new THREE.MeshBasicMaterial({ color: 0x0a1630, side: THREE.BackSide }));
   throat.rotation.x = Math.PI / 2; throat.position.set(0, 0, 3.5); rig.add(throat);
-  const nozzleRing = new THREE.Mesh(new THREE.TorusGeometry(0.225, 0.045, 12, 48), ringMat([0.3, 0.6, 1.3], [1.0, 1.1, 1.3]));
+  const nozzleRing = new THREE.Mesh(new THREE.TorusGeometry(0.225, 0.045, 12, 48), ringMat([0.25, 0.5, 1.3], [0.9, 1.0, 1.2]));
   nozzleRing.position.set(0, 0, 3.64); rig.add(nozzleRing);
-  const nozzleCore = new THREE.Mesh(new THREE.CircleGeometry(0.15, 32), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.7, 1.0, 1.6) }));
-  nozzleCore.position.set(0, 0, 3.38); rig.add(nozzleCore);
+  const nozzleCore = new THREE.Mesh(new THREE.CircleGeometry(0.19, 32), coreMat(ENG_HOT, ENG_MID, ENG_EDGE));
+  nozzleCore.position.set(0, 0, 3.40); rig.add(nozzleCore);
 
   // --- Canopy: faceted dark-blue bubble forward on the deck
   const canopyRings = [
@@ -440,11 +560,11 @@ export function buildArwing(opts = {}) {
     podBand.rotation.x = Math.PI / 2; podBand.rotation.y = Math.PI / 8; podBand.position.set(px, PODY, PODZ + 1.75); rig.add(podBand);
     const podHouse = new THREE.Mesh(new THREE.CylinderGeometry(PODR * 0.72, PODR * 0.8, 0.22, 8, 1, true), matDark);
     podHouse.rotation.x = Math.PI / 2; podHouse.rotation.y = Math.PI / 8; podHouse.position.set(px, PODY, PODZ + 2.38); rig.add(podHouse);
-    const podRing_ = new THREE.Mesh(new THREE.TorusGeometry(0.155, 0.045, 12, 40), ringMat(GD_BLUE, GD_HOT));
+    const podRing_ = new THREE.Mesh(new THREE.TorusGeometry(0.155, 0.045, 12, 40), ringMat(GD_ORANGE, GD_HOT));
     podRing_.position.set(px, PODY, PODZ + 2.46); rig.add(podRing_);
-    const podThroat = new THREE.Mesh(new THREE.CircleGeometry(0.12, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(0.5, 0.9, 1.8) }));
+    const podThroat = new THREE.Mesh(new THREE.CircleGeometry(0.13, 24), coreMat(GD_HOT, GD_MID, GD_EDGE));
     podThroat.position.set(px, PODY, PODZ + 2.42); rig.add(podThroat);
-    const gdisc = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.0), discMat(0x3f8cff, 0.5)); gdisc.position.set(px, PODY, PODZ + 2.55); gdisc.renderOrder = 12; rig.add(gdisc); gdDiscs.push(gdisc);
+    const gdisc = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 1.0), discMat([1.3, 0.34, 0.06], [1.4, 0.95, 0.6], 0.5)); gdisc.position.set(px, PODY, PODZ + 2.55); gdisc.renderOrder = 12; rig.add(gdisc); gdDiscs.push(gdisc);
 
     // inner wing: thick tapered delta from the hull flank to the nacelle (overlaps both)
     const inner = new THREE.Mesh(wingGeo([
@@ -494,14 +614,14 @@ export function buildArwing(opts = {}) {
     finRoot.rotation.copy(fin.rotation); finRoot.position.set(0, 0, 0); finG.add(finRoot);
     // fin energy strip: a thin plate on the inboard face of the fin
     const stripH = 0.6, stripShape = new THREE.PlaneGeometry(0.09, stripH); // x = chord, y = up, normal z
-    const strip = new THREE.Mesh(stripShape, stripMat(GD_BLUE, GD_HOT));
+    const strip = new THREE.Mesh(stripShape, stripMat(GD_ORANGE, GD_HOT));
     strip.setRotationFromMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 1, 0), new THREE.Vector3(-1, 0, 0))); // normal -> x
     strip.position.set(-s * 0.043, 0.4, 1.05); finG.add(strip); gdStrips.push(strip);
     const strip2 = strip.clone(); strip2.position.x = s * 0.043; finG.add(strip2); gdStrips.push(strip2);
     // fin tip lamp
     const nav = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 8), new THREE.MeshBasicMaterial({ color: s < 0 ? new THREE.Color(3, 0.3, 0.3) : new THREE.Color(0.3, 3, 0.8) }));
     nav.position.set(0, 0.76, 1.33); finG.add(nav);
-    const finDisc = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3), discMat(0x3f8cff, 0.35)); finDisc.position.set(0, 0.4, 1.05); finDisc.renderOrder = 12; finG.add(finDisc); gdDiscs.push(finDisc);
+    const finDisc = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3), discMat([1.2, 0.36, 0.08], [1.2, 0.8, 0.5], 0.35)); finDisc.position.set(0, 0.4, 1.05); finDisc.renderOrder = 12; finG.add(finDisc); gdDiscs.push(finDisc);
 
     // --- Twin laser cannon under the nacelle nose
     const cannon = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.5, 8), matDark);
@@ -531,27 +651,27 @@ export function buildArwing(opts = {}) {
   ], 32);
   const plumeMat = new THREE.ShaderMaterial({
     vertexShader: glowVert, fragmentShader: plumeFrag, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-    uniforms: { uTime, uThrust, uCore: { value: new THREE.Color(0.75, 0.9, 1.0) }, uEdge: { value: new THREE.Color(0.15, 0.35, 1.0) }, uGain: { value: 0.95 } },
+    uniforms: { uTime, uThrust, uCore: { value: new THREE.Color(0.7, 0.88, 1.0) }, uEdge: { value: new THREE.Color(0.1, 0.3, 1.0) }, uGain: { value: 0.9 } },
   });
   const plume = new THREE.Mesh(plumeGeo, plumeMat);
   plume.rotation.x = Math.PI / 2; plume.position.set(0, 0, 3.58); plume.renderOrder = 10; rig.add(plume);
   const plume2 = new THREE.Mesh(plumeGeo, plumeMat.clone()); plume2.material.uniforms.uTime = uTime; plume2.material.uniforms.uThrust = uThrust;
-  plume2.material.uniforms.uCore.value.set(1.0, 1.0, 1.0); plume2.material.uniforms.uEdge.value.set(0.5, 0.75, 1.0); plume2.material.uniforms.uGain.value = 1.0;
+  plume2.material.uniforms.uCore.value.set(1.0, 0.98, 0.92); plume2.material.uniforms.uEdge.value.set(0.45, 0.7, 1.0); plume2.material.uniforms.uGain.value = 0.6;
   plume2.rotation.x = Math.PI / 2; plume2.position.set(0, 0, 3.58); plume2.scale.set(0.5, 0.5, 0.65); plume2.renderOrder = 11; rig.add(plume2);
-  const engineDisc = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 1.2), discMat(0x5aa0ff, 0.45));
+  const engineDisc = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1.4), discMat([0.3, 0.6, 1.5], [1.2, 1.15, 1.0], 0.45));
   engineDisc.position.set(0, 0, 3.7); engineDisc.renderOrder = 12; rig.add(engineDisc);
-  // G-diffuser plumes: cool blue
+  // G-diffuser plumes: hot orange
   const gdPlumes = [];
   for (const s of [-1, 1]) {
     const gp = new THREE.Mesh(plumeGeo, plumeMat.clone()); gp.material.uniforms.uTime = uTime; gp.material.uniforms.uThrust = uThrust;
-    gp.material.uniforms.uCore.value.set(0.85, 0.95, 1.0); gp.material.uniforms.uEdge.value.set(0.2, 0.5, 1.2); gp.material.uniforms.uGain.value = 1.0;
+    gp.material.uniforms.uCore.value.set(1.0, 0.85, 0.6); gp.material.uniforms.uEdge.value.set(1.2, 0.35, 0.05); gp.material.uniforms.uGain.value = 1.0;
     gp.rotation.x = Math.PI / 2; gp.position.set(s * PODX, PODY, PODZ + 2.44); gp.scale.set(0.6, 0.6, 0.45); gp.renderOrder = 10; rig.add(gp); gdPlumes.push(gp);
   }
   const billboards = [engineDisc, ...gdDiscs];
 
   // point lights for local bounce (engine + diffusers)
-  const engineLight = new THREE.PointLight(0x6aa8ff, 1.2, 6, 2); engineLight.position.set(0, 0, 4.6); rig.add(engineLight);
-  const gdLight = new THREE.PointLight(0x4f8cff, 0.8, 5, 2); gdLight.position.set(0, PODY, PODZ + 2.7); rig.add(gdLight);
+  const engineLight = new THREE.PointLight(0x5a9aff, 1.2, 6, 2); engineLight.position.set(0, 0, 4.6); rig.add(engineLight);
+  const gdLight = new THREE.PointLight(0xff7a2a, 1.0, 5, 2); gdLight.position.set(0, PODY, PODZ + 2.7); rig.add(gdLight);
 
   // shadows
   rig.traverse((o) => { if (o.isMesh && !(o.material.isShaderMaterial) && o.material.transparent !== true) { o.castShadow = true; o.receiveShadow = true; } });
@@ -570,8 +690,8 @@ export function buildArwing(opts = {}) {
     const ps = 0.65 + state.thrust * 0.85 + Math.sin(t * 37) * 0.03;
     plume.scale.set(1, 1, ps); plume2.scale.set(0.5, 0.5, 0.65 * ps);
     for (const gp of gdPlumes) gp.scale.set(0.6, 0.6, 0.3 + 0.3 * ps);
-    engineDisc.material.uniforms.uIntensity.value = 0.18 + state.thrust * 0.32 + Math.sin(t * 23) * 0.03;
-    for (const d of gdDiscs) d.material.uniforms.uIntensity.value = (d.geometry.parameters.width > 1.1 ? 0.08 : 0.3) + state.thrust * 0.35 + Math.sin(t * 7 + d.position.x) * 0.05;
+    engineDisc.material.uniforms.uIntensity.value = 0.16 + state.thrust * 0.3 + Math.sin(t * 23) * 0.03;
+    for (const d of gdDiscs) d.material.uniforms.uIntensity.value = (d.geometry.parameters.width > 1.1 ? 0.08 : 0.26) + state.thrust * 0.3 + Math.sin(t * 7 + d.position.x) * 0.04;
     // bank: spring with overshoot
     const bk = 90, bc = 11;
     state.bankVel += ((state.bankTarget - state.bank) * bk - state.bankVel * bc) * dt;
@@ -601,10 +721,13 @@ export function buildArwing(opts = {}) {
     }
   }
 
+  const envMats = [matHull, matWing, matBlue, matBlueDeep, matGrey, matDark, matRed, matCanopy];
   return {
     group,
     rig,
     update,
+    /** Swap the reflection environment on all hull materials (e.g. when a stage changes). */
+    setEnvMap(tex) { for (const m of envMats) { m.envMap = tex; m.needsUpdate = true; } },
     setThrust(v) { state.thrustTarget = THREE.MathUtils.clamp(v, 0, 1); },
     setBank(v) { state.bankTarget = THREE.MathUtils.clamp(v, -1, 1); },
     flap(v) { state.flapTarget = THREE.MathUtils.clamp(v, -1, 1); },
@@ -616,7 +739,7 @@ export function buildArwing(opts = {}) {
     materials: { matHull, matWing, matBlue, matGrey, matDark, matRed, matCanopy },
     dispose() {
       group.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose()); else o.material.dispose(); } });
-      hullTex.dispose(); roughTex.dispose(); wingTex.dispose();
+      hullTex.dispose(); roughTex.dispose(); wingTex.dispose(); hullNrm.dispose(); wingNrm.dispose();
     },
   };
 }

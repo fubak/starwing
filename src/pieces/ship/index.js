@@ -3,9 +3,10 @@
 import * as THREE from 'three';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { buildArwing } from './arwing.js';
+import { makeStudioEnv } from './studioEnv.js';
 import { applyLook, makePlanet, PRESETS } from '../lookdev/index.js';
 
-export { buildArwing };
+export { buildArwing, makeStudioEnv };
 
 // Headless harness runs (?fixed / ?autoplay) must not be yanked by a Vite full
 // reload triggered by other agents' edits: park the reload forever.
@@ -36,11 +37,11 @@ const SHIP_PRESET = {
   ...PRESETS.space, name: 'ship', label: 'HANGAR · ORBIT',
   exposure: 1.05, envIntensity: 0.8,
   // key from high front-right so each hull facet gets its own value; cool fill from the planet side
-  sun: { ...PRESETS.space.sun, dir: [0.42, 0.78, -0.46], intensity: 3.0, size: 0.022, glow: 0.35 },
+  sun: { ...PRESETS.space.sun, dir: [0.42, 0.78, -0.46], intensity: 2.4, size: 0.022, glow: 0.35 },
   sky: { ...PRESETS.space.sky, nebula: 0.65, stars: 1.1 },
   fill: { ...PRESETS.space.fill, dir: [-0.7, 0.15, 0.7], color: 0xbfd4ff, intensity: 1.1 },
   hemi: { ...PRESETS.space.hemi, sky: 0x6f8ad0, ground: 0x24407e, intensity: 0.9 },
-  bloom: { strength: 0.55, radius: 0.5, threshold: 1.3 },
+  bloom: { strength: 0.5, radius: 0.5, threshold: 1.45 },
 };
 
 export async function create(ctx) {
@@ -67,9 +68,12 @@ export async function create(ctx) {
   if (/[?&]noplanet\b/.test(location.search)) planet.visible = false; // debug
   // planet bounce: keeps the belly readable when the camera dips below the ship
   const bounce = new THREE.DirectionalLight(0x4f8cff, 0.9); bounce.position.set(0.3, -1, -0.2); scene.add(bounce, bounce.target);
+  // hard rim from behind-left so the silhouette gets a bright specular edge against the nebula
+  const rimKey = new THREE.DirectionalLight(0xdfe9ff, 1.6); rimKey.position.set(-0.6, 0.35, 1.0); scene.add(rimKey, rimKey.target);
 
-  // ---- ship
-  const ship = buildArwing({ THREE });
+  // ---- ship (with its own bright studio reflection env: the space sky is too dark to read as metal)
+  const studio = makeStudioEnv(renderer, { keyDir: SHIP_PRESET.sun.dir, fillDir: SHIP_PRESET.fill.dir, rimDir: [-0.6, 0.35, 1.0], key: 2.4, fill: 1.1, rim: 1.5 });
+  const ship = buildArwing({ THREE, envMap: studio.texture });
   scene.add(ship.group);
   ship.setThrust(0.55);
 
@@ -205,7 +209,8 @@ export async function create(ctx) {
       composer.removePass(shimmer); shimmer.dispose?.();
       ship.dispose();
       scene.remove(planet); planet.disposePlanet?.();
-      scene.remove(bounce, bounce.target);
+      scene.remove(bounce, bounce.target, rimKey, rimKey.target);
+      studio.dispose();
       look.dispose();
       for (const b of boltPool) scene.remove(b);
       boltGeo.dispose(); boltCoreGeo.dispose(); boltMat.dispose(); boltCore.dispose(); flashMat.dispose();
