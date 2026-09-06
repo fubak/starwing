@@ -141,6 +141,35 @@ export function makeHoloTexture(variant = 0) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
+/** Large painted end-wall decal: Star Fox style winged emblem, stencil text, hazard chevrons. */
+export function makeWallDecal() {
+  const W = 1024, H = 384;
+  const [c, g] = canvas(W, H);
+  g.clearRect(0, 0, W, H);
+  // hazard chevron band along the bottom
+  for (let x = -40; x < W; x += 80) {
+    g.fillStyle = '#e8a728'; g.beginPath(); g.moveTo(x, H); g.lineTo(x + 40, H); g.lineTo(x + 80, H - 40); g.lineTo(x + 40, H - 40); g.closePath(); g.fill();
+  }
+  g.fillStyle = 'rgba(232,167,40,0.9)'; g.fillRect(0, H - 48, W, 6);
+  // emblem: circle + wings
+  const cx = W / 2, cy = 150;
+  g.strokeStyle = '#dfe9f5'; g.lineWidth = 14; g.beginPath(); g.arc(cx, cy, 78, 0, Math.PI * 2); g.stroke();
+  g.fillStyle = '#dfe9f5';
+  for (const s of [-1, 1]) {
+    g.beginPath(); g.moveTo(cx + s * 95, cy - 10); g.lineTo(cx + s * 330, cy - 70); g.lineTo(cx + s * 300, cy - 20); g.lineTo(cx + s * 380, cy + 10); g.lineTo(cx + s * 110, cy + 40); g.closePath(); g.fill();
+  }
+  // fox head silhouette (ears + snout) inside ring
+  g.beginPath(); g.moveTo(cx - 48, cy - 62); g.lineTo(cx - 30, cy - 6); g.lineTo(cx - 8, cy + 46); g.lineTo(cx, cy + 62); g.lineTo(cx + 8, cy + 46); g.lineTo(cx + 30, cy - 6); g.lineTo(cx + 48, cy - 62); g.lineTo(cx + 26, cy - 30); g.lineTo(cx, cy - 22); g.lineTo(cx - 26, cy - 30); g.closePath(); g.fill();
+  g.fillStyle = '#d8342c'; g.beginPath(); g.arc(cx - 13, cy - 2, 5, 0, 7); g.arc(cx + 13, cy - 2, 5, 0, 7); g.fill();
+  // stencil text
+  g.fillStyle = '#dfe9f5'; g.font = 'bold 54px system-ui, sans-serif'; g.textAlign = 'center';
+  g.fillText('GREAT FOX  ·  HANGAR 01', cx, 290);
+  g.font = 'bold 22px monospace'; g.fillStyle = '#8fdcff';
+  g.fillText('CORNERIA DEFENSE FORCE  //  AUTHORIZED PILOTS ONLY', cx, 322);
+  grain(g, W, H, 26, 5);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+}
+
 /** Soft radial sprite for particles/glow. */
 export function makeGlowTexture() {
   const [c, g] = canvas(128, 128);

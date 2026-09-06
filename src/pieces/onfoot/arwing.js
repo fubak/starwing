@@ -6,8 +6,8 @@ export function buildDockedArwing() {
   const white = new THREE.MeshStandardMaterial({ color: 0xe6ebf2, roughness: 0.28, metalness: 0.35, envMapIntensity: 1.2 });
   const blue = new THREE.MeshStandardMaterial({ color: 0x2456c8, roughness: 0.3, metalness: 0.4, envMapIntensity: 1.2 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x1c2230, roughness: 0.35, metalness: 0.8 });
-  const glass = new THREE.MeshPhysicalMaterial({ color: 0x0c2a48, roughness: 0.05, metalness: 0.3, clearcoat: 1, transmission: 0.2, envMapIntensity: 2.0, emissive: 0x0e3a66, emissiveIntensity: 0.4 });
-  const glow = new THREE.MeshStandardMaterial({ color: 0x7fe8ff, emissive: 0x4fd4ff, emissiveIntensity: 3.0 });
+  const glass = new THREE.MeshPhysicalMaterial({ color: 0x0c2a48, roughness: 0.05, metalness: 0.3, clearcoat: 1, clearcoatRoughness: 0.04, envMapIntensity: 2.0, emissive: 0x0e3a66, emissiveIntensity: 0.4 });
+  const glow = new THREE.MeshStandardMaterial({ color: 0x7fe8ff, emissive: 0x4fd4ff, emissiveIntensity: 1.4 });
   const red = new THREE.MeshStandardMaterial({ color: 0xd8342c, roughness: 0.4 });
   const add = (mesh, p, r, s) => { if (p) mesh.position.set(...p); if (r) mesh.rotation.set(...r); if (s) mesh.scale.set(...s); mesh.castShadow = true; mesh.receiveShadow = true; g.add(mesh); return mesh; };
 
@@ -42,7 +42,7 @@ export function buildDockedArwing() {
   add(new THREE.Mesh(eng, dark), [0, 0, -2.4]);
   const ring = new THREE.TorusGeometry(0.62, 0.09, 8, 24);
   add(new THREE.Mesh(ring, glow), [0, 0, -3.0]);
-  add(new THREE.Mesh(new THREE.CircleGeometry(0.55, 20), new THREE.MeshStandardMaterial({ color: 0x223344, emissive: 0x1a5aa0, emissiveIntensity: 0.8 })), [0, 0, -3.01], [Math.PI, 0, 0]);
+  add(new THREE.Mesh(new THREE.CircleGeometry(0.55, 20), new THREE.MeshStandardMaterial({ color: 0x223344, emissive: 0x1a5aa0, emissiveIntensity: 0.5 })), [0, 0, -3.01], [Math.PI, 0, 0]);
   // stripes
   add(new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.3, 2.4), red), [0, 0.5, -0.4]);
   // landing gear

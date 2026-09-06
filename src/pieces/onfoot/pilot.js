@@ -37,7 +37,7 @@ function rounded(w, h, d, r, m) {
 
 export function buildPilot() {
   const M = {
-    suit: mat(0xe9edf2, { roughness: 0.5 }),
+    suit: mat(0xd6dde8, { roughness: 0.5 }),
     jacket: mat(0x2f8f57, { roughness: 0.55 }),
     dark: mat(0x1d2230, { roughness: 0.35, metalness: 0.3 }),
     red: mat(0xd8342c, { roughness: 0.5 }),

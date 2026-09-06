@@ -6,6 +6,7 @@ import { buildPilot } from './pilot.js';
 import { buildHangar, HANGAR } from './hangar.js';
 import { makeFx } from './fx.js';
 import { makeHud } from './hud.js';
+import { makeGradePass } from '../lookdev/grade.js';
 
 export { buildPilot } from './pilot.js';
 export { buildDockedArwing } from './arwing.js';
@@ -15,17 +16,25 @@ const RUN_SPEED = 7.4, ACCEL = 34, JUMP_V = 7.2, GRAV = -20, ROLL_TIME = 0.55, R
 const PLAYER_R = 0.42;
 
 export async function create(ctx) {
-  const { scene, camera, renderer, bloom, input, ui } = ctx;
+  const { scene, camera, renderer, bloom, input, ui, composer } = ctx;
 
   // ---- render setup (restored on dispose)
   const prev = { bloomStrength: bloom.strength, bloomRadius: bloom.radius, bloomThreshold: bloom.threshold, exposure: renderer.toneMappingExposure, fov: camera.fov };
-  bloom.strength = 0.55; bloom.radius = 0.6; bloom.threshold = 0.82;
-  renderer.toneMappingExposure = 1.05;
-  camera.fov = 48; camera.near = 0.1; camera.far = 1200; camera.updateProjectionMatrix();
+  bloom.strength = 0.5; bloom.radius = 0.55; bloom.threshold = 0.8;
+  renderer.toneMappingExposure = 0.94;
+  camera.fov = 54; camera.near = 0.1; camera.far = 1200; camera.updateProjectionMatrix();
   const pmrem = new THREE.PMREMGenerator(renderer);
   const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.environment = env; scene.environmentIntensity = 0.35;
+  scene.environment = env; scene.environmentIntensity = 0.4;
   pmrem.dispose();
+  // colour grade (shared lookdev pass): cool lifted shadows, warm highlights, soft vignette
+  let grade = composer.passes.find((p) => p.isLookGrade);
+  const ownGrade = !grade;
+  if (!grade) { grade = makeGradePass(); composer.addPass(grade); }
+  grade.enabled = true;
+  grade.uniforms.uContrast.value = 1.08; grade.uniforms.uSaturation.value = 1.12; grade.uniforms.uGamma.value = 1.0;
+  grade.uniforms.uLift.value.setRGB(0.012, 0.02, 0.045); grade.uniforms.uGain.value.setRGB(1.04, 1.0, 0.95);
+  grade.uniforms.uVignette.value = 0.38; grade.uniforms.uGrain.value = 0.018;
 
   // ---- world
   const hangar = buildHangar(ctx);
@@ -41,26 +50,43 @@ export async function create(ctx) {
 
   // ---- player state
   const P = {
-    pos: new THREE.Vector3(1.5, 0, 23), vel: new THREE.Vector3(), yaw: Math.PI, // facing -z
+    pos: new THREE.Vector3(1.5, 0, 23), vel: new THREE.Vector3(), yaw: 0, // forward = (-sin yaw, -cos yaw) → yaw 0 faces -z (down the hangar)
     onGround: true, rolling: false, rollT: 0, rollDir: new THREE.Vector3(0, 0, -1), fireCd: 0, aiming: 0, landed: false, accel: 0, turn: 0, speedN: 0,
   };
-  const cam = { yaw: Math.PI, pitch: 0.34, dist: 5.2, pos: new THREE.Vector3(), look: new THREE.Vector3(), initialized: false };
+  const cam = { yaw: 0, pitch: 0.2, dist: 5.6, pos: new THREE.Vector3(), look: new THREE.Vector3(), initialized: false };
   const { hx, hz } = HANGAR;
 
   const V = { move: new THREE.Vector3(), tmp: new THREE.Vector3(), tmp2: new THREE.Vector3(), muzzle: new THREE.Vector3(), dir: new THREE.Vector3() };
 
   // ---- autoplay script (drives the demo)
+  // Waypoint-driven so the route is robust to camera lag: each beat = [until, waypoint|null, buttons(T)]
+  const ROUTE = [
+    [0.8, null], // idle beat
+    [3.3, [0.5, 12], (T) => (T > 2.2 && T < 2.4 ? ['jump'] : [])],
+    [4.7, null, () => ['fire']], // stand and shoot the drones ahead
+    [6.6, [-1.2, -3], (T) => (T > 5.5 && T < 5.65 ? ['rollL'] : T > 6.3 && T < 6.45 ? ['jump'] : [])],
+    [8.2, [0.8, -14], (T) => (T > 7.4 && T < 7.9 ? ['fire'] : [])],
+    [10.0, [0, -28.3]],
+    [10.7, null, () => ['interact']],
+    [12.6, [0, -40]], // through the door into the corridor
+    [14.4, null, () => ['fire']],
+    [17.0, [0, -24], (T) => (T > 15.2 && T < 15.35 ? ['rollR'] : [])],
+    [24.5, [1.5, 20], (T) => (T > 19 && T < 19.2 ? ['jump'] : [])],
+    [26, null],
+  ];
   input.script = (t) => {
-    const b = [];
+    const T = t % 26; // loop so long recordings keep moving
+    const beat = ROUTE.find((r) => T < r[0]) ?? ROUTE[ROUTE.length - 1];
     let x = 0, y = 0;
-    if (t < 0.9) { /* idle beat */ }
-    else if (t < 3.4) { y = 1; x = Math.sin(t * 1.6) * 0.35; if (t > 2.3 && t < 2.55) b.push('jump'); }
-    else if (t < 5.6) { y = 0; b.push('fire'); }
-    else if (t < 7.2) { y = 1; x = t > 6.0 && t < 6.4 ? -0.4 : 0.2; if (t > 6.3 && t < 6.45) b.push('rollL'); if (t > 6.9 && t < 7.1) b.push('jump'); }
-    else if (t < 9.4) { y = 1; x = 0.05; if (t > 8.2 && t < 8.6) b.push('fire'); }
-    else if (t < 9.9) { y = 0; b.push('interact'); }
-    else { y = 1; }
-    return { x, y, buttons: b };
+    if (beat[1]) {
+      const dx = beat[1][0] - P.pos.x, dz = beat[1][1] - P.pos.z; const d = Math.hypot(dx, dz);
+      if (d > 0.6) {
+        const fx = -Math.sin(cam.yaw), fz = -Math.cos(cam.yaw), rx = Math.cos(cam.yaw), rz = -Math.sin(cam.yaw);
+        const k = Math.min(1, d / 1.5) / d;
+        y = (dx * fx + dz * fz) * k; x = (dx * rx + dz * rz) * k;
+      }
+    }
+    return { x, y, buttons: beat[2] ? beat[2](T) : [] };
   };
 
   // ---- helpers
@@ -157,7 +183,7 @@ export async function create(ctx) {
 
     // --- door interaction
     const doorPos = V.tmp.set(0, 0, -hz + 0.5); const dDoor = P.pos.distanceTo(doorPos);
-    const canInteract = dDoor < 4.5 && !doorOpened;
+    const canInteract = dDoor < 6.5 && !doorOpened;
     hud.setPrompt(canInteract ? 'OPEN BLAST DOOR' : '');
     if (canInteract && (input.wasPressed('interact') || input.wasPressed('confirm'))) { doorOpened = true; hangar.door.target = 1; hud.flash('DOOR UNLOCKED — PROCEED TO BRIDGE'); fx.sparks(new THREE.Vector3(0, 5, -hz + 1), 20, 0x40ff80); }
 
@@ -174,12 +200,15 @@ export async function create(ctx) {
     const wantYaw = P.rolling ? cam.yaw : P.yaw;
     const yawErr = angDiff(cam.yaw, wantYaw);
     cam.yaw += yawErr * Math.min(1, dt * (firing ? 6 : 2.6) * (0.5 + Math.min(1, hspeed / RUN_SPEED)));
-    const pitchT = firing ? 0.22 : 0.34 + (P.onGround ? 0 : -0.05);
+    // low, slightly-off-centre framing so the hangar (lamps, bay, Arwing) reads above the pilot
+    const pitchT = firing ? 0.14 : 0.2 + (P.onGround ? 0 : -0.04) + P.speedN * 0.03;
     cam.pitch += (pitchT - cam.pitch) * Math.min(1, dt * 3);
-    const distT = firing ? 3.6 : 5.2 + P.speedN * 0.9;
+    const distT = firing ? 3.4 : 5.4 + P.speedN * 1.0;
     cam.dist += (distT - cam.dist) * Math.min(1, dt * 3);
-    const lookT = V.tmp2.set(P.pos.x, P.pos.y * 0.6 + 1.35, P.pos.z);
-    if (firing) lookT.add(V.tmp.set(-Math.sin(cam.yaw), 0, -Math.cos(cam.yaw)).multiplyScalar(2.2)).add(V.dir.set(Math.cos(cam.yaw), 0, -Math.sin(cam.yaw)).multiplyScalar(0.7));
+    const lookT = V.tmp2.set(P.pos.x, P.pos.y * 0.6 + 1.55 + P.speedN * 0.15, P.pos.z);
+    // shoulder offset: pilot sits left of centre (camera-right vector)
+    lookT.add(V.dir.set(Math.cos(cam.yaw), 0, -Math.sin(cam.yaw)).multiplyScalar(firing ? 0.9 : 0.55));
+    if (firing) lookT.add(V.tmp.set(-Math.sin(cam.yaw), 0, -Math.cos(cam.yaw)).multiplyScalar(2.4));
     const lagK = cam.initialized ? Math.min(1, dt * 7) : 1;
     cam.look.lerp(lookT, lagK);
     const cp = V.tmp.set(Math.sin(cam.yaw) * Math.cos(cam.pitch), Math.sin(cam.pitch), Math.cos(cam.yaw) * Math.cos(cam.pitch)).multiplyScalar(cam.dist).add(cam.look);
@@ -188,6 +217,17 @@ export async function create(ctx) {
     if (!inCorridor) { cp.x = THREE.MathUtils.clamp(cp.x, -hx + 0.7, hx - 0.7); cp.z = THREE.MathUtils.clamp(cp.z, -hz + 0.7, hz - 0.7); }
     else cp.x = THREE.MathUtils.clamp(cp.x, -2.4, 2.4);
     cp.y = THREE.MathUtils.clamp(cp.y, 0.5, HANGAR.h - 0.6);
+    // occlusion: march from the look point toward the camera and stop before any prop AABB
+    {
+      const N = 14, pad = 0.45; let k = 1;
+      for (let i = 1; i <= N; i++) {
+        const f = i / N; const px = cam.look.x + (cp.x - cam.look.x) * f, py = cam.look.y + (cp.y - cam.look.y) * f, pz = cam.look.z + (cp.z - cam.look.z) * f;
+        let hit = false;
+        for (const c of hangar.colliders) { if (px > c.min.x - pad && px < c.max.x + pad && py > c.min.y - pad && py < c.max.y + pad && pz > c.min.z - pad && pz < c.max.z + pad) { hit = true; break; } }
+        if (hit) { k = Math.max(0.25, (i - 1) / N); break; }
+      }
+      if (k < 1) cp.lerpVectors(cam.look, cp, k);
+    }
     cam.pos.lerp(cp, cam.initialized ? Math.min(1, dt * 6) : 1);
     cam.initialized = true;
     camera.position.copy(cam.pos);
@@ -211,6 +251,7 @@ export async function create(ctx) {
       scene.environment = null; env.dispose(); scene.background = null;
       bloom.strength = prev.bloomStrength; bloom.radius = prev.bloomRadius; bloom.threshold = prev.bloomThreshold; renderer.toneMappingExposure = prev.exposure;
       camera.fov = prev.fov; camera.updateProjectionMatrix();
+      if (ownGrade) { composer.removePass(grade); grade.dispose?.(); } else grade.enabled = false;
       input.script = null;
     },
   };
