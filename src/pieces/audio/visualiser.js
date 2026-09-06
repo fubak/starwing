@@ -13,7 +13,7 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { buildArwing } from '../ship/arwing.js';
+import { buildHeroArwing } from './arwing.js';
 import { makePlanet } from '../lookdev/planet.js';
 import { resolvePreset } from '../lookdev/presets.js';
 import { makeGradePass, applyGradePreset } from '../lookdev/grade.js';
@@ -26,6 +26,13 @@ const NOISE_GLSL = /* glsl */`
                mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z); }
   float fbm(vec3 p){ float a=0.5,s=0.0; for(int i=0;i<5;i++){ s+=a*vnoise(p); p=p*2.03+vec3(1.7,9.2,3.1); a*=0.5; } return s; }
 `;
+
+/** Per-song palettes (RGB, lerped in RGB so transitions never pass through off-brand hues). */
+export const PALETTES = {
+  main:   { song: 0x38dcff, accent: 0xffb648, nebA: [0.28, 0.48, 0.98], nebB: [0.95, 0.52, 0.34], ui: '#3ee6ff' },
+  battle: { song: 0xff4a2e, accent: 0xffa33a, nebA: [0.92, 0.32, 0.26], nebB: [0.42, 0.34, 0.85], ui: '#ff6a2a' },
+  idle:   { song: 0x38dcff, accent: 0xffb648, nebA: [0.28, 0.48, 0.98], nebB: [0.95, 0.52, 0.34], ui: '#3ee6ff' },
+};
 
 /** Damped spring integrated with fixed substeps + clamps. Unconditionally stable. */
 function makeSpring(rest, { k = 140, c = 9, min = -Infinity, max = Infinity, vmax = 8 } = {}) {
@@ -95,19 +102,18 @@ export function createStage(ctx, audio) {
   }
   const skyMat = D(new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { uTime: { value: 0 }, uHue: { value: 0.55 }, uEnergy: { value: 0 }, uNeb: { value: nebRT.texture }, uSun: { value: SUN_D } },
+    uniforms: { uTime: { value: 0 }, uNebA: { value: new THREE.Vector3(0.28, 0.48, 0.98) }, uNebB: { value: new THREE.Vector3(0.95, 0.52, 0.34) }, uEnergy: { value: 0 }, uNeb: { value: nebRT.texture }, uSun: { value: SUN_D } },
     vertexShader: `varying vec3 vDir; void main(){ vDir=normalize(position); gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `
-      varying vec3 vDir; uniform float uTime; uniform float uHue; uniform float uEnergy; uniform sampler2D uNeb; uniform vec3 uSun;
-      vec3 hsv(float h,float s,float v){ vec3 c=clamp(abs(mod(h*6.0+vec3(0,4,2),6.0)-3.0)-1.0,0.0,1.0); return v*mix(vec3(1.0),c,s); }
+      varying vec3 vDir; uniform float uTime; uniform vec3 uNebA, uNebB; uniform float uEnergy; uniform sampler2D uNeb; uniform vec3 uSun;
       vec3 hash3(vec3 p){ p=fract(p*vec3(443.897,441.423,437.195)); p+=dot(p,p.yzx+19.19); return fract((p.xxy+p.yzz)*p.zyx); }
       void main(){
         vec3 d=vDir; float up=d.y;
         vec3 col = mix(vec3(0.03,0.045,0.12), vec3(0.006,0.008,0.024), smoothstep(-0.1,0.7,up));
         vec2 uv = vec2(atan(d.z,d.x)/6.2831853+0.5 + uTime*0.0015, asin(clamp(up,-1.0,1.0))/3.14159265+0.5);
         vec4 m = texture2D(uNeb, uv);
-        vec3 nebA = hsv(uHue, 0.7, 1.0) * vec3(0.5,0.6,0.85);
-        vec3 nebB = hsv(uHue+0.45, 0.65, 1.0);
+        vec3 nebA = uNebA * vec3(0.55,0.6,0.8);
+        vec3 nebB = uNebB * 0.75;
         col += (m.r*nebA + m.g*nebB) * 0.5;
         col += m.b * vec3(0.9,0.7,1.0) * 0.22 + m.a * vec3(1.0,0.9,0.8) * 0.12;
         // two star layers (fine + a few bright)
@@ -125,13 +131,13 @@ export function createStage(ctx, audio) {
       }`,
   }));
   const sky = new THREE.Mesh(D(new THREE.SphereGeometry(400, 48, 32)), skyMat);
-  sky.renderOrder = -10;
+  sky.renderOrder = -10; sky.name = 'sky';
   group.add(sky);
 
   // planet Corneria (lookdev's shaded planet: crisp continents, clouds, city lights, limb scattering)
   const planet = makePlanet({ radius: 150, seed: 7, preset });
   planet.position.set(0.25, -0.34, -1.0).normalize().multiplyScalar(345);
-  planet.rotation.set(0.35, 0.6, -0.3);
+  planet.rotation.set(0.35, 0.6, -0.3); planet.name = 'planet';
   planet.lightDir = SUN_D.clone();
   planet.setPreset(preset);
   group.add(planet);
@@ -152,13 +158,12 @@ export function createStage(ctx, audio) {
     depthWrite: false,
     uniforms: {
       uTime: { value: 0 }, uSpec: { value: specTex }, uRing: { value: RING_R }, uBeat: { value: 0 },
-      uHue: { value: 0.55 }, uAccent: { value: 0.1 }, uShock: { value: [0, 0, 0, 0].map(() => new THREE.Vector4(-10, 0, 0, 0)) }, uCam: { value: new THREE.Vector3() },
+      uColA: { value: new THREE.Color(0xffb648) }, uColB: { value: new THREE.Color(0x38dcff) }, uShock: { value: [0, 0, 0, 0].map(() => new THREE.Vector4(-10, 0, 0, 0)) }, uShockCol: { value: [0, 0, 0, 0].map(() => new THREE.Color()) }, uCam: { value: new THREE.Vector3() },
       uSun: { value: SUN_D }, uShip: { value: new THREE.Vector3(0, 3, 0) }, uShipCol: { value: new THREE.Color(0x3ee6ff) },
     },
     vertexShader: `varying vec3 vW; void main(){ vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; gl_Position=projectionMatrix*viewMatrix*w; }`,
     fragmentShader: `
-      varying vec3 vW; uniform float uTime,uRing,uBeat,uHue,uAccent; uniform sampler2D uSpec; uniform vec4 uShock[4]; uniform vec3 uCam,uSun,uShip,uShipCol;
-      vec3 hsv(float h,float s,float v){ vec3 c=clamp(abs(mod(h*6.0+vec3(0,4,2),6.0)-3.0)-1.0,0.0,1.0); return v*mix(vec3(1.0),c,s); }
+      varying vec3 vW; uniform float uTime,uRing,uBeat; uniform vec3 uColA,uColB; uniform sampler2D uSpec; uniform vec4 uShock[4]; uniform vec3 uShockCol[4]; uniform vec3 uCam,uSun,uShip,uShipCol;
       float hash21(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
       // hex grid: returns (edge distance 0..1, cell id hash)
       vec2 hexInfo(vec2 p){
@@ -189,11 +194,11 @@ export function createStage(ctx, audio) {
         float landing = smoothstep(0.04,0.0,abs(r-3.2)) + smoothstep(0.04,0.0,abs(r-3.35));
         float spokes = step(0.985, abs(fract(ang/6.2831853*12.0)-0.5)*2.0) * step(3.5, r) * step(r, uRing-0.7);
         float chev = step(0.5, fract(ang/6.2831853*24.0+uTime*0.05)) * smoothstep(9.3,9.4,r)*(1.0-smoothstep(9.7,9.8,r));
-        vec3 gridCol = hsv(uHue,0.55,1.0);
+        vec3 gridCol = mix(uColB, vec3(1.0), 0.25);
         vec3 col = base;
         col += landing * gridCol * (0.35+0.35*uBeat);
         col += spokes * gridCol * 0.10;
-        col += chev * hsv(uAccent,0.85,1.0) * 0.28;
+        col += chev * uColA * 0.28;
         // edge caution band with dashes
         float edge = smoothstep(11.35,11.5,r)*(1.0-smoothstep(11.95,12.1,r));
         float dashes = step(0.5, fract(ang/6.2831853*48.0));
@@ -202,12 +207,12 @@ export function createStage(ctx, audio) {
         float u = fract((ang/6.2831853)+0.5);
         vec4 sp = texture2D(uSpec, vec2(u,0.5));
         float near = exp(-pow((r-uRing)/(0.7+sp.r*1.4),2.0));
-        col += hsv(sp.g,0.8,1.0) * near * sp.r * 0.6;
+        col += mix(uColA, uColB, sp.g) * near * sp.r * 0.6;
         // hero pool: ship light falls on the deck
         vec3 toShip = uShip - vW; float dS = length(toShip);
         col += uShipCol * (0.9/(1.0+dS*dS*0.35)) * max(0.0, toShip.y/dS) * (0.6+0.4*uBeat);
         // beat shockwaves
-        for(int i=0;i<4;i++){ float age=uTime-uShock[i].x; if(age>0.0 && age<2.2){ float rr=age*9.0; float w=exp(-pow((r-rr)/0.35,2.0)); col += hsv(uShock[i].z,0.7,1.0)*w*uShock[i].y*(1.0-age/2.2)*0.9; } }
+        for(int i=0;i<4;i++){ float age=uTime-uShock[i].x; if(age>0.0 && age<2.2){ float rr=age*9.0; float w=exp(-pow((r-rr)/0.35,2.0)); col += uShockCol[i]*w*uShock[i].y*(1.0-age/2.2)*0.9; } }
         // specular: sun + ship key on bevelled hex normals, plus horizon fresnel picking up nebula
         vec3 H = normalize(V + uSun);
         float spec = pow(max(0.0,dot(N,H)), 180.0) * 1.2 + pow(max(0.0,dot(N,H)), 12.0)*0.06;
@@ -215,7 +220,7 @@ export function createStage(ctx, audio) {
         vec3 Ls = normalize(toShip); vec3 H2 = normalize(V + Ls);
         col += pow(max(0.0,dot(N,H2)), 90.0) * uShipCol * 0.8 / (1.0+dS*0.4);
         float fres = pow(1.0-max(0.0,dot(N,V)),4.0);
-        col += fres * (vec3(0.10,0.08,0.07) + hsv(uHue,0.5,1.0)*0.05) * (1.0-seam*0.5);
+        col += fres * (vec3(0.10,0.08,0.07) + uColB*0.05) * (1.0-seam*0.5);
         // subtle clearcoat darkening of seams and a soft radial falloff toward the rim
         col *= 1.0 - smoothstep(9.0, 12.5, r)*0.25;
         gl_FragColor=vec4(col,1.0);
@@ -223,7 +228,7 @@ export function createStage(ctx, audio) {
   }));
   // Draw order trick for the wet-deck reflection: deck colour (no depth) -> mirrored blades (additive) -> depth-only disc.
   const deck = new THREE.Mesh(D(new THREE.CircleGeometry(DECK_R, 128)), deckMat);
-  deck.rotation.x = -Math.PI / 2; deck.renderOrder = -3;
+  deck.rotation.x = -Math.PI / 2; deck.renderOrder = -3; deck.name = 'deck';
   group.add(deck);
   const depthDisc = new THREE.Mesh(deck.geometry, D(new THREE.MeshBasicMaterial({ colorWrite: false })));
   depthDisc.rotation.x = -Math.PI / 2; depthDisc.renderOrder = -1;
@@ -249,39 +254,56 @@ export function createStage(ctx, audio) {
   under.rotation.x = Math.PI / 2; under.position.y = -2.4; group.add(under);
 
   // ---------------------------------------------------------------- spectrum blades
-  const barGeo = D(new RoundedBoxGeometry(0.2, 1, 0.3, 2, 0.045)); barGeo.translate(0, 0.5, 0);
-  const bladeShader = (sh) => {
-    sh.uniforms.uEm = { value: 1.0 };
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying float vY;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvY = clamp(position.y, 0.0, 1.0);');
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uEm; varying float vY;')
-      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-        #ifdef USE_COLOR
-          float g = pow(vY, 1.6);
-          vec3 tip = mix(vColor, vec3(1.0), 0.4);
-          totalEmissiveRadiance += (vColor * (0.35 + 0.85*g) + tip * pow(vY, 14.0) * 0.6) * uEm;
-        #endif`);
-  };
-  const barMat = D(new THREE.MeshPhysicalMaterial({ color: 0x070c18, metalness: 0.6, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.2, envMapIntensity: 0.45 }));
-  barMat.onBeforeCompile = bladeShader;
+  // Light-blades: additive glass slabs (no sorting artefacts, never read as opaque plastic). Per-instance colour,
+  // vertical energy gradient, fresnel rim, hot white tip, sun glint on the bevel.
+  const barGeo = D(new RoundedBoxGeometry(0.17, 1, 0.26, 2, 0.04)); barGeo.translate(0, 0.5, 0);
+  const makeBladeMat = (em) => D(new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uEm: { value: em }, uSun: { value: SUN_D }, uTime: { value: 0 } },
+    vertexShader: `
+      
+      varying vec3 vC; varying float vY; varying vec3 vN; varying vec3 vV; varying float vH;
+      void main(){
+        vC = instanceColor; vY = clamp(position.y, 0.0, 1.0);
+        vH = length(vec3(instanceMatrix[1]));
+        vec4 w = modelMatrix * instanceMatrix * vec4(position, 1.0);
+        vN = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * vec3(normal.x, normal.y / max(vH,0.01), normal.z));
+        vV = normalize(cameraPosition - w.xyz);
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }`,
+    fragmentShader: `
+      varying vec3 vC; varying float vY; varying vec3 vN; varying vec3 vV; varying float vH;
+      uniform float uEm, uTime; uniform vec3 uSun;
+      void main(){
+        vec3 N = normalize(vN); vec3 V = normalize(vV);
+        float ndv = abs(dot(N, V));
+        float fres = pow(1.0 - ndv, 2.5);
+        float body = 0.10 + 0.55 * pow(vY, 1.5);              // energy rises toward the tip
+        float tip = pow(vY, 18.0) * 0.9;                        // hot cap
+        vec3 H = normalize(V + uSun);
+        float glint = pow(max(0.0, dot(N, H)), 90.0) * 0.6;
+        float scan = 0.9 + 0.1 * sin(vY * vH * 14.0 - uTime * 4.0);
+        vec3 col = vC * (body * scan + fres * 0.7) + mix(vC, vec3(1.0), 0.5) * tip + vec3(1.0, 0.95, 0.85) * glint;
+        gl_FragColor = vec4(col * uEm, 1.0);
+      }`,
+  }));
+  const barMat = makeBladeMat(1.0);
   const bars = new THREE.InstancedMesh(barGeo, barMat, BINS);
   bars.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(BINS * 3), 3);
+  bars.renderOrder = 2; bars.frustumCulled = false; bars.name = 'bars';
   group.add(bars);
   // wet-deck reflection: same instances mirrored through the deck, faded
-  const reflMat = D(new THREE.MeshPhysicalMaterial({ color: 0x000000, metalness: 0.7, roughness: 0.25, blending: THREE.AdditiveBlending, depthWrite: false, envMapIntensity: 0.25 }));
-  reflMat.onBeforeCompile = (sh) => { bladeShader(sh); sh.uniforms.uEm.value = 0.35; };
+  const reflMat = makeBladeMat(0.3);
   const barsRefl = new THREE.InstancedMesh(barGeo, reflMat, BINS);
   barsRefl.instanceColor = bars.instanceColor; barsRefl.instanceMatrix = bars.instanceMatrix;
-  barsRefl.scale.y = -1; barsRefl.renderOrder = -2;
+  barsRefl.scale.y = -1; barsRefl.renderOrder = -2; barsRefl.frustumCulled = false; barsRefl.name = 'barsRefl';
   group.add(barsRefl);
   // slim halo rail the blades stand on
   const railMat = D(new THREE.MeshPhysicalMaterial({ color: 0xd8e8ff, metalness: 1, roughness: 0.25, envMapIntensity: 1.2, emissive: 0x0a2030, emissiveIntensity: 1 }));
   const rail = new THREE.Mesh(D(new THREE.TorusGeometry(RING_R, 0.06, 8, 160)), railMat); rail.rotation.x = Math.PI / 2; rail.position.y = 0.04; group.add(rail);
   const Y_AXIS = new THREE.Vector3(0, 1, 0);
   const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpP = new THREE.Vector3(), tmpS = new THREE.Vector3(), tmpC = new THREE.Color(), tmpV = new THREE.Vector3();
-  const accentCol = new THREE.Color(), songCol = new THREE.Color();
+  const accentCol = new THREE.Color(), songCol = new THREE.Color(), WHITE = new THREE.Color(1, 1, 1);
   const barLevel = new Float32Array(BINS), barPeak = new Float32Array(BINS);
   let autoGain = 1.2, peakTrack = 0.8;
 
@@ -292,20 +314,20 @@ export function createStage(ctx, audio) {
   waveGeo.setPositions(wavePos); waveGeo.setColors(waveCol);
   const waveMat = D(new LineMaterial({ vertexColors: true, linewidth: 2.2, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, worldUnits: false }));
   waveMat.resolution.set(ctx.size.x, ctx.size.y);
-  const HERO_Y = 2.75;
-  const halo = new Line2(waveGeo, waveMat); halo.position.y = HERO_Y - 0.9; group.add(halo);
-  const halo2 = new Line2(waveGeo, waveMat); halo2.position.y = HERO_Y - 0.9; halo2.rotation.z = Math.PI; halo2.scale.set(0.84, 0.84, 0.84); group.add(halo2);
+  const HERO_Y = 4.15;   // ship floats clear above the blade ring (max blade height ~2.1)
+  const halo = new Line2(waveGeo, waveMat); halo.position.y = HERO_Y - 1.9; group.add(halo);
+  const halo2 = new Line2(waveGeo, waveMat); halo2.position.y = HERO_Y - 1.9; halo2.rotation.z = Math.PI; halo2.scale.set(0.84, 0.84, 0.84); group.add(halo2);
 
   // ---------------------------------------------------------------- hero: Arwing on a holo-pedestal
-  const hero = new THREE.Group(); hero.position.y = HERO_Y; group.add(hero);
-  const ship = buildArwing({ THREE });
-  ship.group.scale.setScalar(0.74); ship.setThrust(0.45); ship.setHover(1);
+  const hero = new THREE.Group(); hero.position.y = HERO_Y; hero.name = 'hero'; group.add(hero);
+  const ship = buildHeroArwing({ THREE });
+  ship.group.scale.setScalar(1.12); ship.setThrust(0.45);
   hero.add(ship.group);
   // holo reticle rings (targeting-computer motif)
   const ringMat = D(new THREE.MeshPhysicalMaterial({ color: 0xe8f4ff, metalness: 1, roughness: 0.2, envMapIntensity: 1.4, emissive: 0x112244, emissiveIntensity: 0.6, transparent: true, opacity: 0.9 }));
   // broken-arc reticle rings (Star Fox lock-on language) rather than full wire ellipses
   const gyro = [];
-  [[3.1, 0.035, 4, 0.0], [3.55, 0.025, 3, 0.35]].forEach(([r, tube, segs, tilt], i) => {
+  [[3.55, 0.035, 4, 0.0], [4.0, 0.025, 3, 0.35]].forEach(([r, tube, segs, tilt], i) => {
     const g = new THREE.Group();
     const arcGeo = D(new THREE.TorusGeometry(r, tube, 8, 48, (Math.PI * 2 / segs) * 0.62));
     for (let s = 0; s < segs; s++) { const m = new THREE.Mesh(arcGeo, ringMat); m.rotation.z = (s / segs) * Math.PI * 2; g.add(m); }
@@ -322,8 +344,8 @@ export function createStage(ctx, audio) {
     fragmentShader: `varying vec2 vUv; varying vec3 vP; uniform vec3 uCol; uniform float uK,uTime;
       void main(){ float y=vUv.y; float a=(1.0-y)*(1.0-y)*0.35*(0.5+uK); a*=0.75+0.25*sin(y*40.0-uTime*6.0); float scan=smoothstep(0.02,0.0,abs(fract(y*6.0-uTime*0.7)-0.5)); a+=scan*0.12*(1.0-y); gl_FragColor=vec4(uCol*a,a); }`,
   }));
-  const column = new THREE.Mesh(D(new THREE.CylinderGeometry(2.3, 2.9, HERO_Y + 0.6, 48, 1, true)), pedMat);
-  column.position.y = (HERO_Y + 0.6) / 2; group.add(column);
+  const column = new THREE.Mesh(D(new THREE.CylinderGeometry(2.1, 2.9, HERO_Y + 0.3, 48, 1, true)), pedMat);
+  column.position.y = (HERO_Y + 0.3) / 2; group.add(column);
   const discMat = D(new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     uniforms: { uCol: { value: new THREE.Color(0x3ee6ff) }, uK: { value: 0.5 }, uTime: { value: 0 } },
@@ -364,7 +386,7 @@ export function createStage(ctx, audio) {
     fragmentShader: `varying vec3 vC; varying float vA; void main(){ vec2 d=gl_PointCoord-0.5; float r=length(d)*2.0; float a=exp(-r*r*4.0)*(1.0-r); gl_FragColor=vec4(vC*a*vA*1.6, a*vA); }`,
     vertexColors: true,
   }));
-  const particles = new THREE.Points(pGeo, pMat); group.add(particles);
+  const particles = new THREE.Points(pGeo, pMat); particles.name = 'particles'; group.add(particles);
   let pHead = 0;
   for (let i = 0; i < 300; i++) {
     const a = Math.random() * 6.283, r = 3 + Math.random() * 30;
@@ -418,22 +440,31 @@ export function createStage(ctx, audio) {
   const camRoll = makeSpring(0, { k: 40, c: 5, min: -1.2, max: 1.2, vmax: 6 });
   const camFov = makeSpring(0, { k: 60, c: 7, min: -14, max: 14, vmax: 80 });
   const barrel = { a: 0, v: 0, going: false };
-  let flash = 0, songHue = 0.55, hueTarget = 0.55, thrustBoost = 0, bankKick = 0;
+  let flash = 0, thrustBoost = 0, bankKick = 0;
+  // palette state (RGB-lerped)
+  const palSong = new THREE.Color(PALETTES.main.song), palAccent = new THREE.Color(PALETTES.main.accent);
+  const palNebA = new THREE.Vector3().fromArray(PALETTES.main.nebA), palNebB = new THREE.Vector3().fromArray(PALETTES.main.nebB);
+  const tgtSong = palSong.clone(), tgtAccent = palAccent.clone(), tgtNebA = palNebA.clone(), tgtNebB = palNebB.clone();
+  const shockCols = deckMat.uniforms.uShockCol.value;
+  const shock = (strength, col) => { const i = shockHead++ % 4; shocks[i].set(audio.synth.now(), strength, 0, 0); shockCols[i].copy(col); };
+  const C_BOOM = new THREE.Color(0xff7a2a), C_ALARM = new THREE.Color(0xff2a4a), C_ROLL = new THREE.Color(0x7dffb0), C_HIT = new THREE.Color(0xff9cf0), C_UI = new THREE.Color(0x9ad7ff), C_LASER = new THREE.Color(0x4cf0ff);
+  const hueOf = (c) => { const h = { h: 0, s: 0, l: 0 }; c.getHSL(h); return h.h; };
   const pendings = [];
   const STALE = 0.15;   // hits whose moment passed more than this long ago are skipped (renderer stalled)
   audio.synth.onHit((kind, strength, t) => {
     strength = Math.min(1.5, Math.max(0, strength || 0));
     const go = () => {
-      if (kind === 'timpani') { punch.kick(2.2 * strength); bob.kick(-0.9 * strength); camZ.kick(0.5 * strength); if (strength > 0.9) shocks[shockHead++ % 4].set(audio.synth.now(), 0.35 * strength, songHue, 0); burst(6, 3, songHue, 0.6, 0.5, 0.14); }
+      const songHue = hueOf(palSong);
+      if (kind === 'timpani') { punch.kick(2.2 * strength); bob.kick(-0.9 * strength); camZ.kick(0.5 * strength); if (strength > 0.9) shock(0.35 * strength, palSong); burst(6, 3, songHue, 0.6, 0.5, 0.14); }
       else if (kind === 'snare') { punch.kick(0.8 * strength); }
-      else if (kind === 'crash') { burst(90, 4, songHue + 0.1, 1.2); flash = Math.max(flash, 0.4); shocks[shockHead++ % 4].set(audio.synth.now(), 0.9, songHue, 0); }
-      else if (kind === 'boom') { burst(Math.floor(60 * strength + 30), 5 + 4 * strength, 0.06, 1.3); flash = Math.max(flash, 0.6 * strength); camZ.kick(2.5 * strength); camRoll.kick((Math.random() - 0.5) * 0.5 * strength); shocks[shockHead++ % 4].set(audio.synth.now(), Math.min(1.5, strength), 0.06, 0); punch.kick(3 * strength); bob.kick(1.2 * strength); }
+      else if (kind === 'crash') { burst(90, 4, songHue + 0.04, 1.2); flash = Math.max(flash, 0.4); shock(0.9, palSong); }
+      else if (kind === 'boom') { burst(Math.floor(60 * strength + 30), 5 + 4 * strength, 0.06, 1.3); flash = Math.max(flash, 0.6 * strength); camZ.kick(2.5 * strength); camRoll.kick((Math.random() - 0.5) * 0.5 * strength); shock(Math.min(1.5, strength), C_BOOM); punch.kick(3 * strength); bob.kick(1.2 * strength); }
       else if (kind === 'laser') { fireBolts(strength > 0.9); bob.kick(-0.25); }
       else if (kind === 'boost') { camFov.kick(50 * strength); thrustBoost = 1; burst(40, 9, 0.08, 0.25, HERO_Y - 0.3, 0.16, 0, 2.2); }
       else if (kind === 'roll') { barrel.going = true; camRoll.kick(1.2); burst(30, 5, 0.38, 1.6, HERO_Y, 0.12); }
       else if (kind === 'hit') { flash = Math.max(flash, 0.25); camRoll.kick(0.5); bankKick += 0.8; burst(20, 4, 0.9, 1.5, HERO_Y, 0.1); }
-      else if (kind === 'alarm') { shocks[shockHead++ % 4].set(audio.synth.now(), 0.7, 0.98, 0); }
-      else if (kind === 'ui') { burst(14, 2.5, 0.55, 2, 4.0, 0.09); }
+      else if (kind === 'alarm') { shock(0.7, C_ALARM); }
+      else if (kind === 'ui') { burst(14, 2.5, 0.55, 2, HERO_Y + 1.2, 0.09); }
     };
     const now = audio.synth.now();
     if (t <= now + 0.02) { if (now - t < STALE) go(); }
@@ -444,7 +475,11 @@ export function createStage(ctx, audio) {
   camera.fov = 46; camera.near = 0.1; camera.far = 900; camera.updateProjectionMatrix();
   let orbit = 0.9, lastNow = audio.synth.now();
 
-  function setSongHue(h) { hueTarget = h; }
+  function setPalette(name) {
+    const p = PALETTES[name] ?? PALETTES.idle;
+    tgtSong.set(p.song); tgtAccent.set(p.accent); tgtNebA.fromArray(p.nebA); tgtNebB.fromArray(p.nebB);
+  }
+  const setSongHue = (h) => setPalette(h < 0.3 ? 'battle' : 'main');   // legacy hook
 
   function update(dt, t) {
     const now = audio.synth.now();
@@ -455,20 +490,22 @@ export function createStage(ctx, audio) {
       if (p.at <= now + 0.005) { if (now - p.at < STALE) p.go(); pendings.splice(i, 1); }
     }
     if (pendings.length > 64) pendings.splice(0, pendings.length - 64);
-    songHue += (hueTarget - songHue) * Math.min(1, dt * 2);
-    const accentHue = (songHue + 0.55) % 1;      // complementary accent (cyan song -> gold, red song -> teal)
+    const kPal = Math.min(1, dt * 1.6);
+    palSong.lerp(tgtSong, kPal); palAccent.lerp(tgtAccent, kPal); palNebA.lerp(tgtNebA, kPal); palNebB.lerp(tgtNebB, kPal);
+    const songHue = hueOf(palSong);
     const seq = audio.seq;
     const pulse = seq.song ? seq.pulse : 0;
     const beatPulse = Math.pow(pulse, 3);
     const bass = Math.min(1.0, audio.synth.bass * autoGain * 1.4), energy = Math.min(1.0, audio.synth.energy * autoGain * 2.5);
-    accentCol.setHSL(accentHue, 1.0, 0.46); songCol.setHSL(songHue, 1.0, 0.46);
+    accentCol.copy(palAccent); songCol.copy(palSong);
 
     // springs
     punch.step(dta); bob.step(dta); camZ.step(dta); camRoll.step(dta); camFov.step(dta);
 
     // sky / deck uniforms
-    skyMat.uniforms.uTime.value = t; skyMat.uniforms.uHue.value = songHue; skyMat.uniforms.uEnergy.value = energy;
-    deckMat.uniforms.uTime.value = now; deckMat.uniforms.uBeat.value = beatPulse; deckMat.uniforms.uHue.value = songHue; deckMat.uniforms.uAccent.value = accentHue;
+    skyMat.uniforms.uTime.value = t; skyMat.uniforms.uNebA.value.copy(palNebA); skyMat.uniforms.uNebB.value.copy(palNebB); skyMat.uniforms.uEnergy.value = energy;
+    deckMat.uniforms.uTime.value = now; deckMat.uniforms.uBeat.value = beatPulse; deckMat.uniforms.uColA.value.copy(palAccent); deckMat.uniforms.uColB.value.copy(palSong);
+    barMat.uniforms.uTime.value = t; reflMat.uniforms.uTime.value = t;
     deckMat.uniforms.uCam.value.copy(camera.position);
     planet.update(dt, t);
 
@@ -489,27 +526,27 @@ export function createStage(ctx, audio) {
       const lvl = barLevel[i];
       barPeak[i] = Math.max(lvl, barPeak[i] - dt * 0.9);
       const a = (i / BINS) * Math.PI * 2 - Math.PI;
-      const h = 0.12 + lvl * 2.6;
+      const h = 0.1 + lvl * 2.0;
       tmpP.set(Math.cos(a) * RING_R, 0, Math.sin(a) * RING_R);
       tmpQ.setFromAxisAngle(Y_AXIS, -a);
       tmpS.set(1, h, 1);
       tmpM.compose(tmpP, tmpQ, tmpS); bars.setMatrixAt(i, tmpM);
       const k = i / BINS;
       const mixK = THREE.MathUtils.smoothstep(k, 0.28, 0.42);   // bass = accent, treble = song hue (RGB blend, no lime pass-through)
-      tmpC.copy(accentCol).lerp(songCol, mixK).multiplyScalar(0.15 + lvl * 0.5 + beatPulse * 0.05 + (barPeak[i] - lvl) * 0.25);
+      tmpC.copy(accentCol).lerp(songCol, mixK).multiplyScalar(0.3 + lvl * 0.6 + beatPulse * 0.08 + (barPeak[i] - lvl) * 0.3);
       bars.setColorAt(i, tmpC);
-      data[i * 4] = Math.min(255, lvl * 230); data[i * 4 + 1] = (mixK < 0.5 ? accentHue : songHue) * 255; data[i * 4 + 2] = 0; data[i * 4 + 3] = 255;
+      data[i * 4] = Math.min(255, lvl * 230); data[i * 4 + 1] = mixK * 255; data[i * 4 + 2] = 0; data[i * 4 + 3] = 255;
     }
     bars.instanceMatrix.needsUpdate = true; bars.instanceColor.needsUpdate = true; specTex.needsUpdate = true;
 
     // waveform halo
-    const wave = audio.synth.wave; const R = 4.1 * punch.s;
+    const wave = audio.synth.wave; const R = 4.6 * punch.s;
     for (let i = 0; i <= WN; i++) {
       const kk = i % WN; const a = (i / WN) * Math.PI * 2;
       const w = Math.max(-1, Math.min(1, wave[kk] * 0.6));
       const r = R + w * 0.5 + Math.sin(a * 3 + t * 0.7) * 0.05;
       wavePos[i * 3] = Math.cos(a) * r; wavePos[i * 3 + 1] = w * 0.35 + Math.sin(a * 2 + t) * 0.08; wavePos[i * 3 + 2] = Math.sin(a) * r;
-      tmpC.setHSL(songHue + 0.05 + Math.abs(w) * 0.12, 0.85, 0.5 + Math.abs(w) * 0.2).multiplyScalar(0.35 + Math.abs(w) * 0.55 + energy * 0.2);
+      tmpC.copy(palSong).lerp(WHITE, Math.abs(w) * 0.5).multiplyScalar(0.35 + Math.abs(w) * 0.55 + energy * 0.2);
       waveCol[i * 3] = tmpC.r; waveCol[i * 3 + 1] = tmpC.g; waveCol[i * 3 + 2] = tmpC.b;
     }
     waveGeo.setPositions(wavePos); waveGeo.setColors(waveCol);
@@ -523,13 +560,14 @@ export function createStage(ctx, audio) {
     ship.setBank(Math.sin(t * 0.6) * 0.35 + Math.sin(t * 1.7) * 0.1 + bankKick * Math.sin(t * 9));
     ship.flap(-0.2 + thrustBoost * 0.7);
     if (barrel.going) { barrel.v += (Math.PI * 2 - barrel.a) * 60 * dt; barrel.v *= Math.exp(-dt * 7); barrel.a += barrel.v * dt; if (barrel.a > Math.PI * 2 - 0.02) { barrel.a = 0; barrel.v = 0; barrel.going = false; } }
-    hero.rotation.set(0, t * 0.28 + Math.PI * 0.75, barrel.a, 'YXZ');
-    hero.position.y = HERO_Y + Math.sin(t * 0.8) * 0.1 + bob.s;
+    // nose (-Z) swings toward the camera side (+Z): always a 3/4-front hero angle, never a tail-on blob
+    hero.rotation.set(0, Math.PI + 0.3 + Math.sin(t * 0.19) * 0.6, barrel.a, 'YXZ');
+    hero.position.y = HERO_Y + Math.sin(t * 0.8) * 0.12 + bob.s;
     ship.update(dt, t, camera);
     for (let i = 0; i < gyro.length; i++) gyro[i].scale.setScalar(punch.s * (1 + bass * 0.05));
     gyro[0].rotation.z += dt * (0.35 + bass * 1.2); gyro[1].rotation.z -= dt * (0.25 + energy * 0.8);
-    tmpC.setHSL(songHue, 0.8, 0.6);
-    beacon.color.copy(tmpC); beacon.intensity = 8 + bass * 20 + flash * 60; beacon.position.set(0, hero.position.y - 1.5, 0);
+    tmpC.copy(palSong).lerp(WHITE, 0.15);
+    beacon.color.copy(tmpC); beacon.intensity = 8 + bass * 16 + flash * 22; beacon.position.set(0, hero.position.y - 1.5, 0);
     ringMat.emissive.copy(tmpC).multiplyScalar(0.3 + bass * 0.4);
     stripMat.color.copy(tmpC).multiplyScalar(0.9 + beatPulse * 1.1 + bass * 0.6);
     underMat.uniforms.uCol.value.copy(tmpC); underMat.uniforms.uK.value = beatPulse + bass;
@@ -570,7 +608,7 @@ export function createStage(ctx, audio) {
     const camY = 4.9 + Math.sin(t * 0.31) * 0.45;
     camera.position.set(Math.cos(orbit) * rad, camY, Math.sin(orbit) * rad);
     camera.up.set(Math.sin(camRoll.s * 0.15), Math.cos(camRoll.s * 0.15), 0);
-    camera.lookAt(0, 2.3, 0);
+    camera.lookAt(0, 2.75, 0);
     camera.fov = 46 + camFov.s * 0.25; camera.updateProjectionMatrix();
   }
 
@@ -582,5 +620,5 @@ export function createStage(ctx, audio) {
     if (ownGrade) { composer.removePass(grade); grade.dispose?.(); } else grade.uniforms.uFlash.value = 0;
   }
 
-  return { update, dispose, setSongHue, burst };
+  return { update, dispose, setSongHue, setPalette, burst };
 }

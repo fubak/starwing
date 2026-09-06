@@ -8,7 +8,8 @@ import { createAudio } from './api.js';
 import { createStage } from './visualiser.js';
 import { createSoundboard } from './ui.js';
 
-export { createAudio } from './api.js';
+export { createAudio, SFX_ALIASES, SFX_NAMES } from './api.js';
+export { buildHeroArwing } from './arwing.js';
 export { SONGS } from './music.js';
 export { SFX, SFX_ORDER } from './sfx.js';
 
@@ -19,8 +20,8 @@ export async function create(ctx) {
 
   const act = (kind, name) => {
     if (kind === 'sfx') audio.sfx(name);
-    else if (name === 'stop') audio.stop();
-    else { audio.playMusic(name); stage.setSongHue(audio.SONGS[name].hue); }
+    else if (name === 'stop') { audio.stop(); stage.setPalette('idle'); }
+    else { audio.playMusic(name); stage.setPalette(name); }
   };
   const board = createSoundboard(ctx, audio, act);
 
@@ -67,10 +68,12 @@ export async function create(ctx) {
   addEventListener('keydown', startOnGesture);
   if (!engine.autoplay) { act('music', 'main'); started = true; }   // silent-mode showcase still animates
 
-  let fireTimer = 0, tt = 0;
+  let fireTimer = 0, tt = 0, lastNow = audio.synth.now();
   return {
     update(dt, t) {
-      tt += dt;
+      // demo clock runs on AUDIO time so the scripted sortie stays in sync with the music even at 2 fps
+      const now = audio.synth.now();
+      tt += now > lastNow ? Math.min(1, now - lastNow) : dt; lastNow = now;
       if (engine.autoplay) {
         // +half a frame so a fixed-step accumulator that lands on 5.9999 still fires the 6.0 event on that frame
         while (evIdx < seqEvents.length && seqEvents[evIdx][0] <= tt + 1 / 120) { const [, k, n] = seqEvents[evIdx++]; act(k, n); }

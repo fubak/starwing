@@ -123,43 +123,57 @@ export const SONGS = {
 };
 
 // ---- drums rendered through the synth's noise renderer ------------------------------------
-function drum(synth, kind, t, vel) {
+function drum(synth, kind, t, vel, bus = 0, hits = true) {
   if (kind === 'snare') {
-    synth.noise({ t, dur: 0.16, lo: 900, hi: 6500, lo1: 400, hi1: 3000, gain: 0.32 * vel, out: 'music' });
-    synth.note({ inst: { harm: [1], a: 0.002, d: 0.08, s: 0, r: 0.05, gain: 0.35, sweep: 1.5 }, f0: 190, t, dur: 0.06, vel, out: 'music' });
-    synth.hit('snare', vel, t);
+    synth.noise({ t, dur: 0.16, lo: 900, hi: 6500, lo1: 400, hi1: 3000, gain: 0.32 * vel, out: 'music', bus });
+    synth.note({ inst: { harm: [1], a: 0.002, d: 0.08, s: 0, r: 0.05, gain: 0.35, sweep: 1.5 }, f0: 190, t, dur: 0.06, vel, out: 'music', bus });
+    if (hits) synth.hit('snare', vel, t);
   } else if (kind === 'hat') {
-    synth.noise({ t, dur: 0.045, lo: 6000, hi: 14000, gain: 0.12 * vel, out: 'music', a: 0.001 });
+    synth.noise({ t, dur: 0.045, lo: 6000, hi: 14000, gain: 0.12 * vel, out: 'music', bus, a: 0.001 });
   } else if (kind === 'crash') {
-    synth.noise({ t, dur: 1.8, lo: 3000, hi: 12000, lo1: 1500, hi1: 6000, gain: 0.28 * vel, out: 'music', a: 0.01 });
-    synth.hit('crash', vel, t);
+    synth.noise({ t, dur: 1.8, lo: 3000, hi: 12000, lo1: 1500, hi1: 6000, gain: 0.28 * vel, out: 'music', bus, a: 0.01 });
+    if (hits) synth.hit('crash', vel, t);
   }
 }
 
 // ---- sequencer ------------------------------------------------------------------------------
 export function createSequencer(synth) {
-  let song = null, songName = null;
-  let startT = 0, scheduledBeat = 0;
-  const LOOKAHEAD = 0.25;
-  let fadeGain = 1;
-  const nowBeat = () => (song ? ((synth.now() - startT) * song.bpm) / 60 : 0);
+  // Two layers (one per synth music bus) so switching songs is a real crossfade:
+  // the outgoing song keeps playing while its bus ramps down and the new one ramps up.
+  const LOOKAHEAD = 0.25, FADE = 0.9, MUSIC_GAIN = 0.6;
+  const layers = [];       // { song, name, startT, scheduledBeat, bus, fadeOutAt|null, hits }
+  let cur = null;
+  const nowBeatOf = (L) => (L ? ((synth.now() - L.startT) * L.song.bpm) / 60 : 0);
+  const nowBeat = () => nowBeatOf(cur);
+  const freeBus = () => (layers.some((L) => L.bus === 0) ? 1 : 0);
 
   function play(name) {
     const s = SONGS[name];
     if (!s) return;
-    song = s; songName = name;
-    startT = synth.now() + 0.05; scheduledBeat = 0;
-    synth.setMusicGain(0.6);
+    if (cur && cur.name === name && cur.fadeOutAt === null) return;      // already playing
+    const t = synth.now();
+    const crossing = layers.some((L) => L.fadeOutAt === null);
+    for (const L of layers) if (L.fadeOutAt === null) { L.fadeOutAt = t; synth.setMusicGain(0.0001, L.bus, FADE / 3); }
+    // if both buses are busy, drop the oldest fading layer immediately
+    while (layers.length >= 2) layers.shift();
+    const bus = freeBus();
+    const L = { song: s, name, startT: t + 0.05, scheduledBeat: 0, bus, fadeOutAt: null, hits: true };
+    layers.push(L); cur = L;
+    synth.setMusicGain(MUSIC_GAIN, bus, crossing ? FADE / 3 : 0.05);
   }
-  function stop() { song = null; songName = null; }
+  function stop() {
+    const t = synth.now();
+    for (const L of layers) if (L.fadeOutAt === null) { L.fadeOutAt = t; synth.setMusicGain(0.0001, L.bus, 0.15); }
+    cur = null;
+  }
 
-  function update() {
-    if (!song) return;
+  function scheduleLayer(L) {
+    const { song } = L;
     const spb = 60 / song.bpm;
-    const horizonBeat = ((synth.now() + LOOKAHEAD) - startT) / spb;
+    const horizonBeat = ((synth.now() + LOOKAHEAD) - L.startT) / spb;
     // schedule in small slices so we never miss anything
-    while (scheduledBeat < horizonBeat) {
-      const b0 = scheduledBeat, b1 = scheduledBeat + 0.25;
+    while (L.scheduledBeat < horizonBeat) {
+      const b0 = L.scheduledBeat, b1 = L.scheduledBeat + 0.25;
       const loopIdx = Math.floor(b0 / song.loopBeats);
       const lb0 = b0 - loopIdx * song.loopBeats, lb1 = b1 - loopIdx * song.loopBeats;
       for (const tr of song.tracks) {
@@ -167,31 +181,42 @@ export function createSequencer(synth) {
           if (beat >= lb0 && beat < lb1) {
             const absBeat = loopIdx * song.loopBeats + beat;
             if (tr.gate && !tr.gate(absBeat)) continue;
-            const t = startT + absBeat * spb;
-            if (tr.drum) drum(synth, tr.drum, t, vel);
+            const t = L.startT + absBeat * spb;
+            if (tr.drum) drum(synth, tr.drum, t, vel, L.bus, L.hits);
             else {
-              synth.note({ inst: tr.inst, midi, t, dur: dur * spb, vel, pan: tr.pan ?? 0, vib: tr.vib ?? 0, out: 'music' });
-              if (tr.inst === 'timpani') synth.hit('timpani', vel, t);
-              if (tr.inst === 'brass' || tr.inst === 'lead') synth.hit('brass', vel, t);
+              synth.note({ inst: tr.inst, midi, t, dur: dur * spb, vel, pan: tr.pan ?? 0, vib: tr.vib ?? 0, out: 'music', bus: L.bus });
+              if (L.hits && tr.inst === 'timpani') synth.hit('timpani', vel, t);
+              if (L.hits && (tr.inst === 'brass' || tr.inst === 'lead')) synth.hit('brass', vel, t);
             }
           }
         }
       }
-      scheduledBeat = b1;
+      L.scheduledBeat = b1;
+    }
+  }
+
+  function update() {
+    const t = synth.now();
+    for (let i = layers.length - 1; i >= 0; i--) {
+      const L = layers[i];
+      if (L.fadeOutAt !== null) { L.hits = false; if (t > L.fadeOutAt + FADE) { layers.splice(i, 1); continue; } }
+      scheduleLayer(L);
     }
   }
 
   return {
     play, stop, update,
-    get song() { return song; }, get name() { return songName; },
+    get song() { return cur ? cur.song : null; }, get name() { return cur ? cur.name : null; },
+    get crossfading() { return layers.length > 1; },
     get beat() { return nowBeat(); },
-    get bar() { return song ? Math.floor(nowBeat() / song.beatsPerBar) : 0; },
-    get beatInBar() { return song ? nowBeat() % song.beatsPerBar : 0; },
+    get bar() { return cur ? Math.floor(nowBeat() / cur.song.beatsPerBar) : 0; },
+    get beatInBar() { return cur ? nowBeat() % cur.song.beatsPerBar : 0; },
     /** 0..1 phase within the current beat (for visual pulse) */
-    get pulse() { return song ? 1 - (nowBeat() % 1) : 0; },
+    get pulse() { return cur ? 1 - (nowBeat() % 1) : 0; },
     /** which tracks have a note sounding right now (for the UI activity lights) */
     activity() {
-      if (!song) return [];
+      if (!cur) return [];
+      const song = cur.song;
       const b = nowBeat() % song.loopBeats;
       return song.tracks.map((tr) => ({ name: tr.name, on: tr.notes.some(([beat, , dur]) => b >= beat && b < beat + Math.max(dur, 0.12) && (!tr.gate || tr.gate(nowBeat()))) }));
     },

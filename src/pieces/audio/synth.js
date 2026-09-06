@@ -43,11 +43,16 @@ export function createAudio(ctx, opts = {}) {
   const real = !!ac;
 
   // ---- clock -----------------------------------------------------------------
-  let simTime = 0;
+  // Silent mode: in a fixed-step harness the clock follows dt (deterministic); in realtime it follows the wall
+  // clock so a slow renderer (SwiftShader at 2 fps) still hears/plays the music at tempo.
+  let simTime = 0, wallLast = -1;
+  const fixedStep = !!ctx?.engine?.fixedStep;
   const now = () => (real ? ac.currentTime : simTime);
 
   // ---- graph -----------------------------------------------------------------
-  let musicIn, sfxIn, duckGain, verb, verbSend, comp, analyser, freqData, timeData;
+  let sfxIn, duckGain, verb, verbSend, comp, analyser, freqData, timeData;
+  const musicIn = [null, null];              // two music buses so songs can crossfade
+  const busLevel = [0.6, 0.6];               // JS-side mirror of bus gain for the simulated analysis
   if (real) {
     comp = ac.createDynamicsCompressor();
     comp.threshold.value = -14; comp.knee.value = 18; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.18;
@@ -58,8 +63,8 @@ export function createAudio(ctx, opts = {}) {
     analyser.connect(bus.master);
 
     duckGain = ac.createGain(); duckGain.gain.value = 1;
-    musicIn = ac.createGain(); musicIn.gain.value = 0.6;
-    musicIn.connect(duckGain).connect(comp);
+    for (let i = 0; i < 2; i++) { musicIn[i] = ac.createGain(); musicIn[i].gain.value = 0.6; musicIn[i].connect(duckGain); }
+    duckGain.connect(comp);
     sfxIn = ac.createGain(); sfxIn.gain.value = 0.9;
     sfxIn.connect(comp);
 
@@ -89,15 +94,15 @@ export function createAudio(ctx, opts = {}) {
 
   // ---- low-level renderers -----------------------------------------------------
   /** Tonal note. f0 -> f1 sweep over the note length (f1 optional). */
-  function note({ inst, midi, f0, f1, t = now(), dur = 0.5, vel = 1, pan = 0, out = 'music', detune = 7, unison = 3, vib = 0 }) {
+  function note({ inst, midi, f0, f1, t = now(), dur = 0.5, vel = 1, pan = 0, out = 'music', bus = 0, detune = 7, unison = 3, vib = 0 }) {
     const I = typeof inst === 'string' ? INSTRUMENTS[inst] : inst;
     const freq = f0 ?? midiHz(midi);
     const fEnd = f1 ?? freq;
     const rel = I.r;
     const g = I.gain * vel;
-    ledger({ t0: t, t1: t + dur + rel, f: freq, f1: fEnd, a: I.a, d: I.d, s: I.s, r: rel, dur, gain: g, harm: I.harm, kind: inst, out });
+    ledger({ t0: t, t1: t + dur + rel, f: freq, f1: fEnd, a: I.a, d: I.d, s: I.s, r: rel, dur, gain: g, harm: I.harm, kind: inst, out, bus });
     if (!real) return;
-    const dest = out === 'music' ? musicIn : sfxIn;
+    const dest = out === 'music' ? musicIn[bus] : sfxIn;
     const env = ac.createGain();
     env.gain.setValueAtTime(0.0001, t);
     env.gain.linearRampToValueAtTime(g, t + I.a);
@@ -145,12 +150,12 @@ export function createAudio(ctx, opts = {}) {
       const o = ac.createOscillator(); o.type = 'sine'; o.frequency.value = freq / 2;
       const og = ac.createGain(); og.gain.value = 0.45; o.connect(og).connect(env); o.start(t); o.stop(stopAt);
     }
-    if (I.noise) noise({ t, dur: I.noise[3] + 0.1, lo: I.noise[0], hi: I.noise[1], gain: I.noise[2] * vel, out, rec: false });
+    if (I.noise) noise({ t, dur: I.noise[3] + 0.1, lo: I.noise[0], hi: I.noise[1], gain: I.noise[2] * vel, out, bus, rec: false });
   }
 
   /** Filtered noise burst. lo/hi -> band-pass range, sweeping to lo1/hi1 if given. */
-  function noise({ t = now(), dur = 0.3, lo = 200, hi = 2000, lo1, hi1, gain = 0.3, a = 0.005, out = 'sfx', pan = 0, rec = true, q = 0.7 }) {
-    if (rec) ledger({ t0: t, t1: t + dur, a, d: dur * 0.4, s: 0.35, r: dur * 0.5, dur: dur * 0.5, gain, noise: true, lo, hi, lo1: lo1 ?? lo, hi1: hi1 ?? hi, out });
+  function noise({ t = now(), dur = 0.3, lo = 200, hi = 2000, lo1, hi1, gain = 0.3, a = 0.005, out = 'sfx', bus = 0, pan = 0, rec = true, q = 0.7 }) {
+    if (rec) ledger({ t0: t, t1: t + dur, a, d: dur * 0.4, s: 0.35, r: dur * 0.5, dur: dur * 0.5, gain, noise: true, lo, hi, lo1: lo1 ?? lo, hi1: hi1 ?? hi, out, bus });
     if (!real) return;
     const len = Math.max(1, Math.floor(ac.sampleRate * (dur + 0.05)));
     const buf = ac.createBuffer(1, len, ac.sampleRate);
@@ -166,7 +171,7 @@ export function createAudio(ctx, opts = {}) {
     env.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     let chain = env;
     if (ac.createStereoPanner && pan) { const p = ac.createStereoPanner(); p.pan.value = pan; env.connect(p); chain = p; }
-    chain.connect(out === 'music' ? musicIn : sfxIn);
+    chain.connect(out === 'music' ? musicIn[bus] : sfxIn);
     if (out === 'sfx' && dur > 0.15) { const s = ac.createGain(); s.gain.value = 0.3; chain.connect(s).connect(verbSend); }
     src.start(t); src.stop(t + dur + 0.05);
   }
@@ -208,7 +213,7 @@ export function createAudio(ctx, opts = {}) {
     for (let i = voices.length - 1; i >= 0; i--) if (t > voices[i].t1 + 0.2) voices.splice(i, 1);
     let w0 = 0;
     for (const v of voices) {
-      const e = envAt(v, t) * v.gain;
+      const e = envAt(v, t) * v.gain * (v.out === 'music' ? busLevel[v.bus] / 0.6 : 1);
       if (e < 1e-4) continue;
       if (v.noise) {
         const k = Math.min(1, (t - v.t0) / Math.max(0.01, v.dur));
@@ -242,7 +247,7 @@ export function createAudio(ctx, opts = {}) {
     let count = 0;
     for (const v of voices) {
       if (v.noise || count > 14) continue;
-      const e = envAt(v, t) * v.gain; if (e < 2e-3) continue;
+      const e = envAt(v, t) * v.gain * (v.out === 'music' ? busLevel[v.bus] / 0.6 : 1); if (e < 2e-3) continue;
       count++;
       const cyc = 2 + (v.f < 200 ? 0 : 1);
       const phase = (t - v.t0) * v.f * 6.283;
@@ -277,9 +282,15 @@ export function createAudio(ctx, opts = {}) {
   }
 
   // ---- update (called every frame by the piece) -------------------------------------
+  let musicTarget = [0.6, 0.6];
   function update(dt) {
-    if (!real) simTime += dt;
+    if (!real) {
+      if (fixedStep) simTime += dt;
+      else { const w = performance.now() / 1000; simTime += wallLast < 0 ? dt : Math.min(1, w - wallLast); wallLast = w; }
+    }
     const t = now();
+    // mirror the bus gain ramps for the simulated analysis (same 0.05s time constant as setTargetAtTime)
+    for (let i = 0; i < 2; i++) busLevel[i] += (musicTarget[i] - busLevel[i]) * Math.min(1, dt / 0.08);
     // ducking envelope
     if (duckHold > 0) duckHold -= dt; else duckTarget = 1;
     duckLevel += (duckTarget - duckLevel) * (duckTarget < duckLevel ? Math.min(1, dt * 30) : Math.min(1, dt * 6));
@@ -293,7 +304,7 @@ export function createAudio(ctx, opts = {}) {
     get energy() { return energy; }, get bass() { return bassEnergy; }, get high() { return hiEnergy; },
     get duckLevel() { return duckLevel; },
     onHit(fn) { listeners.add(fn); return () => listeners.delete(fn); },
-    setMusicGain(v) { if (real) musicIn.gain.setTargetAtTime(v, now(), 0.05); },
+    setMusicGain(v, bus = 0, tc = 0.05) { musicTarget[bus] = v; if (real) musicIn[bus].gain.setTargetAtTime(v, now(), tc); },
     resume() { if (real && ac.state !== 'running') ac.resume(); },
   };
 }
