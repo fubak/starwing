@@ -40,7 +40,7 @@ export async function create(ctx) {
   // wave choreography: kicks off immediately so the first frames are busy
   const OPENING = [
     { kind: 'v', craft: 'vulture', path: 'strafe', mirror: 1, startDist: 30, speed: 90 },        // roars past overhead from behind
-    { kind: 'snake', craft: 'hornet', path: 'swoop', mirror: -1, startDist: 170, speed: 85 },    // swoops in from the left at ~t=1.5
+    { kind: 'snake', craft: 'hornet', path: 'swoop', mirror: -1, startDist: 150, speed: 85 },    // swoops in from the left at ~t=1.8
     { kind: 'circle', craft: 'mantis', path: 'cross', mirror: 1, startDist: 150, speed: 65 },    // heavy ring crossing at ~t=2
     { kind: 'line', craft: 'vulture', path: 'dive', mirror: -1, startDist: 70, speed: 95 },     // dive-bombers from above at ~t=3
   ];
@@ -59,7 +59,7 @@ export async function create(ctx) {
   const lineupGroup = new THREE.Group();
   if (lineup) {
     ['vulture', 'hornet', 'mantis'].forEach((k, i) => {
-      const g = buildEnemyCraft(k); g.position.set((i - 1) * 22, 8 + (i === 1 ? 3 : -3), -30); g.rotation.set(0.3, Math.PI * (0.7 + 0.2 * i), 0.1 * (i - 1)); lineupGroup.add(g);
+      const g = buildEnemyCraft(k); g.position.set((i - 1) * 42, 14 + (i === 1 ? 4 : -4), -75); g.rotation.set(0.3, Math.PI * (0.7 + 0.2 * i), 0.1 * (i - 1)); lineupGroup.add(g);
     });
     scene.add(lineupGroup);
   } else OPENING.forEach(launch);

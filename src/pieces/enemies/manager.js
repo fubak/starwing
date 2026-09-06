@@ -64,10 +64,10 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
     origin: (opts.origin ?? new THREE.Vector3()).clone(),
     fireCap: opts.fireCap ?? 1.6,
     playerRadius: opts.playerRadius ?? 5.5,
-    keepOut: opts.keepOut ?? 24,       // min distance between any craft and the camera
+    keepOut: opts.keepOut ?? 34,       // min distance between any craft and the camera
   };
-  const enemyBolts = new BoltPool(scene, { color: 0xff3a5c, core: 0xffd0d8, max: 64, length: 6, radius: 0.32 });
-  const playerBolts = new BoltPool(scene, { color: 0x53ff7a, core: 0xeaffee, max: 40, length: 7, radius: 0.3 });
+  const enemyBolts = new BoltPool(scene, { color: 0xff4a30, core: 0xfff2d0, max: 64, length: 11, radius: 0.2 });
+  const playerBolts = new BoltPool(scene, { color: 0x53ff7a, core: 0xeaffee, max: 40, length: 12, radius: 0.15 });
   const explosions = new ExplosionPool(scene, 8);
   const sprites = new SpritePool(scene, 160);
   let waveId = 0, time = 0;
@@ -96,7 +96,7 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
         dist: -slot.back - 3 * i, speed, state: 'fly', flash: 0, punch: 0, fireCd: rng.range(0.8, 2.4), age: 0, phase: rng.range(0, 6.28),
         vel: new THREE.Vector3(), spin: new THREE.Vector3(), dieT: 0, smokeCd: 0, pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, 1),
         scaleIn: 0,
-        trails: g.userData.engines.map(() => new Trail(scene, g.userData.glowColor, { n: 14, width: (craft === 'mantis' ? 1.1 : 0.85) * rs, opacity: 0.6 })),
+        trails: g.userData.engines.map(() => new Trail(scene, g.userData.glowColor, { n: 11, width: (craft === 'mantis' ? 0.7 : craft === 'vulture' ? 0.75 : 0.55) * rs, opacity: 0.38 })),
       };
       g.visible = false;
       scene.add(g); list.push(e); stats.spawned++;
@@ -166,8 +166,8 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
         if (e.state !== 'fly') return;
         _b.copy(aimPt).sub(e.pos).normalize();
         _b.x += rng.range(-spread, spread); _b.y += rng.range(-spread, spread) * 0.8; _b.normalize();
-        const side = (k % 2 ? -1 : 1) * 2.2 * CRAFT_SCALE * e.rs;
-        _a.set(side, -0.2 * CRAFT_SCALE * e.rs, 2.5 * CRAFT_SCALE * e.rs).applyQuaternion(e.group.quaternion).add(e.pos);
+        const side = (k % 2 ? -1 : 1) * (e.kind === 'mantis' ? 3.2 : e.kind === 'hornet' ? 0.6 : 0.9) * CRAFT_SCALE * e.rs;
+        _a.set(side, -0.15 * CRAFT_SCALE * e.rs, 3.0 * CRAFT_SCALE * e.rs).applyQuaternion(e.group.quaternion).add(e.pos);
         enemyBolts.fire(_a, _b, boltSpeed, e);
         e.punch = Math.max(e.punch, 0.3); // recoil
       });

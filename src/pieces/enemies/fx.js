@@ -17,9 +17,10 @@ export class BoltPool {
   constructor(scene, { color, core = 0xffffff, max = 48, length = 5, radius = 0.28 }) {
     this.max = max; this.scene = scene;
     this.bolts = []; // {p, v, life, owner}
-    const halo = new THREE.SphereGeometry(1, 10, 8); halo.scale(radius, radius, length * 0.5);
-    const cr = new THREE.SphereGeometry(1, 8, 6); cr.scale(radius * 0.38, radius * 0.38, length * 0.46);
-    this.halo = new THREE.InstancedMesh(halo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }), max);
+    // crisp bolt: a long thin needle of white-hot core, a slim coloured sheath that fades to a tail
+    const halo = new THREE.CylinderGeometry(radius * 0.55, radius, length, 8, 1, true); halo.rotateX(Math.PI / 2);
+    const cr = new THREE.CylinderGeometry(radius * 0.22, radius * 0.4, length * 0.9, 6, 1, true); cr.rotateX(Math.PI / 2);
+    this.halo = new THREE.InstancedMesh(halo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, side: THREE.DoubleSide }), max);
     this.core = new THREE.InstancedMesh(cr, new THREE.MeshBasicMaterial({ color: core, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }), max);
     this.halo.frustumCulled = this.core.frustumCulled = false;
     this.halo.count = this.core.count = 0;
@@ -223,7 +224,7 @@ export class ExplosionPool {
 const _c = new THREE.Vector3(), _d = new THREE.Vector3(), _w = new THREE.Vector3();
 export class Trail {
   /** Camera-facing ribbon behind a moving point. push(worldPos) each frame, update(camera). */
-  constructor(scene, color, { n = 16, width = 0.55, opacity = 0.75 } = {}) {
+  constructor(scene, color, { n = 12, width = 0.55, opacity = 0.75 } = {}) {
     this.n = n; this.width = width; this.pts = []; this.scene = scene;
     const g = new THREE.BufferGeometry();
     this.pos = new Float32Array(n * 2 * 3); this.alpha = new Float32Array(n * 2);
@@ -236,7 +237,7 @@ export class Trail {
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
       uniforms: { uColor: { value: new THREE.Color(color) }, uOpacity: { value: opacity } },
       vertexShader: /* glsl */`attribute float aA; varying float vA; void main(){ vA = aA; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-      fragmentShader: /* glsl */`uniform vec3 uColor; uniform float uOpacity; varying float vA; void main(){ gl_FragColor = vec4(uColor * (0.6 + 1.4*vA*vA), vA*uOpacity); }`,
+      fragmentShader: /* glsl */`uniform vec3 uColor; uniform float uOpacity; varying float vA; void main(){ float a = vA*vA*uOpacity; gl_FragColor = vec4(uColor * (0.5 + 1.0*vA*vA), a); }`,
     }));
     this.mesh.frustumCulled = false; this.mesh.visible = false;
     scene.add(this.mesh);

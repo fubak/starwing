@@ -13,6 +13,7 @@
  */
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 
 // ---------------------------------------------------------------- textures
 let _glowTex = null;
@@ -34,7 +35,7 @@ export function glowSpriteTexture() {
 
 // ---------------------------------------------------------------- materials
 export const PALETTE = {
-  hull: 0x2b7a3c,      // venom green (deep, saturated)
+  hull: 0x3c9a48,      // venom green (saturated, reads in warm backlight)
   hullStripe: 0x5a22b8, // purple colour-block band on green
   accent: 0x4a1a9c,    // imperial purple
   accentStripe: 0xe8dcc0, // bone-white band on purple
@@ -141,24 +142,24 @@ function addPanels(mat, { stripe, stripeZ = 0, stripeW = 0, tipX = 99, panel = 0
 }
 
 export function makeCraftMaterials(glowColor = PALETTE.glow, style = {}) {
-  const st = { stripeZ: 2.0, stripeW: 0.9, tipX: 9.5, ...style };
+  const st = { stripeZ: 2.0, stripeW: 0.9, tipX: 9.5, glowGain: 2.6, ...style };
   const core = addPanels(new THREE.MeshPhysicalMaterial({
     color: PALETTE.core, metalness: 0.6, roughness: 0.34, clearcoat: 0.5, clearcoatRoughness: 0.2, envMapIntensity: 1.4,
-  }), { stripe: PALETTE.coreStripe, stripeZ: st.stripeZ * 0.5, stripeW: 0.5, panel: 0.6, rim: 0x8a60ff, rimStrength: 0.5 });
+  }), { stripe: PALETTE.coreStripe, stripeZ: st.stripeZ * 0.5, stripeW: 0.5, panel: 0.42, rim: 0x8a60ff, rimStrength: 0.5 });
   const hull = addPanels(new THREE.MeshPhysicalMaterial({
-    color: PALETTE.hull, metalness: 0.55, roughness: 0.38, clearcoat: 0.45, clearcoatRoughness: 0.22, envMapIntensity: 1.1,
-  }), { stripe: PALETTE.hullStripe, stripeZ: st.stripeZ, stripeW: st.stripeW, tipX: st.tipX, panel: 0.4 });
+    color: PALETTE.hull, metalness: 0.3, roughness: 0.42, clearcoat: 0.5, clearcoatRoughness: 0.2, envMapIntensity: 1.0,
+  }), { stripe: PALETTE.hullStripe, stripeZ: st.stripeZ, stripeW: st.stripeW, tipX: st.tipX, panel: 0.3 });
   const accent = addPanels(new THREE.MeshPhysicalMaterial({
-    color: PALETTE.accent, metalness: 0.5, roughness: 0.3, clearcoat: 0.7, clearcoatRoughness: 0.15, envMapIntensity: 1.3,
-  }), { stripe: PALETTE.accentStripe, stripeZ: st.stripeZ + 1.6, stripeW: 0.35, tipX: st.tipX + 0.8, panel: 0.45, rim: 0xd08aff, rimStrength: 0.5 });
+    color: PALETTE.accent, metalness: 0.4, roughness: 0.32, clearcoat: 0.7, clearcoatRoughness: 0.15, envMapIntensity: 1.2,
+  }), { stripe: PALETTE.accentStripe, stripeZ: st.stripeZ + 1.6, stripeW: 0.35, tipX: st.tipX + 0.8, panel: 0.34, rim: 0xd08aff, rimStrength: 0.5 });
   const trim = addPanels(new THREE.MeshStandardMaterial({
     color: PALETTE.trim, metalness: 0.9, roughness: 0.34, envMapIntensity: 1.4,
   }), { stripe: PALETTE.trimStripe, stripeZ: -99, stripeW: 0, tipX: 99, panel: 0.75, rim: 0xffb080, rimStrength: 0.45 });
   const glass = new THREE.MeshPhysicalMaterial({
     color: 0x0a0614, metalness: 0.6, roughness: 0.04, clearcoat: 1, clearcoatRoughness: 0.03,
-    emissive: new THREE.Color(glowColor).multiplyScalar(0.28), envMapIntensity: 2.4,
+    emissive: new THREE.Color(glowColor).multiplyScalar(0.28), envMapIntensity: 1.5,
   });
-  const glow = new THREE.MeshBasicMaterial({ color: new THREE.Color(glowColor).multiplyScalar(2.6), toneMapped: false });
+  const glow = new THREE.MeshBasicMaterial({ color: new THREE.Color(glowColor).multiplyScalar(st.glowGain), toneMapped: false });
   return { core, hull, accent, trim, glass, glow };
 }
 
@@ -248,118 +249,99 @@ function wing(len, rootChord, tipChord, rootT, tipT) {
   return g;
 }
 const HX = Math.PI / 2;
+/** Chunky faceted mass: convex hull of a point cloud. Points are [x,y,z] triples. */
+const hull = (pts) => new ConvexGeometry(pts.map((p) => new THREE.Vector3(p[0], p[1], p[2])));
+/** Same hull mirrored across x (for wings / claws). */
+const hullM = (pts) => hull(pts.map(([x, y, z]) => [-x, y, z]));
+/** Symmetric hull: every point with x != 0 is duplicated at -x. */
+const hullS = (pts) => hull(pts.flatMap(([x, y, z]) => (x ? [[x, y, z], [-x, y, z]] : [[x, y, z]])));
 
 // ---------------------------------------------------------------- designs
 /** VULTURE — fast interceptor. Dark armoured core, big down-swept green delta wings with purple bands, twin engine bells, eye-slit canopy. */
 function vulture(k) {
-  // fuselage core: dark, faceted, with a raised dorsal spine
-  k.add('core', cyl(0.46, 0.9, 2.6, 6), { p: [0, 0, 0.6], r: [HX, 0, 0], s: [1.3, 1, 0.85] });
-  k.add('core', cone(0.46, 1.9, 6), { p: [0, 0, 2.85], r: [HX, 0, 0], s: [1.3, 1, 0.85] });
-  k.add('trim', cyl(0.9, 0.72, 1.4, 6), { p: [0, 0, -1.4], r: [HX, 0, 0], s: [1.3, 1, 0.85] });
-  k.add('accent', cone(0.2, 0.9, 6), { p: [0, 0, 4.2], r: [HX, 0, 0] });                 // nose spike
-  // dorsal spine + intake cheeks
-  k.add('accent', box(0.55, 0.45, 3.2), { p: [0, 0.62, 0.1] });
-  k.mirror('trim', () => box(0.4, 0.5, 1.6), { p: [0.62, 0.05, 0.9], r: [0, 0, 0.3] });    // intake cheeks
-  k.mirror('core', () => box(0.28, 0.32, 0.1), { p: [0.66, 0.08, 1.72], r: [0, 0, 0.3] }); // intake mouths (dark)
-  k.add('glow', box(0.12, 0.08, 2.2), { p: [0, 0.87, 0.3] });
-  // eye-slit canopy
-  k.add('glass', sph(0.5, 14, 10), { p: [0, 0.6, 1.5], s: [1.1, 0.5, 1.6] });
-  // big down-swept delta wings (ridged) + leading edge armour
-  k.mirror('hull', () => wing(3.5, 2.3, 0.7, 0.36, 0.12), { p: [2.25, -0.35, -0.2], r: [0, -0.28, 0.22] });
-  k.mirror('accent', () => slab(3.3, 0.5, 0.25, 0.44, 0.16), { p: [2.15, -0.3, 0.98], r: [0, -0.28, 0.22] });
-  k.mirror('trim', () => box(1.2, 0.18, 1.0), { p: [1.25, -0.02, -0.4], r: [0, -0.28, 0.22] });   // wing-root armour plate
-  k.mirror('glow', () => box(3.0, 0.06, 0.1), { p: [2.1, -0.28, 1.18], r: [0, -0.28, 0.22] });
-  // wingtip cannon pods
-  k.mirror('trim', () => cyl(0.28, 0.34, 2.1, 8), { p: [3.8, -0.78, 0.4], r: [HX, 0, 0] });
-  k.mirror('core', () => cyl(0.2, 0.3, 0.5, 8), { p: [3.8, -0.78, -0.75], r: [HX, 0, 0] });
-  k.mirror('glow', () => cyl(0.16, 0.2, 0.3, 8), { p: [3.8, -0.78, 1.48], r: [HX, 0, 0] });
-  // twin tail fins (canted)
-  k.mirror('hull', () => slab(1.5, 1.4, 0.5, 0.14, 0.06), { p: [0.65, 0.92, -1.4], r: [0, 0, 1.05] });
-  k.mirror('glow', () => box(0.04, 1.2, 0.08), { p: [0.9, 1.47, -1.9], r: [0, 0, -0.5] });
-  // twin engine bells with dark throats
-  k.mirror('trim', () => cyl(0.38, 0.5, 0.8, 10), { p: [0.58, -0.05, -2.3], r: [HX, 0, 0] });
-  k.mirror('core', () => cyl(0.3, 0.42, 0.2, 10), { p: [0.58, -0.05, -2.62], r: [HX, 0, 0] });
-  k.mirror('glow', () => cyl(0.24, 0.24, 0.12, 10), { p: [0.58, -0.05, -2.7], r: [HX, 0, 0] });
-  k.engine(0.58, -0.05, -2.82, 0.5).engine(-0.58, -0.05, -2.82, 0.5);
+  // ONE body mass: a faceted dart, wide flat mid-section, keel underneath
+  k.add('core', hullS([
+    [0, 0.05, 4.4],                                           // nose point
+    [0.55, 0.3, 2.2], [0.55, -0.3, 2.2], [0, 0.62, 2.0], [0, -0.55, 2.2],
+    [1.0, 0.4, 0.0], [1.0, -0.45, 0.2], [0, 0.95, 0.0], [0, -0.85, 0.0],
+    [0.8, 0.35, -2.4], [0.8, -0.4, -2.4], [0, 0.75, -2.5], [0, -0.6, -2.5],
+  ]));
+  // ONE wing shape per side: thick-rooted swept delta with anhedral (tips droop)
+  k.mirror('hull', () => hull([
+    [0.7, 0.05, 1.4], [0.7, 0.4, 0.2], [0.7, -0.35, -1.9], [0.7, 0.3, -2.0],
+    [2.4, -0.3, -0.6], [4.3, -0.95, -1.7], [4.3, -1.05, -2.35], [3.4, -0.8, -2.3],
+  ]), { p: [0, 0, 0] });
+  // purple leading-edge armour cap (single wedge along the wing's front)
+  k.mirror('accent', () => hull([
+    [0.75, 0.12, 1.55], [0.75, -0.15, 1.5], [0.75, 0.0, 1.1], [2.6, -0.32, -0.55], [4.35, -0.95, -1.75], [4.35, -1.1, -1.95], [2.6, -0.5, -0.8],
+  ]), { p: [0, 0, 0] });
+  // canopy: long dark eye-slit dome, sunk into the spine
+  k.add('glass', sph(0.5, 14, 10), { p: [0, 0.72, 1.35], s: [0.9, 0.5, 1.9] });
+  // single dorsal fin (purple)
+  k.add('accent', hullS([[0.07, 0.8, -0.6], [0.07, 0.85, -2.4], [0.0, 2.1, -2.75], [0.0, 2.0, -2.2], [0.05, 0.9, -1.2]]));
+  // ONE engine: big central bell with a dark throat and a glow disc
+  k.add('trim', cyl(0.72, 0.9, 0.9, 12), { p: [0, 0, -2.75], r: [HX, 0, 0], s: [1.15, 1, 1] });
+  k.add('core', cyl(0.62, 0.78, 0.2, 12), { p: [0, 0, -3.15], r: [HX, 0, 0], s: [1.15, 1, 1] });
+  k.add('glow', cyl(0.5, 0.5, 0.14, 12), { p: [0, 0, -3.22], r: [HX, 0, 0], s: [1.15, 1, 1] });
+  // glowing wingtip cannon slits (small, crisp)
+  k.mirror('glow', () => box(0.5, 0.06, 0.12), { p: [4.0, -0.95, -1.7] });
+  k.engine(0, 0, -3.35, 0.75);
   return { radius: 3.1, hp: 3, style: { stripeZ: -0.9, stripeW: 0.7, tipX: 9.6 } };
 }
 
 /** HORNET — insectoid drone. Dark segmented abdomen, armoured thorax, bulbous head with acid eyes, four blade wings, hanging legs, stinger engine. */
 function hornet(k) {
-  // thorax (green armour) / abdomen (dark core with glow rings) / head (purple)
-  k.add('hull', sph(0.98, 18, 14), { p: [0, 0, 0.2], s: [1, 0.85, 1.2] });
-  k.add('core', sph(0.82, 16, 12), { p: [0, -0.2, -1.7], s: [1, 0.85, 1.7] });
-  k.add('accent', sph(0.7, 16, 12), { p: [0, 0.1, 1.5], s: [1.15, 0.9, 1] });
-  // abdomen segment rings (trim bands) + glow between
-  for (let i = 0; i < 3; i++) {
-    k.add('trim', torus(0.74 - i * 0.12, 0.09, Math.PI * 2, 24), { p: [0, -0.2, -1.05 - i * 0.65] });
-    k.add('glow', torus(0.7 - i * 0.12, 0.05, Math.PI * 2, 24), { p: [0, -0.2, -1.35 - i * 0.65] });
-  }
-  // thorax armour plates
-  k.mirror('trim', () => box(0.55, 0.28, 1.3), { p: [0.62, 0.55, 0.1], r: [0, 0, -0.5] });
-  k.add('trim', box(0.5, 0.2, 1.4), { p: [0, 0.85, 0.1] });
-  k.add('glow', box(0.1, 0.06, 1.2), { p: [0, 0.96, 0.1] });
-  // eyes (big, bulging) with dark sockets
-  k.mirror('core', () => sph(0.36, 12, 10), { p: [0.42, 0.28, 1.78], s: [1, 0.9, 1] });
-  k.mirror('glow', () => sph(0.3, 12, 10), { p: [0.44, 0.28, 1.88], s: [1, 0.85, 1.1] });
-  // mandibles / cannons
-  k.mirror('trim', () => cone(0.14, 1.7, 6), { p: [0.5, -0.25, 2.6], r: [HX + 0.12, 0, 0.35] });
-  k.mirror('glow', () => sph(0.1, 8, 6), { p: [0.35, -0.42, 3.35] });
-  // blade wings (2 pairs), thick at root, ridged, with dark wing roots
-  k.mirror('accent', () => wing(4.0, 0.75, 0.35, 0.18, 0.05), { p: [2.3, 0.5, 0.5], r: [0, 0.3, 0.2] });
-  k.mirror('accent', () => wing(3.4, 0.65, 0.3, 0.16, 0.05), { p: [2.0, 0.45, -0.5], r: [0, -0.45, 0.16] });
-  k.mirror('core', () => box(0.6, 0.3, 0.8), { p: [0.9, 0.5, 0.45], r: [0, 0.3, 0.2] });
-  k.mirror('core', () => box(0.6, 0.3, 0.7), { p: [0.85, 0.45, -0.5], r: [0, -0.45, 0.16] });
-  k.mirror('glow', () => box(3.6, 0.05, 0.1), { p: [2.2, 0.52, 0.85], r: [0, 0.3, 0.2] });
-  k.mirror('glow', () => box(3.0, 0.05, 0.1), { p: [1.9, 0.47, -0.78], r: [0, -0.45, 0.16] });
-  // legs (jointed: femur + tibia)
-  for (let i = 0; i < 3; i++) {
-    k.mirror('trim', () => cyl(0.07, 0.1, 1.1, 5), { p: [0.7, -0.7, 0.9 - i * 0.6], r: [0.35, 0, 0.9] });
-    k.mirror('trim', () => cyl(0.05, 0.07, 0.9, 5), { p: [1.25, -1.25, 0.75 - i * 0.6], r: [0.35, 0, -0.4] });
-  }
-  // stinger engine
-  k.add('trim', cone(0.32, 1.0, 8), { p: [0, -0.25, -3.3], r: [-HX, 0, 0] });
-  k.add('core', cyl(0.28, 0.2, 0.3, 8), { p: [0, -0.25, -3.35], r: [HX, 0, 0] });
-  k.add('glow', sph(0.2, 10, 8), { p: [0, -0.25, -3.4] });
-  k.engine(0, -0.25, -3.55, 0.5);
+  // ONE body mass: squat angular beetle carapace (purple), wide across the shoulders, tapering to a stinger
+  k.add('accent', hullS([
+    [0.75, 0.2, 1.9], [0.75, -0.35, 1.9], [0, 0.7, 1.7], [0, -0.7, 1.8],     // blunt head
+    [1.55, 0.15, 0.1], [1.2, 0.75, 0.0], [1.2, -0.6, 0.1], [0, 1.15, -0.1], [0, -0.95, 0.0],  // shoulders
+    [0.55, 0.2, -2.6], [0, 0.5, -2.7], [0, -0.35, -2.7],                      // tail root
+  ]));
+  // dark dorsal saddle so the carapace reads as two plates, not a blob
+  k.add('core', hullS([[0.9, 0.55, 0.6], [0.9, 0.5, -1.3], [0, 1.28, 0.3], [0, 1.2, -1.6], [0.5, 0.9, 1.3], [0, 1.0, 1.5]]));
+  // ONE wing shape per side: big forward-raked scythe blade (green), thick at the root
+  k.mirror('hull', () => hull([
+    [1.2, 0.3, 0.6], [1.2, 0.3, -0.7], [1.2, 0.85, 0.0], [2.2, 0.5, 0.9], [2.4, 0.95, 0.2],
+    [4.6, 0.85, 2.3], [4.6, 0.85, 1.75], [4.5, 1.2, 2.0], [3.4, 0.75, 0.4], [3.4, 1.15, 1.0],
+  ]), { p: [0, 0, 0] });
+  // two huge compound eyes: flush glowing acid-green lenses in dark sockets — the single unmistakable glow
+  k.mirror('core', () => sph(0.4, 12, 10), { p: [0.55, 0.15, 1.7], s: [1, 0.9, 1] });
+  k.mirror('glow', () => sph(0.32, 12, 10), { p: [0.6, 0.15, 1.82], s: [1, 0.85, 1.05] });
+  // twin mandible tusks (gunmetal) — chunky, forward
+  k.mirror('trim', () => hull([[0.6, -0.5, 1.6], [0.25, -0.45, 1.7], [0.45, -0.15, 1.7], [0.45, -0.75, 1.7], [0.3, -0.55, 3.3]]), { p: [0, 0, 0] });
+  // stinger engine: one bell with dark throat and glow
+  k.add('trim', cyl(0.42, 0.62, 0.9, 10), { p: [0, 0.05, -2.95], r: [HX, 0, 0] });
+  k.add('core', cyl(0.36, 0.5, 0.2, 10), { p: [0, 0.05, -3.35], r: [HX, 0, 0] });
+  k.add('glow', cyl(0.3, 0.3, 0.14, 10), { p: [0, 0.05, -3.42], r: [HX, 0, 0] });
+  k.engine(0, 0.05, -3.55, 0.6);
   return { radius: 3.1, hp: 2, style: { stripeZ: 0.2, stripeW: 0.35, tipX: 10.5 } };
 }
 
 /** MANTIS — heavy gunship. Thick armoured crescent wing, dark central pod, twin forward claws, triple thrusters. */
 function mantis(k) {
-  // central pod: dark core with green/purple armour
-  k.add('core', cyl(0.85, 1.25, 3.0, 8), { p: [0, 0, 0], r: [HX, 0, 0], s: [1.2, 1, 0.9] });
-  k.add('accent', cone(0.85, 1.9, 8), { p: [0, 0, 2.45], r: [HX, 0, 0], s: [1.2, 1, 0.9] });
-  k.add('trim', cyl(1.25, 1.05, 1.0, 8), { p: [0, 0, -2.0], r: [HX, 0, 0], s: [1.2, 1, 0.9] });
-  k.mirror('hull', () => box(0.7, 0.35, 2.6), { p: [0.9, 0.55, 0.1], r: [0, 0, -0.6] });   // shoulder armour
-  k.add('hull', box(1.0, 0.3, 2.4), { p: [0, 0.95, 0.0] });
-  k.add('glass', sph(0.5, 14, 10), { p: [0, 0.85, 1.0], s: [1, 0.6, 1.6] });
-  k.add('glow', box(1.4, 0.1, 0.1), { p: [0, 0.35, 3.1] });
-  k.mirror('core', () => box(0.35, 0.5, 0.1), { p: [0.55, -0.15, 3.15] });            // dark intake slots in the nose
-  // thick armoured crescent wing, opening rearward — squashed tube + plating segments
-  k.add('hull', torus(3.4, 0.85, Math.PI, 40), { p: [0, 0, -0.8], r: [HX, 0, 0], s: [1, 1, 0.45] });
-  for (let i = 0; i < 7; i++) {
-    const a = Math.PI * (0.08 + 0.84 * (i / 6)), x = Math.cos(a) * 3.4, z = -0.8 + Math.sin(a) * 3.4;
-    k.add(i % 2 ? 'accent' : 'trim', box(0.9, 0.5, 0.6), { p: [x, 0.12, z], r: [0, -a + HX, 0] });
-  }
-  k.add('glow', torus(3.4, 0.08, Math.PI * 0.92, 40), { p: [0, 0.4, -0.8], r: [HX, 0, Math.PI * 0.04] });
-  k.add('glow', torus(3.4, 0.08, Math.PI * 0.92, 40), { p: [0, -0.4, -0.8], r: [HX, 0, Math.PI * 0.04] });
-  // armour plates on wing shoulders + tip blocks
-  k.mirror('accent', () => box(1.5, 0.45, 1.3), { p: [2.1, 0.1, 1.2], r: [0, 0.6, 0] });
-  k.mirror('core', () => box(0.85, 0.7, 0.9), { p: [3.35, 0, 0.2] });
-  // claws at wing tips
-  k.mirror('trim', () => cone(0.26, 2.8, 6), { p: [3.6, -0.1, 1.3], r: [HX, 0, 0.08] });
-  k.mirror('glow', () => sph(0.16, 8, 6), { p: [3.65, -0.1, 2.7] });
-  // top + bottom fins
-  k.add('hull', wing(1.7, 1.9, 0.7, 0.18, 0.06), { p: [0, 1.5, -1.4], r: [0, 0, HX] });
-  k.add('accent', slab(1.0, 1.4, 0.6, 0.16, 0.06), { p: [0, -1.15, -1.4], r: [0, 0, -HX] });
-  // thrusters with dark throats
-  const th = [[0, 0.45], [0.62, -0.35], [-0.62, -0.35]];
+  // ONE wing shape: a single wide flying-wing slab (green), thick at the centre, knife-thin at the tips
+  k.add('hull', hullS([
+    [0, 0.1, 2.3], [1.3, 0.45, 1.1], [1.3, -0.55, 1.1],
+    [4.4, 0.1, -1.6], [4.4, -0.2, -1.6], [4.5, -0.05, -2.5],
+    [1.6, 0.45, -2.6], [1.6, -0.55, -2.6], [0, 0.4, -2.7], [0, -0.7, -2.6],
+  ]));
+  // ONE body mass: dark armoured hump riding the wing, with a purple cowl over the nose
+  k.add('core', hullS([
+    [0.35, 0.3, 2.6], [0.85, 0.75, 1.0], [0.85, 0.75, -1.4], [0, 1.35, 0.3], [0, 1.3, -1.6], [0, 0.95, 1.9], [0.6, 0.6, -2.5], [0, 0.8, -2.7],
+  ]));
+  k.add('accent', hullS([[0.5, 0.35, 2.75], [0.9, 0.85, 1.3], [0, 1.15, 1.2], [0, 0.6, 2.9], [0.9, 0.55, 2.0], [0.4, 0.95, 2.3]]));
+  k.add('glass', sph(0.5, 14, 10), { p: [0, 1.12, 0.6], s: [0.8, 0.45, 1.5] });
+  // twin forward claws (gunmetal) — chunky tusks growing out of the leading edge
+  k.mirror('trim', () => hull([[2.7, 0.25, 0.0], [3.6, 0.2, -0.3], [3.1, -0.35, -0.2], [2.9, 0.0, 0.3], [3.2, -0.05, 3.6]]), { p: [0, 0, 0] });
+  // tip beacons (crisp slits, not nubs)
+  k.mirror('glow', () => box(0.7, 0.06, 0.12), { p: [4.0, -0.03, -2.0] });
+  // three engine bells across the trailing edge, one continuous glowing row
+  const th = [[0, 0.5], [1.7, -0.05], [-1.7, -0.05]];
   for (const [x, y] of th) {
-    k.add('trim', cyl(0.34, 0.42, 0.7, 10), { p: [x, y, -2.7], r: [HX, 0, 0] });
-    k.add('core', cyl(0.28, 0.36, 0.18, 10), { p: [x, y, -3.0], r: [HX, 0, 0] });
-    k.add('glow', cyl(0.22, 0.22, 0.12, 10), { p: [x, y, -3.08], r: [HX, 0, 0] });
-    k.engine(x, y, -3.2, 0.5);
+    k.add('trim', cyl(0.42, 0.55, 0.8, 10), { p: [x, y, -2.85], r: [HX, 0, 0] });
+    k.add('core', cyl(0.36, 0.46, 0.18, 10), { p: [x, y, -3.2], r: [HX, 0, 0] });
+    k.add('glow', cyl(0.3, 0.3, 0.12, 10), { p: [x, y, -3.27], r: [HX, 0, 0] });
+    k.engine(x, y, -3.4, 0.55);
   }
   return { radius: 3.9, hp: 5, style: { stripeZ: 0.6, stripeW: 0.6, tipX: 8.4 } };
 }
@@ -374,11 +356,12 @@ const BUILDERS = { vulture, hornet, mantis };
  */
 export function buildEnemyCraft(kind = 'vulture', opts = {}) {
   const fn = BUILDERS[kind] ?? vulture;
-  const glowColor = opts.glowColor ?? (kind === 'hornet' ? PALETTE.eye : kind === 'mantis' ? 0xffb040 : PALETTE.glow);
+  const glowColor = opts.glowColor ?? (kind === 'hornet' ? PALETTE.eye : kind === 'mantis' ? 0xff8a38 : PALETTE.glow);
   const kit = new Kit();
   const info = fn(kit);
   // stripe params are in world (post-scale) units
   const style = Object.fromEntries(Object.entries(info.style ?? {}).map(([k, v]) => [k, v * CRAFT_SCALE]));
+  style.glowGain = kind === 'hornet' ? 1.7 : 2.6;   // acid-green eyes bloom hard; keep them lenses, not lamps
   const mats = opts.mats ?? makeCraftMaterials(glowColor, style);
   const group = kit.build(mats);
   Object.assign(group.userData, { kind, hp: info.hp, mats, glowColor, flashMats: [mats.core, mats.hull, mats.accent, mats.trim] });
