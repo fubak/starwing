@@ -13,6 +13,7 @@ export { makeHeroMaterials, makeHero } from './hero.js';
 export { makeHeroScene } from './scene.js';
 
 const ORDER = ['space', 'corneria', 'sunset', 'venom'];
+const _rim = new THREE.Color();
 
 export async function create(ctx) {
   const { scene, camera, input, ui } = ctx;
@@ -30,8 +31,8 @@ export async function create(ctx) {
 
   // ---- planet: we skim its upper atmosphere, limb depression ~15 degrees
   const PR = 1500;
-  const planet = makePlanet({ radius: PR, seed: 7, haloScale: 1.04, gpu: true, renderer: ctx.renderer });
-  planet.position.set(120, -PR - 62, -420);
+  const planet = makePlanet({ radius: PR, seed: 7, haloScale: 1.05, gpu: true, renderer: ctx.renderer });
+  planet.position.set(120, -PR - 88, -420);
   // spin about the pole (Y, applied first in XYZ order) to put a coastline
   // under the flight, then tilt so the equator faces us, not the ice cap
   const qs = new URLSearchParams(location.search);
@@ -66,9 +67,12 @@ export async function create(ctx) {
     const p = PRESETS[name];
     title.textContent = p.label;
     sub.textContent = `ACES · EXP ${p.exposure.toFixed(2)} · BLOOM ${p.bloom.strength.toFixed(2)} · ${name.toUpperCase()}`;
-    card.style.opacity = '0'; requestAnimationFrame(() => (card.style.opacity = '1'));
   };
   setCard(ORDER[idx]);
+  // The label swaps at the midpoint of the sky cross-fade (not on the key
+  // press) so the title never sits over the previous look.
+  let cardPending = null, cardT = 0;
+  const queueCard = (name) => { cardPending = name; cardT = 0; card.style.opacity = '0'; };
 
   const hint = document.createElement('div');
   hint.style.cssText = `position:absolute;right:48px;bottom:48px;color:#fff;opacity:.55;font:600 11px/1.6 sans-serif;letter-spacing:.3em;text-align:right;text-shadow:0 2px 8px rgba(0,0,0,.6)`;
@@ -105,7 +109,7 @@ export async function create(ctx) {
     hero.pop();
     look.flash(0.35);
     rig.kick = 1;
-    setCard(ORDER[idx]);
+    queueCard(ORDER[idx]);
     ctx.audio?.tone({ type: 'triangle', f0: 520, f1: 880, dur: 0.18, gain: 0.12 });
   };
 
@@ -121,6 +125,10 @@ export async function create(ctx) {
     update(dt, t) {
       if (syncGL) drainGL();
       if (input.wasPressed('bomb') || input.wasPressed('confirm')) switchLook(1);
+      if (cardPending) {
+        cardT += dt;
+        if (cardT > 0.42) { setCard(cardPending); cardPending = null; card.style.opacity = '1'; }
+      }
 
       hero.update(dt, t, camera, input);
 
@@ -147,6 +155,9 @@ export async function create(ctx) {
       look.update(dt, t);
       // planet follows the blended preset so its atmosphere fades with the sky
       planet.setPreset(look.preset);
+      // hardware edge light picks up the planet's atmosphere colour
+      _rim.copy(look.preset.planet.atmo).lerp(look.preset.sky.horizon, 0.35);
+      hero.setRim(_rim, 0.5);
       planet.update(dt, t, camera);
     },
     dispose() {

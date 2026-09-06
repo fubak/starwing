@@ -87,7 +87,7 @@ const FRAG = /* glsl */ `
   uniform vec3 uSunDir, uSunColor;
   uniform float uSunSize, uSunGlow, uSunIntensity;
   uniform vec3 uZenith, uHorizon, uGround;
-  uniform float uHaze, uStars, uNebula, uMilky, uTime;
+  uniform float uHaze, uStars, uNebula, uMilky, uTime, uClouds;
   uniform vec3 uNebulaA, uNebulaB;
   uniform sampler2D uNoise;
   ${SKY_NOISE_GLSL}
@@ -105,6 +105,17 @@ const FRAG = /* glsl */ `
     return s;
   }
 
+  // high cirrus sheet: noise projected onto a plane overhead, stretched along
+  // the wind so it reads as streaks, densest in a band above the horizon
+  float cirrus(vec3 d) {
+    if (d.y < 0.005) return 0.0;
+    vec2 p = d.xz / (d.y + 0.18);
+    p = vec2(p.x * 0.28, p.y) * 1.6 + vec2(uTime * 0.006, uTime * 0.002);
+    float n = vnoise(vec3(p, 1.3)) * 0.5 + vnoise(vec3(p * 2.6 + 3.1, 4.1)) * 0.3 + vnoise(vec3(p * 6.3 + 7.7, 7.7)) * 0.2;
+    float fade = smoothstep(0.005, 0.1, d.y) * (1.0 - smoothstep(0.3, 0.75, d.y));
+    return smoothstep(0.5, 0.74, n) * fade;
+  }
+
   void main() {
     vec3 d = normalize(vDir);
     float y = d.y;
@@ -113,9 +124,19 @@ const FRAG = /* glsl */ `
     // ---- atmosphere gradient
     float h = exp(-max(y, 0.0) * uHaze);
     vec3 sky = mix(uZenith, uHorizon, h);
+    // dense haze band hugging the horizon (moist air), scaled by the cloud amount
+    sky += uHorizon * 0.45 * exp(-abs(y) * 16.0) * uClouds;
     float below = smoothstep(0.02, -0.3, y);
     vec3 ground = mix(uHorizon * 0.55, uGround, smoothstep(0.0, -0.45, y));
     vec3 col = mix(sky, ground, below);
+
+    // ---- cirrus: lit white toward the sun, cool-shadowed away from it
+    if (uClouds > 0.001) {
+      float c = cirrus(d) * uClouds;
+      float toward = 0.45 + 0.55 * pow(max(mu, 0.0), 2.0);
+      vec3 cloudCol = mix(uHorizon, vec3(1.0), 0.55) * (0.55 + 0.45 * toward) + uSunColor * 0.25 * toward;
+      col = mix(col, cloudCol, c * 0.85);
+    }
 
     // ---- deep-space content, hidden by bright atmosphere
     float atmoMask = clamp(1.0 - dot(sky, vec3(0.6)) * 1.6, 0.0, 1.0) * (1.0 - below);
@@ -185,6 +206,7 @@ export function makeSkyMaterial(preset) {
       uStars: { value: 1 },
       uNebula: { value: 1 },
       uMilky: { value: 0.5 },
+      uClouds: { value: 0 },
       uTime: { value: 0 },
       uNebulaA: { value: new THREE.Color() },
       uNebulaB: { value: new THREE.Color() },
@@ -211,6 +233,7 @@ export function applySkyPreset(mat, p) {
   u.uStars.value = p.sky.stars;
   u.uNebula.value = p.sky.nebula;
   u.uMilky.value = p.sky.milky;
+  u.uClouds.value = p.sky.clouds ?? 0;
   u.uNebulaA.value.copy(p.sky.nebulaA);
   u.uNebulaB.value.copy(p.sky.nebulaB);
 }

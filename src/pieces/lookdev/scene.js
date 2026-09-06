@@ -1,6 +1,29 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { buildArwing } from '../ship/arwing.js';
 import { makeHeroMaterials } from './hero.js';
+
+// ---------------------------------------------------------------------------
+// Sky-rim: a fresnel edge light in the sky colour injected into the standard
+// PBR shader, so hardware silhouettes separate from the background the way
+// Star Fox Zero's hulls do. uRim is shared so the look can re-tint it.
+// ---------------------------------------------------------------------------
+const RIM = { uRimColor: { value: new THREE.Color(0.35, 0.6, 1.0) }, uRimK: { value: 0.55 } };
+function withRim(mat) {
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uRimColor = RIM.uRimColor;
+    shader.uniforms.uRimK = RIM.uRimK;
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uRimColor; uniform float uRimK;')
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        { float rimF = pow(1.0 - saturate(dot(normalize(vNormal), normalize(vViewPosition))), 3.2);
+          totalEmissiveRadiance += uRimColor * rimF * uRimK; }`);
+  };
+  mat.customProgramCacheKey = () => 'lookdev-rim';
+  return mat;
+}
+// bevelled box so every edge catches a specular line instead of reading as a flat slab
+const bevelBox = (w, h, d, r = 0.35) => new RoundedBoxGeometry(w, h, d, 2, Math.min(r, Math.min(w, h, d) * 0.45));
 
 /**
  * Cinematic hero moment for the look reference: a three-ship Arwing flight
@@ -26,9 +49,9 @@ function makeGate(M) {
   // gaps so the silhouette reads as built hardware. Bevelled by a slightly
   // smaller dark inner block so every segment has a dark seam.
   const chord = 2 * R * Math.sin(Math.PI / SEG);
-  const segGeo = new THREE.BoxGeometry(chord - 1.6, 4.6, 5.4);
+  const segGeo = bevelBox(chord - 1.6, 4.6, 5.4, 0.5);
   const segs = new THREE.InstancedMesh(segGeo, M.hull, SEG);
-  const innerGeo = new THREE.BoxGeometry(chord - 0.4, 3.2, 3.2);
+  const innerGeo = bevelBox(chord - 0.4, 3.2, 3.2, 0.3);
   const inners = new THREE.InstancedMesh(innerGeo, M.dark, SEG);
   for (let i = 0; i < SEG; i++) {
     const a = (i / SEG) * Math.PI * 2 + Math.PI / SEG;
@@ -50,11 +73,11 @@ function makeGate(M) {
   g.add(rimIn);
   // 4 major pylons (cardinal) : cobalt wedge + white cowl + gold clamp; 4 minor
   // strut blocks between them
-  const pylonGeo = new THREE.BoxGeometry(6.4, 10, 7.6);
+  const pylonGeo = bevelBox(6.4, 10, 7.6, 0.6);
   const pylons = new THREE.InstancedMesh(pylonGeo, M.cobalt, 4);
-  const cowlGeo = new THREE.BoxGeometry(7.2, 3.2, 8.4);
+  const cowlGeo = bevelBox(7.2, 3.2, 8.4, 0.5);
   const cowls = new THREE.InstancedMesh(cowlGeo, M.hull, 4);
-  const clampGeo = new THREE.BoxGeometry(7.6, 0.8, 8.8);
+  const clampGeo = bevelBox(7.6, 0.8, 8.8, 0.25);
   const clamps = new THREE.InstancedMesh(clampGeo, M.gold, 4);
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
@@ -66,7 +89,7 @@ function makeGate(M) {
     tmp.position.set(Math.cos(a) * (R + 5.3), Math.sin(a) * (R + 5.3), 0);
     tmp.updateMatrix(); clamps.setMatrixAt(i, tmp.matrix);
   }
-  const capGeo = new THREE.BoxGeometry(3.4, 2.2, 6.6);
+  const capGeo = bevelBox(3.4, 2.2, 6.6, 0.4);
   const caps = new THREE.InstancedMesh(capGeo, M.dark, 4);
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * Math.PI * 2;
@@ -95,7 +118,7 @@ function makeGate(M) {
   const dish = new THREE.Mesh(new THREE.SphereGeometry(3.4, 24, 12, 0, Math.PI * 2, 0, Math.PI / 3), M.hull);
   dish.position.set(0, R + 8, 5.5); dish.rotation.x = -Math.PI / 2 + 0.5; g.add(dish);
   // ventral docking spar: long hull beam below the ring with a hex dock
-  const spar = new THREE.Mesh(new THREE.BoxGeometry(3, 22, 3), M.hull);
+  const spar = new THREE.Mesh(bevelBox(3, 22, 3, 0.4), M.hull);
   spar.position.set(0, -R - 14, 0); g.add(spar);
   const sparRib = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.2, 4.2), M.cobalt);
   sparRib.position.set(0, -R - 10, 0); g.add(sparRib);
@@ -171,24 +194,27 @@ function makeStreaks(n = 48) {
 // ---------------------------------------------------------------------------
 function makeBolts(max = 24) {
   const grp = new THREE.Group();
-  // long hot core + fat soft sheath: reads as a crisp Star Fox bolt from behind
-  const coreGeo = new THREE.CapsuleGeometry(0.13, 3.4, 4, 12);
+  // long white-hot core + a tight saturated sheath with a hard edge: reads as
+  // a crisp Star Fox bolt, not a soft blob. The sheath is a stretched capsule
+  // whose alpha is flat inside and drops sharply at the silhouette.
+  const coreGeo = new THREE.CapsuleGeometry(0.11, 5.2, 4, 12);
   coreGeo.rotateX(Math.PI / 2);
-  const glowGeo = new THREE.CapsuleGeometry(0.42, 3.6, 4, 12);
+  const glowGeo = new THREE.CapsuleGeometry(0.3, 5.4, 4, 16);
   glowGeo.rotateX(Math.PI / 2);
-  const coreMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 4.5, 2.4), toneMapped: false });
+  const coreMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 6.0, 3.4), toneMapped: false });
   const glowMat = new THREE.ShaderMaterial({
     transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
-    uniforms: { uCol: { value: new THREE.Color(0.2, 1.4, 0.35) } },
+    uniforms: { uCol: { value: new THREE.Color(0.25, 1.6, 0.4) } },
     vertexShader: /* glsl */ `
       varying float vF;
       void main() {
         vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
         vec3 n = normalize(mat3(modelViewMatrix * instanceMatrix) * normal);
-        vF = pow(max(dot(n, normalize(-mv.xyz)), 0.0), 1.6);
+        vF = max(dot(n, normalize(-mv.xyz)), 0.0);
         gl_Position = projectionMatrix * mv;
       }`,
-    fragmentShader: /* glsl */ `varying float vF; uniform vec3 uCol; void main() { gl_FragColor = vec4(uCol * vF * 1.6, vF); }`,
+    fragmentShader: /* glsl */ `varying float vF; uniform vec3 uCol;
+      void main() { float a = smoothstep(0.05, 0.45, vF); gl_FragColor = vec4(uCol * (0.9 + 1.4 * vF) * a, a); }`,
   });
   glowMat.toneMapped = false;
   const core = new THREE.InstancedMesh(coreGeo, coreMat, max);
@@ -211,7 +237,7 @@ function makeBolts(max = 24) {
       b.age += dt;
       tmp.position.copy(b.p).addScaledVector(_fwd.set(0, 0, -1).applyQuaternion(b.q), b.age * 220 + 1.5);
       // stretch as it accelerates away (anticipation: short at the muzzle, long in flight)
-      const st = 0.6 + Math.min(1, b.age * 6) * 0.4;
+      const st = 0.45 + Math.min(1, b.age * 5) * 0.55;
       tmp.quaternion.copy(b.q); tmp.scale.set(1, 1, st); tmp.updateMatrix();
       if (b.age > 1.4) { live.splice(k, 1); core.setMatrixAt(b.i, hide); glow.setMatrixAt(b.i, hide); continue; }
       core.setMatrixAt(b.i, tmp.matrix); glow.setMatrixAt(b.i, tmp.matrix);
@@ -226,6 +252,7 @@ const _fwd = new THREE.Vector3();
 // ---------------------------------------------------------------------------
 export function makeHeroScene() {
   const M = makeHeroMaterials();
+  for (const k of ['hull', 'cobalt', 'cobaltDS', 'gold', 'dark']) withRim(M[k]);
   const root = new THREE.Group();
   root.name = 'lookdev-hero-scene';
 
@@ -338,6 +365,8 @@ export function makeHeroScene() {
     streaks.update(dt, st.boost, camera);
   };
   root.pop = () => { st.popT = 0; };
+  /** Tint the fresnel edge light (call with the current sky horizon colour). */
+  root.setRim = (color, k = 0.55) => { RIM.uRimColor.value.copy(color); RIM.uRimK.value = k; };
   root.lead = lead;
   root.wing = wing;
   root.gate = gate;
