@@ -140,6 +140,8 @@ export function buildSky(THREE, scene, renderer, sunDir, { size = 640 } = {}) {
 
   return {
     texture: rt.texture,
+    /** drop the built-in planet when a caller supplies its own (lookdev's) */
+    hidePlanet() { planet.visible = false; halo.visible = false; },
     dispose() {
       rt.dispose(); envTex.dispose();
       scene.remove(planet, halo); planet.geometry.dispose(); planet.material.dispose(); halo.geometry.dispose(); halo.material.dispose();

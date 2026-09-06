@@ -1,14 +1,6 @@
 // Effects for the boss fight: particles (smoke / fire / sparks), shards,
-// fireball explosions + shockwaves, sweeping laser beams with telegraphs,
+// sweeping laser beams with telegraphs,
 // homing missiles, player bolts, and the hex shield.
-
-const NOISE = /* glsl */ `
-  float hash(vec3 p){ p = fract(p*0.3183099+0.1); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
-  float noise(vec3 p){ vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
-    return mix(mix(mix(hash(i),hash(i+vec3(1,0,0)),f.x),mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
-               mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z); }
-  float fbm(vec3 p){ float a=0.5,s=0.0; for(int i=0;i<4;i++){ s+=a*noise(p); p=p*2.1+7.3; a*=0.5; } return s; }
-`;
 
 function softSprite(THREE, hard = false) {
   const S = 128; const cv = document.createElement('canvas'); cv.width = cv.height = S; const c = cv.getContext('2d');
@@ -133,58 +125,7 @@ export class Shards {
   dispose() { this.mesh.geometry.dispose(); this.mat.dispose(); }
 }
 
-// ---------------------------------------------------------------- explosions
-export class Explosions {
-  constructor(THREE, scene, max = 14) {
-    this.THREE = THREE; this.scene = scene; this.items = [];
-    const fireGeo = new THREE.IcosahedronGeometry(1, 4);
-    this.fireMat = new THREE.ShaderMaterial({
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-      uniforms: { uAge: { value: 0 }, uSeed: { value: 0 }, uTint: { value: new THREE.Color(1, 1, 1) } },
-      vertexShader: /* glsl */ `uniform float uAge; uniform float uSeed; varying vec3 vN; varying vec3 vV; varying vec3 vP; ${NOISE}
-        void main(){ vP = position; float d = fbm(position * 1.6 + uSeed + uAge * 1.5); vec3 p = position * (0.8 + 0.5 * d); vN = normalize(normalMatrix * normal); vec4 mv = modelViewMatrix * vec4(p,1.0); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
-      fragmentShader: /* glsl */ `precision highp float; uniform float uAge; uniform float uSeed; uniform vec3 uTint; varying vec3 vN; varying vec3 vV; varying vec3 vP; ${NOISE}
-        void main(){ float n = fbm(vP * 2.5 + uSeed - uAge * 2.0); float ndv = max(dot(normalize(vN), normalize(vV)), 0.0);
-          float heat = clamp(n * 1.6 - uAge * 1.1 + ndv * 0.5, 0.0, 1.0);
-          vec3 col = mix(vec3(0.6, 0.05, 0.0), vec3(1.0, 0.45, 0.08), heat); col = mix(col, vec3(1.0, 0.95, 0.75), smoothstep(0.7, 1.0, heat));
-          float a = smoothstep(0.0, 0.25, ndv) * (1.0 - uAge) * (0.6 + heat);
-          gl_FragColor = vec4(col * uTint * (0.9 + 1.2 * (1.0 - uAge)), a * 0.85); }`,
-    });
-    this.ringGeo = new THREE.RingGeometry(0.7, 1, 48);
-    this.ringMat = new THREE.MeshBasicMaterial({ color: 0xffc080, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-    this.pool = [];
-    for (let i = 0; i < max; i++) {
-      const fire = new THREE.Mesh(fireGeo, this.fireMat.clone()); fire.visible = false; scene.add(fire);
-      const ring = new THREE.Mesh(this.ringGeo, this.ringMat.clone()); ring.visible = false; scene.add(ring);
-      this.pool.push({ fire, ring, active: false, age: 0, dur: 1, size: 1 });
-    }
-    this.light = new THREE.PointLight(0xffa050, 0, 260, 1.6); scene.add(this.light);
-    this.flash = 0;
-  }
-  clear() { for (const e of this.pool) { e.active = false; e.fire.visible = e.ring.visible = false; } this.light.intensity = 0; this.flash = 0; }
-  spawn(p, size = 10, dur = 1.1, tint = null) {
-    const e = this.pool.find((x) => !x.active) || this.pool[0];
-    e.active = true; e.age = 0; e.dur = dur; e.size = size;
-    e.fire.visible = true; e.fire.position.copy(p); e.fire.material.uniforms.uSeed.value = Math.random() * 40;
-    e.fire.material.uniforms.uTint.value.set(...(tint || [1, 1, 1]));
-    e.ring.visible = true; e.ring.position.copy(p); e.ring.quaternion.random();
-    this.light.position.copy(p); this.light.intensity = Math.min(1400, Math.max(this.light.intensity, size * 160)); this.flash = Math.max(this.flash, Math.min(1, size / 22));
-    return e;
-  }
-  update(dt, camera, real = dt) {
-    for (const e of this.pool) {
-      if (!e.active) continue;
-      e.age += dt; const u = e.age / e.dur;
-      if (u >= 1) { e.active = false; e.fire.visible = e.ring.visible = false; continue; }
-      const grow = 1 - Math.pow(1 - Math.min(1, u * 1.6), 3);
-      e.fire.scale.setScalar(e.size * (0.25 + grow) * (1 + u * 0.35)); e.fire.material.uniforms.uAge.value = u;
-      const ru = Math.min(1, u * 1.4); e.ring.scale.setScalar(e.size * 0.6 + e.size * 3.2 * (1 - Math.pow(1 - ru, 2.5)));
-      e.ring.material.opacity = 0.9 * (1 - ru) * (1 - ru); e.ring.lookAt(camera.position);
-    }
-    this.light.intensity *= Math.exp(-real * 5); this.flash *= Math.exp(-real * 6);
-  }
-  dispose() { for (const e of this.pool) { e.fire.material.dispose(); e.ring.material.dispose(); this.scene.remove(e.fire, e.ring); } this.ringGeo.dispose(); this.fireMat.dispose(); this.scene.remove(this.light); }
-}
+// (explosions live in ./explosions.js)
 
 // ---------------------------------------------------------------- beam (laser sweep)
 export class Beam {

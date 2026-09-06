@@ -1,28 +1,26 @@
-// dev probe: step to a time without rendering (fast) and dump gameplay state
+// dev probe: dump ship / camera state after N frames
 import { chromium } from 'playwright';
-const T = Number(process.argv[2] || 7);
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: 320, height: 180 } });
 page.on('pageerror', (e) => console.log('pageerror:', e.message));
 page.on('console', (m) => { if (m.type() === 'error') console.log('console:', m.text().slice(0, 300)); });
 await page.addInitScript(() => { window.WebSocket = class { constructor() {} addEventListener() {} removeEventListener() {} send() {} close() {} }; });
-await page.goto(`http://localhost:5173/?piece=boss&seed=1&mute&autoplay&fixed`, { waitUntil: 'networkidle' });
+await page.goto(`http://localhost:5174/?piece=boss&seed=1&mute&autoplay&fixed`, { waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.__engine?.piece, null, { timeout: 60000 });
 await page.evaluate(() => { cancelAnimationFrame(window.__engine._raf); });
-const dump = await page.evaluate((T) => {
-  const e = window.__engine; const d = e.piece.debug; const log = [];
-  // step without rendering (skip composer) to be fast
-  const dt = 1 / 60; let bolts = 0, boltHits = 0;
-  for (let i = 0; i < T * 60; i++) {
-    e.input.update(dt, e.time += dt); e.piece.update(dt, e.time); e.input.endFrame();
-    if (i % 120 === 0) {
-      const p = d.S.player.pos; const act = d.bolts.pool.filter((b) => b.active);
-      const wps = d.boss.weakPoints.filter((w) => w.alive && w.phase === d.S.phase).map((w) => { const v = d.worldPos(w.mesh, d.ship.position.clone()); return `${w.name}@(${v.x.toFixed(0)},${v.y.toFixed(0)},${v.z.toFixed(0)}) hp${w.hp}`; });
-      const b0 = act[0]; const bs = b0 ? `bolt0 (${b0.g.position.x.toFixed(0)},${b0.g.position.y.toFixed(0)},${b0.g.position.z.toFixed(0)}) v(${b0.v.x.toFixed(0)},${b0.v.y.toFixed(0)},${b0.v.z.toFixed(0)})` : 'no bolts';
-      log.push(`t=${(i / 60).toFixed(0)} phase=${d.S.phase} intro=${d.S.intro} hits=${d.S.hits} fire=${e.input.isHeld('fire')} axes=(${e.input.axes.x.toFixed(2)},${e.input.axes.y.toFixed(2)}) player=(${p.x.toFixed(1)},${p.y.toFixed(1)}) bolts=${act.length} ${bs} | ${wps.join(' ; ')}`);
-    }
-  }
-  return log.join('\n');
-}, T);
-console.log(dump);
+const n = Number(process.argv[2] || 300);
+for (let d = 0; d < n; d += 60) await page.evaluate((k) => window.__engine.stepFrames(k), Math.min(60, n - d));
+const info = await page.evaluate(() => {
+  const e = window.__engine; const p = e.piece; const d = p.debug; const THREE = e.THREE || null;
+  const g = d.ship?.isObject3D ? d.ship : d.ship?.group;
+  var out = { cam: e.camera.position.toArray().map((v) => +v.toFixed(1)), camRot: e.camera.rotation.toArray().slice(0, 3).map((v) => +v.toFixed(2)), fov: e.camera.fov };
+  if (g) { g.updateWorldMatrix(true, true); const mins = [1e9, 1e9, 1e9], maxs = [-1e9, -1e9, -1e9]; g.traverse((o) => { if (o.isMesh && o.geometry) { o.geometry.computeBoundingBox(); const bb = o.geometry.boundingBox; const cs = [bb.min, bb.max]; for (let i = 0; i < 8; i++) { const v = cs[i & 1].clone(); v.y = cs[(i >> 1) & 1].y; v.z = cs[(i >> 2) & 1].z; v.applyMatrix4(o.matrixWorld); [v.x, v.y, v.z].forEach((c, k) => { mins[k] = Math.min(mins[k], c); maxs[k] = Math.max(maxs[k], c); }); } } }); out.box = { min: mins.map((v) => +v.toFixed(1)), max: maxs.map((v) => +v.toFixed(1)) }; }
+  if (g) { out.shipPos = g.position.toArray().map((v) => +v.toFixed(1)); out.shipScale = g.scale.toArray(); out.child = g.children[0]?.scale.toArray(); out.vis = g.visible; let cnt = 0; g.traverse((o) => { if (o.isMesh) cnt++; }); out.meshes = cnt; }
+  out.S = { phase: d.S.phase, ft: d.S.ft, cam: d.S.cam?.mode ?? d.S.camMode };
+  out.info = e.renderer.info.render;
+  let visBalls = 0; e.scene.traverse((o) => { if (o.visible && o.material?.uniforms?.uPuff) visBalls++; }); out.visBalls = visBalls;
+  out.sceneChildren = e.scene.children.length;
+  return out;
+});
+console.log(JSON.stringify(info, null, 1));
 await browser.close();

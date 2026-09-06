@@ -2,7 +2,7 @@
 // animation API: update / setBank / setThrust / flap); fall back to a compact
 // stylised Arwing so the boss piece never depends on another piece's state.
 
-export async function loadArwing(THREE) {
+export async function loadArwing(THREE, length = 7) {
   let obj = null, api = null;
   try {
     const mod = await import('../ship/index.js');
@@ -15,11 +15,11 @@ export async function loadArwing(THREE) {
   } catch (e) { obj = null; api = null; }
   const group = new THREE.Group();
   const ship = obj || fallbackArwing(THREE);
-  // Normalise to ~7 units long, nose toward -Z.
+  // Normalise to `length` units long, nose toward -Z.
   const box = new THREE.Box3().setFromObject(ship);
   const size = box.getSize(new THREE.Vector3());
   const len = Math.max(size.z, 1e-3);
-  const s = 7 / len;
+  const s = length / len;
   ship.scale.multiplyScalar(s);
   const c = box.getCenter(new THREE.Vector3()).multiplyScalar(s);
   ship.position.sub(c);

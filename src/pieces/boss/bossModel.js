@@ -21,10 +21,12 @@ function makeHullTextures(THREE, rng) {
   const cv = document.createElement('canvas'); cv.width = cv.height = S; const c = cv.getContext('2d');
   const ev = document.createElement('canvas'); ev.width = ev.height = S; const e = ev.getContext('2d');
   const rv = document.createElement('canvas'); rv.width = rv.height = S; const r = rv.getContext('2d');
+  const hv = document.createElement('canvas'); hv.width = hv.height = S; const h = hv.getContext('2d');
   // base: near-white so material.color drives the hue; panels vary +-6%
   c.fillStyle = '#e4e8ef'; c.fillRect(0, 0, S, S);
   e.fillStyle = '#000'; e.fillRect(0, 0, S, S);
   r.fillStyle = '#8c8c8c'; r.fillRect(0, 0, S, S);
+  h.fillStyle = '#808080'; h.fillRect(0, 0, S, S);
   // big clean plates (4x4) with a few subdivided
   const cols = 4, rows = 4;
   const xs = [0]; for (let i = 1; i < cols; i++) xs.push((i / cols + (rng.next() - 0.5) * 0.08) * S); xs.push(S);
@@ -43,6 +45,8 @@ function makeHullTextures(THREE, rng) {
     c.fillStyle = `rgb(${shade - 4},${shade},${shade + 6})`;
     c.fillRect(x0, y0, x1 - x0, y1 - y0);
     const rough = 120 + Math.floor(rng.next() * 50); r.fillStyle = `rgb(${rough},${rough},${rough})`; r.fillRect(x0, y0, x1 - x0, y1 - y0);
+    // height: each plate sits at its own level so neighbouring plates catch light differently
+    const lvl = 118 + Math.floor(rng.next() * 24); h.fillStyle = `rgb(${lvl},${lvl},${lvl})`; h.fillRect(x0, y0, x1 - x0, y1 - y0);
     // bevel highlight (top/left) & shadow (bottom/right) -> painted edge read
     c.fillStyle = 'rgba(255,255,255,0.35)'; c.fillRect(x0 + 3, y0 + 3, x1 - x0 - 6, 3); c.fillRect(x0 + 3, y0 + 3, 3, y1 - y0 - 6);
     c.fillStyle = 'rgba(40,46,64,0.35)'; c.fillRect(x0 + 3, y1 - 6, x1 - x0 - 6, 3); c.fillRect(x1 - 6, y0 + 3, 3, y1 - y0 - 6);
@@ -57,7 +61,9 @@ function makeHullTextures(THREE, rng) {
     // stencil marking
     if (rng.next() < 0.3) { c.fillStyle = 'rgba(30,34,48,0.75)'; c.font = 'bold 26px monospace'; c.fillText(`${String(Math.floor(rng.next() * 90)).padStart(2, '0')}-${['V', 'A', 'G', 'K'][Math.floor(rng.next() * 4)]}`, x0 + 16, y0 + 50); }
     // recessed vent slots
-    if (rng.next() < 0.22) { c.fillStyle = 'rgba(28,32,44,0.9)'; for (let k = 0; k < 5; k++) c.fillRect(x1 - 70, y0 + 20 + k * 11, 50, 5); }
+    if (rng.next() < 0.22) { c.fillStyle = 'rgba(28,32,44,0.9)'; h.fillStyle = '#404040'; for (let k = 0; k < 5; k++) { c.fillRect(x1 - 70, y0 + 20 + k * 11, 50, 5); h.fillRect(x1 - 70, y0 + 20 + k * 11, 50, 5); } }
+    // raised armour rib or recessed maintenance plate (height only: pure lighting detail)
+    { const pick2 = rng.next(); if (pick2 < 0.3) { h.fillStyle = '#a8a8a8'; h.fillRect(x0 + 18, y0 + 18, x1 - x0 - 36, 10); } else if (pick2 < 0.55) { h.fillStyle = '#606060'; const w = Math.min(90, x1 - x0 - 40), hh = Math.min(60, y1 - y0 - 40); h.fillRect(x0 + 20, y0 + 20, w, hh); h.strokeStyle = '#c0c0c0'; h.lineWidth = 2; h.strokeRect(x0 + 20, y0 + 20, w, hh); } }
     // windows (emissive)
     if (rng.next() < 0.3) {
       const n = 4 + Math.floor(rng.next() * 10); const wy = y0 + 20 + rng.next() * (y1 - y0 - 40);
@@ -72,6 +78,10 @@ function makeHullTextures(THREE, rng) {
   for (const [x0, y0, x1, y1] of plates) c.strokeRect(x0, y0, x1 - x0, y1 - y0);
   c.lineWidth = 3; c.strokeStyle = 'rgba(34,38,52,0.95)';
   for (const [x0, y0, x1, y1] of plates) c.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  // height: deep grooves at the seams, soft bevel rolling into them
+  h.lineWidth = 12; h.strokeStyle = 'rgba(60,60,60,0.5)'; for (const [x0, y0, x1, y1] of plates) h.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  h.lineWidth = 4; h.strokeStyle = '#141414'; for (const [x0, y0, x1, y1] of plates) h.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  for (const [x0, y0, x1, y1] of plates) for (let k = 0; k < 4; k++) { const rx = k % 2 ? x1 - 12 : x0 + 8; const ry = k < 2 ? y0 + 8 : y1 - 12; h.fillStyle = '#e0e0e0'; h.beginPath(); h.arc(rx + 2, ry + 2, 2.6, 0, 7); h.fill(); }
   // light wear: scratches + soot streaks (subtle)
   for (let i = 0; i < 60; i++) {
     c.strokeStyle = `rgba(255,255,255,${0.15 + rng.next() * 0.2})`; c.lineWidth = 1; c.beginPath();
@@ -82,7 +92,7 @@ function makeHullTextures(THREE, rng) {
     c.save(); c.translate(rng.next() * S, rng.next() * S); c.fillStyle = g; c.fillRect(-3, 0, 5 + rng.next() * 8, 50 + rng.next() * 90); c.restore();
   }
   const mk = (canvas, srgb) => { const t = new THREE.CanvasTexture(canvas); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 8; if (srgb) t.colorSpace = THREE.SRGBColorSpace; return t; };
-  return { map: mk(cv, true), emissiveMap: mk(ev, true), roughnessMap: mk(rv, false) };
+  return { map: mk(cv, true), emissiveMap: mk(ev, true), roughnessMap: mk(rv, false), bumpMap: mk(hv, false) };
 }
 
 // ---------------------------------------------------------------- loft
@@ -230,7 +240,7 @@ function makeLensMaterial(THREE) {
 export function buildBoss(THREE, rng) {
   const root = new THREE.Group(); root.name = 'GORGON';
   const tex = makeHullTextures(THREE, rng);
-  const plateMat = rimMaterial(THREE, { map: tex.map, roughnessMap: tex.roughnessMap, emissiveMap: tex.emissiveMap, emissive: new THREE.Color(0xffc890), emissiveIntensity: 1.6, metalness: 0.28, roughness: 0.5, color: PALETTE.plate, envMapIntensity: 0.7 }, 0x86b8ff, 0.6);
+  const plateMat = rimMaterial(THREE, { map: tex.map, roughnessMap: tex.roughnessMap, emissiveMap: tex.emissiveMap, bumpMap: tex.bumpMap, bumpScale: 1.4, emissive: new THREE.Color(0xffc890), emissiveIntensity: 1.6, metalness: 0.28, roughness: 0.5, color: PALETTE.plate, envMapIntensity: 0.7 }, 0x86b8ff, 0.6);
   const darkMat = rimMaterial(THREE, { color: PALETTE.plateDark, metalness: 0.55, roughness: 0.48, envMapIntensity: 0.8 }, 0x6fa0ff, 0.5);
   const trimMat = rimMaterial(THREE, { color: PALETTE.trim, metalness: 0.85, roughness: 0.35 }, 0x6fa0ff, 0.35);
   const accentMat = rimMaterial(THREE, { color: PALETTE.accent, metalness: 0.25, roughness: 0.38, envMapIntensity: 0.6 }, 0xff9a80, 0.45);

@@ -6,7 +6,8 @@
 import { buildSky } from './sky.js';
 import { loadArwing } from './arwing.js';
 import { buildBoss } from './bossModel.js';
-import { Particles, Shards, Explosions, Beam, Missiles, Bolts, makeShield, makeTextures } from './fx.js';
+import { Particles, Shards, Beam, Missiles, Bolts, makeShield, makeTextures } from './fx.js';
+import { Explosions } from './explosions.js';
 import { buildHud } from './hud.js';
 import { makeGradePass } from '../lookdev/grade.js';
 
@@ -34,9 +35,20 @@ function hullSolid(p) {
 }
 const PLAYER_X = 34, PLAYER_Y_MIN = -16, PLAYER_Y_MAX = 18;
 
-export async function create(ctx) {
-  const { THREE, scene, camera, renderer, composer, bloom, input, ui, audio, rng, size } = ctx;
-  bloom.strength = 0.7; bloom.radius = 0.5; bloom.threshold = 0.8;
+/**
+ * create(ctx, opts?)
+ *   opts.embedded   (default: ctx.embedded ?? false) — when true the fight does NOT auto-restart after the
+ *                   win; the wreck keeps drifting under the fly-away camera until the integrator disposes.
+ *   opts.hudTop     px offset for the boss title/health block (default 26; use ~70 if the campaign
+ *                   overlay draws an objective line at the top centre).
+ *   opts.onDefeated ({ hits, score, time }) callback. Also emitted on ctx.events as 'boss:defeated';
+ *                   phase changes are emitted as 'boss:phase' { phase }.
+ * Returned piece also exposes `won` (boolean getter) and `debug.S`.
+ */
+export async function create(ctx, opts = {}) {
+  const { THREE, scene, camera, renderer, composer, bloom, input, ui, audio, rng, size, events } = ctx;
+  const embedded = opts.embedded ?? ctx.embedded ?? false;
+  bloom.strength = 0.6; bloom.radius = 0.5; bloom.threshold = 0.86;
   renderer.toneMappingExposure = 1.1;
   camera.fov = 58; camera.near = 0.5; camera.far = 9000; camera.updateProjectionMatrix();
 
@@ -49,6 +61,19 @@ export async function create(ctx) {
   const fill = new THREE.HemisphereLight(0x7a66c8, 0x2a3a2a, 0.7); scene.add(fill);
   const planetBounce = new THREE.DirectionalLight(0x9bd45a, 0.55); planetBounce.position.set(-500, -600, -300); scene.add(planetBounce);
   const sky = buildSky(THREE, scene, renderer, sunDir);
+  // Venom planet: lookdev's shared planet (baked continents / clouds / limb scattering) so it matches the rest of the game
+  let planet = null;
+  try {
+    const look = await import('../lookdev/index.js');
+    planet = look.makePlanet({ radius: 760, seed: 11, haloScale: 1.05, gpu: true });
+    planet.lightDir = sunDir.clone();
+    const preset = look.resolvePreset(THREE, 'venom');
+    planet.setPreset(preset);
+    planet.position.set(-1500, -1150, -2300);
+    planet.traverse((o) => { o.frustumCulled = false; });
+    scene.add(planet);
+    sky.hidePlanet?.();
+  } catch (e) { planet = null; }
   // display-space grade (shared lookdev pass): contrast, split-tone, soft vignette, fine grain
   let grade = composer?.passes.find((p) => p.isLookGrade);
   if (!grade && composer) { grade = makeGradePass(); composer.addPass(grade); }
@@ -63,7 +88,7 @@ export async function create(ctx) {
   boss.root.position.set(0, 0, BOSS_BASE_Z);
   scene.add(boss.root);
   const shield = makeShield(THREE, SHIELD_R); boss.root.add(shield); shield.position.set(...SHIELD_C);
-  const arwing = await loadArwing(THREE);
+  const arwing = await loadArwing(THREE, 9.5);
   const ship = arwing.group;
   scene.add(ship);
   arwing.setHover(0); arwing.setThrust(0.85);
@@ -83,11 +108,11 @@ export async function create(ctx) {
   scene.add(smoke.points, fire.points, sparks.points);
   fire.points.renderOrder = 3; smoke.points.renderOrder = 2; sparks.points.renderOrder = 4;
   const shards = new Shards(THREE, 200); scene.add(shards.mesh);
-  const explosions = new Explosions(THREE, scene, 16);
+  const explosions = new Explosions(THREE, scene, { lightDir: sunDir });
   const beams = [new Beam(THREE, scene, 0xff4a2a), new Beam(THREE, scene, 0xff4a2a)];
   const missiles = new Missiles(THREE, scene, smoke, explosions, 16);
   const bolts = new Bolts(THREE, scene, 30);
-  const hud = buildHud(ui);
+  const hud = buildHud(ui, { top: opts.hudTop ?? (embedded ? 70 : 26) });
 
   // ---------- state
   const S = {
@@ -98,7 +123,7 @@ export async function create(ctx) {
     hatchOpen: 0, hatchTimer: 0, volleyQueue: [],
     transition: null, destruct: null, iris: 0, lunge: 0,
     cam: { mode: 'chase', t: 0, pos: new THREE.Vector3(0, 6, 22), look: new THREE.Vector3(0, 0, -60), cut: true },
-    fires: [], fireAcc: 0, sparkAcc: 0,
+    fires: [], fireAcc: 0, sparkAcc: 0, score: 0, won: false,
   };
   const V = { a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3(), d: new THREE.Vector3() };
 
@@ -127,7 +152,8 @@ export async function create(ctx) {
   function shatterPoint(w) {
     w.alive = false; w.hp = 0; w.mesh.visible = false;
     const p = worldPos(w.mesh, new THREE.Vector3());
-    explosions.spawn(p, w.phase === 3 ? 26 : 13, 1.2, w.phase === 3 ? [1.2, 0.9, 0.9] : null);
+    explosions.spawn(p, w.phase === 3 ? 22 : 11, w.phase === 3 ? 1.8 : 1.4, { tint: w.phase === 3 ? [1.15, 0.9, 0.9] : [1, 1, 1], children: w.phase === 3 ? 6 : 3, hot: 0.4 });
+    S.score += w.phase * 500;
     shards.burst(p, w.phase === 3 ? 60 : 34, 40, w.radius * 0.45, { glow: 1, life: 2.6 });
     for (let i = 0; i < 30; i++) smoke.emit(p, V.a.set((Math.random() - 0.5) * 24, (Math.random() - 0.5) * 24, (Math.random() - 0.5) * 24), { life: 2.2 + Math.random() * 1.6, size: 4.5, grow: 2.6, drag: 1.2, c0: [0.3, 0.26, 0.24], c1: [0.06, 0.06, 0.08] });
     for (let i = 0; i < 30; i++) sparks.emit(p, V.a.set((Math.random() - 0.5) * 90, (Math.random() - 0.5) * 90, (Math.random() - 0.5) * 90), { life: 0.6 + Math.random() * 0.6, size: 1.6, drag: 1.5, c0: [3, 2, 1], c1: [1, 0.3, 0.1] });
@@ -145,7 +171,7 @@ export async function create(ctx) {
     else if (S.phase === 3) { beginDestruction(); }
   }
   function setPhase(p) {
-    S.phase = p; hud.setPhase(p);
+    S.phase = p; hud.setPhase(p); events?.emit?.('boss:phase', { phase: p });
     S.attack.nextLaser = S.ft + (p === 1 ? 1.2 : p === 2 ? 2.5 : 1.0);
     S.attack.nextVolley = S.ft + (p === 2 ? 0.8 : p === 3 ? 3.0 : 1e9);
   }
@@ -183,7 +209,7 @@ export async function create(ctx) {
     partInfo[name] = { c, drift: new THREE.Vector3(), vel: (c.x * c.x + c.y * c.y > 1 ? c.clone().setZ(0).normalize() : new THREE.Vector3(0, 1, 0)).multiplyScalar(5 + Math.random() * 5).add(new THREE.Vector3(0, 2, -9)), rot: new THREE.Quaternion(), av: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.5) };
   }
   function resetFight() {
-    S.destruct = null; S.transition = null; S.phase = 0; S.intro = true; S.ft = 0; S.timeScale = 1; S.fires = []; S.iris = 0; S.lunge = 0; S.hits = 0;
+    S.destruct = null; S.transition = null; S.phase = 0; S.intro = true; S.ft = 0; S.timeScale = 1; S.fires = []; S.iris = 0; S.lunge = 0; S.hits = 0; S.score = 0; S.won = false;
     for (const w of boss.weakPoints) { w.alive = true; w.hp = w.maxHp; w.mesh.visible = true; }
     for (const [name, g] of Object.entries(boss.parts)) { g.position.set(0, 0, 0); g.quaternion.identity(); g.visible = true; partInfo[name].drift.set(0, 0, 0); partInfo[name].rot.identity(); }
     shield.visible = true; shield.material.uniforms.uDissolve.value = 0; shield.material.uniforms.uPower.value = 1;
@@ -272,13 +298,13 @@ export async function create(ctx) {
     ship.rotation.set(P.pitch, P.vel.x * -0.004, P.bank * 0.35 + rollAngle);
     arwing.setBank(THREE.MathUtils.clamp(ax * 0.9 + P.vel.x * 0.006, -1, 1));
     arwing.flap(P.roll > 0 ? 1 : Math.abs(ay) * 0.5);
-    arwing.setThrust(S.destruct ? 1 : 0.7 + Math.abs(ay) * 0.3);
+    arwing.setThrust(S.destruct ? 1 : 0.5 + Math.abs(ay) * 0.3);
     arwing.update(dtS, S.ft, camera);
     // fire
     P.fireCd -= dtS;
     if (input.isHeld('fire') && P.fireCd <= 0 && !S.destruct) {
       P.fireCd = 0.11; P.side *= -1;
-      const muzzle = V.a.set(P.side * 2.4, -0.3, -3.5).applyEuler(ship.rotation).add(P.pos);
+      const muzzle = V.a.set(P.side * 3.2, -0.4, -4.8).applyEuler(ship.rotation).add(P.pos);
       // soft auto-aim toward the current target within a cone
       const pts = activePoints(); let dir = V.b.set(0, 0, -1); let best = 1e9;
       for (const w of pts) { const wp = worldPos(w.mesh, V.c); const d = V.d.copy(wp).sub(muzzle); const ang = Math.acos(THREE.MathUtils.clamp(-d.z / d.length(), -1, 1)); const score = ang + Math.hypot(wp.x * 0.32 - P.pos.x, wp.y * 0.32 - P.pos.y) * 0.01; if (ang < 0.62 && score < best) { best = score; dir = d.clone().normalize(); } }
@@ -400,6 +426,7 @@ export async function create(ctx) {
       }
       if (hullSolid(lp)) {
         for (let i = 0; i < 6; i++) sparks.emit(pos, V.b.set((Math.random() - 0.5) * 50, (Math.random() - 0.5) * 50, 20 + Math.random() * 40), { life: 0.35, size: 1.4, drag: 2, c0: [2.4, 2.0, 1.2], c1: [1.0, 0.4, 0.1] });
+        S.hits++; S.score += 10; // armour hits still count (no damage, but the player sees the counter move)
         return true;
       }
       return pos.z < -260;
@@ -436,12 +463,22 @@ export async function create(ctx) {
       if (D.real >= 3.4 && !D.final) {
         D.final = true;
         const c = B.position.clone().add(new THREE.Vector3(0, 6, 10));
-        explosions.spawn(c, 95, 2.6, [1.15, 1.05, 0.95]); explosions.spawn(c.clone().add(new THREE.Vector3(-50, 2, -10)), 55, 2.2); explosions.spawn(c.clone().add(new THREE.Vector3(55, 0, -10)), 55, 2.2);
-        shards.burst(c, 120, 70, 4, { life: 6 }); S.flash = 0.9; S.shake = 2.2; sfx.boom(0.9);
-        for (let i = 0; i < 320; i++) smoke.emit(c.clone().add(new THREE.Vector3((Math.random() - 0.5) * 160, (Math.random() - 0.5) * 50, (Math.random() - 0.5) * 120)), V.b.set((Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40 - 10), { life: 6 + Math.random() * 4, size: 13, grow: 2.5, drag: 0.5, c0: [0.7, 0.42, 0.28], c1: [0.03, 0.03, 0.04] });
+        // hero blast: layered cluster + camera-facing shockwave + edge-on disc; two flank blasts follow on the queue
+        explosions.spawn(c, 62, 3.2, { tint: [1.1, 1.02, 0.96], children: 10, spread: 55, hot: 0.45, discRing: true, ringScale: 5.5, ringDur: 1.0, flashColor: [1, 0.9, 0.7] });
+        D.queue = [
+          { at: D.t + 0.25, fn: () => explosions.spawn(c.clone().add(new THREE.Vector3(-58, 4, -14)), 34, 2.6, { children: 5, spread: 30, hot: 0.3 }) },
+          { at: D.t + 0.45, fn: () => explosions.spawn(c.clone().add(new THREE.Vector3(60, -2, -12)), 34, 2.6, { children: 5, spread: 30, hot: 0.3 }) },
+          { at: D.t + 0.9, fn: () => { explosions.spawn(c.clone().add(new THREE.Vector3(0, 18, 40)), 28, 2.4, { children: 4, spread: 26, hot: 0.5, tint: [1.1, 0.95, 0.9] }); S.shake = Math.max(S.shake, 1.2); sfx.boom(0.5); } },
+          { at: D.t + 1.6, fn: () => { explosions.spawn(c.clone().add(new THREE.Vector3(-30, -8, -60)), 26, 2.4, { children: 4, spread: 24, hot: 0.3 }); explosions.spawn(c.clone().add(new THREE.Vector3(34, -6, -64)), 22, 2.2, { children: 3, spread: 20, hot: 0.3 }); sfx.boom(0.4); } },
+        ];
+        shards.burst(c, 140, 75, 4, { life: 7 }); shards.burst(c, 60, 40, 7, { life: 8, glow: 1 }); S.flash = 0.8; S.shake = 2.2; sfx.boom(0.9);
+        // ember streaks flung from the core (lit debris trails)
+        for (let i = 0; i < 220; i++) { const d = V.b.set(Math.random() - 0.5, Math.random() - 0.4, Math.random() - 0.5).normalize().multiplyScalar(40 + Math.random() * 120); sparks.emit(c, d, { life: 1.5 + Math.random() * 2.5, size: 1.4 + Math.random() * 1.6, drag: 0.7, c0: [3, 2.2, 1.2], c1: [1.2, 0.3, 0.08] }); }
+        for (let i = 0; i < 320; i++) smoke.emit(c.clone().add(new THREE.Vector3((Math.random() - 0.5) * 160, (Math.random() - 0.5) * 50, (Math.random() - 0.5) * 120)), V.b.set((Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40 - 10), { life: 6 + Math.random() * 4, size: 13, grow: 2.5, drag: 0.5, c0: [0.55, 0.34, 0.24], c1: [0.03, 0.03, 0.04] });
         boss.engineGlowMat.uniforms.uPower.value = 0; boss.engineDiscMat.uniforms.uPower.value = 0; engineLight.intensity = 0; coreLight.intensity = 0; S.fires = [];
         hud.hits(S.hits);
       }
+      if (D.queue) { for (let i = D.queue.length - 1; i >= 0; i--) if (D.t >= D.queue[i].at) { D.queue[i].fn(); D.queue.splice(i, 1); } }
       if (D.final) {
         for (const [name, g] of Object.entries(boss.parts)) {
           const pi = partInfo[name]; pi.drift.addScaledVector(pi.vel, dtS);
@@ -449,14 +486,19 @@ export async function create(ctx) {
           g.quaternion.copy(pi.rot); g.position.copy(pi.drift).add(pi.c).sub(pi.c.clone().applyQuaternion(pi.rot));
           if (D.real > 4.2 && Math.random() < 0.08) { const wp = pi.c.clone().applyMatrix4(g.matrixWorld); fire.emit(wp, V.b.set((Math.random() - 0.5) * 6, 5, 4), { life: 0.6, size: 4, c0: [3, 1.5, 0.5], c1: [1, 0.2, 0.05] }); }
         }
-        if (D.real > 4.8 && !D.won) { D.won = true; hud.win(true); audio.tone({ type: 'triangle', f0: 523, f1: 784, dur: 0.6, gain: 0.1 }); }
+        if (D.real > 4.8 && !D.won) {
+          D.won = true; S.won = true; hud.win(true); audio.tone({ type: 'triangle', f0: 523, f1: 784, dur: 0.6, gain: 0.1 });
+          const result = { hits: S.hits, score: S.score + Math.max(0, Math.round((90 - S.ft) * 40)), time: S.ft };
+          S.score = result.score; opts.onDefeated?.(result); events?.emit?.('boss:defeated', result);
+        }
         if (D.real > 5.2) setCam('flyaway', false);
       }
-      if (D.real > 12) resetFight();
+      if (D.real > 12 && !embedded) resetFight();
     }
 
     // ---- fx systems
     smoke.update(dtS); fire.update(dtS); sparks.update(dtS); shards.update(dtS); explosions.update(dtS, camera, real); missiles.update(dtS, S.ft);
+    planet?.update?.(real, t);
     for (const e of boss.engines) { e.scale.y = 1 + Math.sin(S.ft * 30 + e.position.x) * 0.06 + S.lunge * 0.25; e.scale.x = e.scale.z = 1 + Math.sin(S.ft * 23 + e.position.x * 2) * 0.03; }
 
     // ---- camera
@@ -465,7 +507,7 @@ export async function create(ctx) {
     // ---- HUD
     hud.setHealth(bossHealth()); hud.shield(P.shield); hud.hits(S.hits);
     // never white out the whole frame: cap the overlay so the explosion itself stays readable
-    hud.flash(Math.min(0.5, S.flash * 0.6 + explosions.flash * 0.12 + P.hurt * 0.1)); S.flash *= Math.exp(-real * 4);
+    hud.flash(Math.min(0.42, S.flash * 0.5 + explosions.flash * 0.1 + P.hurt * 0.1)); S.flash *= Math.exp(-real * 4);
     hud.slowmo(S.timeScale < 0.6 ? 1 - S.timeScale : 0);
     {
       const pts = activePoints();
@@ -488,8 +530,10 @@ export async function create(ctx) {
       const u = Math.min(1, C.t / 4.2); const e = 1 - Math.pow(1 - u, 3);
       wantPos.set(-150 + 150 * e, -30 + 42 * e, -60 + 90 * e); wantLook.set(-60 + 60 * e, 4, BOSS_BASE_Z + 20); wantFov = 50 + 8 * e; stiff = 40;
     } else if (C.mode === 'chase') {
-      // follow tightly enough that the Arwing never leaves the frame, while still letting it slide across the boss
-      wantPos.set(P.pos.x * 0.8, P.pos.y * 0.8 + 5.5, 17 + P.vel.length() * 0.02); wantLook.set(P.pos.x * 0.88, P.pos.y * 0.85 + 0.5, -60); wantFov = 58 + (P.roll > 0 ? 3 : 0); stiff = 7;
+      // Star Fox third-person: camera rides just behind and above the Arwing so it stays large in the
+      // lower-centre of frame; a small lag lets it slide a little in the frame for feel, never out of it
+      // Arwing sits large in the lower-centre third; the boss fills the frame above it
+      wantPos.set(P.pos.x * 0.9 + P.vel.x * 0.012, P.pos.y * 0.9 + 3.2, 15.5 + P.vel.length() * 0.02); wantLook.set(P.pos.x * 0.95 + P.vel.x * 0.025, P.pos.y * 0.95 + 2.4, -60); wantFov = 58 + (P.roll > 0 ? 3 : 0); stiff = 9;
     } else if (C.mode === 'orbitFront') {
       const a = -0.9 + C.t * 0.45; wantPos.set(Math.sin(a) * 120, 30 + C.t * 4, B.position.z + Math.cos(a) * 130); wantLook.copy(B.position).add(new THREE.Vector3(0, 6, 20)); wantFov = 52; stiff = 30;
     } else if (C.mode === 'orbitCore') {
@@ -498,7 +542,7 @@ export async function create(ctx) {
       const a = 0.9 - C.t * 0.22; const r = 95 + C.t * 12; wantPos.set(Math.sin(a) * r, 26 + C.t * 5, B.position.z + 30 + Math.cos(a) * r); wantLook.copy(B.position).add(new THREE.Vector3(0, 8, 10)); wantFov = 50; stiff = 4;
     } else if (C.mode === 'flyaway') {
       // high, wide and pulling back: the Arwing banks across frame with the whole burning wreck behind it
-      wantPos.set(P.pos.x - 22, P.pos.y + 22 + C.t * 3, 48 + C.t * 7); wantLook.set(P.pos.x * 0.5, 4, B.position.z + 10); wantFov = 54; stiff = 3;
+      wantPos.set(P.pos.x - 16, P.pos.y + 12 + C.t * 1.5, 30 + C.t * 4); wantLook.set(P.pos.x * 0.6, P.pos.y * 0.3 + 4, B.position.z + 10); wantFov = 54; stiff = 3;
     }
     if (C.cut) { camState.pos.copy(wantPos); camState.look.copy(wantLook); camState.fov = wantFov; C.cut = false; }
     const k = Math.min(1, real * stiff);
@@ -515,10 +559,12 @@ export async function create(ctx) {
 
   return {
     update,
+    get won() { return S.won; },
     debug: { S, boss, bolts, ship, worldPos },
     dispose() {
       input.script = null;
       hud.dispose(); sky.dispose(); arwing.dispose();
+      if (planet) { scene.remove(planet); planet.disposePlanet?.(); }
       smoke.dispose(); fire.dispose(); sparks.dispose(); shards.dispose(); explosions.dispose(); for (const b of beams) b.dispose(); missiles.dispose(); bolts.dispose();
       scene.remove(boss.root, ship, smoke.points, fire.points, sparks.points, shards.mesh, sun, rim, kick, fill, planetBounce, ...wpLights, coreLight, frontLight);
       renderer.toneMappingExposure = 1; if (grade) grade.enabled = false;
