@@ -31,9 +31,9 @@ export function createStage(ctx, audio) {
     violet: new THREE.Color(0x6a4cff),
   };
 
-  scene.fog = new THREE.FogExp2(0x060a1c, 0.028);
-  bloom.strength = 1.05; bloom.radius = 0.55; bloom.threshold = 0.5;
-  renderer.toneMappingExposure = 1.05;
+  scene.fog = null;
+  bloom.strength = 0.85; bloom.radius = 0.6; bloom.threshold = 0.62;
+  renderer.toneMappingExposure = 1.0;
 
   // ---------------------------------------------------------------- sky
   // The expensive fbm nebula is baked ONCE into an equirect mask texture (R: nebula A, G: nebula B, B: highlights),
@@ -49,7 +49,9 @@ export function createStage(ctx, audio) {
           vec3 d=vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon)); float up=d.y;
           float n = fbm(d*2.2); float n2 = fbm(d*5.0 + vec3(3.0,0.0,1.0));
           float band = smoothstep(0.45,0.75,n) * (1.0-smoothstep(0.0,0.55,abs(up-0.12)));
-          gl_FragColor = vec4(band*(1.0-n2), band*n2, smoothstep(0.55,0.9,n2)*band, 1.0);
+          // alpha: continents mask for the planet
+          float land = smoothstep(0.48,0.6,fbm(d*3.3+vec3(7.0,2.0,5.0)));
+          gl_FragColor = vec4(band*(1.0-n2), band*n2, smoothstep(0.55,0.9,n2)*band, land);
         }`,
     });
     const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), bakeMat);
@@ -78,15 +80,45 @@ export function createStage(ctx, audio) {
         vec3 nebB = hsv(uHue+0.45, 0.7, 1.0);
         col += (m.r*nebA + m.g*nebB) * 0.55;
         col += m.b * vec3(0.9,0.7,1.0) * 0.25;
-        // warm horizon glow (a sun just below the deck, behind)
-        float horiz = exp(-abs(up+0.02)*9.0);
-        float sunDir = pow(max(0.0, dot(normalize(vec3(d.x,0.0,d.z)), vec3(0.3,0.0,-1.0))), 3.0);
-        col += horiz * (vec3(0.25,0.12,0.06) + sunDir*vec3(1.0,0.45,0.15)*0.9);
         // stars
         vec3 sp = d*260.0; vec3 cell=floor(sp); vec3 h=hash3(cell);
         float star = smoothstep(0.985,1.0,1.0-length(fract(sp)-0.5-(h-0.5)*0.4)) ;
         star *= step(0.93, h.y) * (0.6+0.4*sin(uTime*2.0+h.z*30.0));
-        col += star * (1.2+uEnergy*1.5) * mix(vec3(0.7,0.8,1.0), vec3(1.0,0.85,0.7), h.z) * smoothstep(-0.05,0.2,up);
+        col += star * (1.2+uEnergy*1.5) * mix(vec3(0.7,0.8,1.0), vec3(1.0,0.85,0.7), h.z);
+        // sun: low, behind-left, warm — drives the planet's terminator and a soft glare
+        vec3 sunD = normalize(vec3(-0.7,0.35,-0.6));
+        float sd = max(0.0, dot(d, sunD));
+        col += vec3(1.0,0.7,0.4) * (pow(sd, 900.0)*6.0 + pow(sd, 24.0)*0.25 + pow(sd,4.0)*0.05);
+        // planet Corneria: a big blue world below the platform
+        vec3 pD = normalize(vec3(0.25,-0.34,-1.0));
+        float pR = 0.905;                       // cos of angular radius (~25 deg)
+        float cosA = dot(d, pD);
+        if (cosA > pR - 0.02) {
+          float sinA = sqrt(max(0.0,1.0-cosA*cosA)), sinR = sqrt(1.0-pR*pR);
+          float q = clamp(sinA/sinR, 0.0, 1.0);          // 0 centre .. 1 limb
+          vec3 tang = normalize(d - pD*cosA + vec3(1e-5));
+          vec3 n = normalize(-pD*sqrt(max(0.0,1.0-q*q)) + tang*q);   // surface normal facing the viewer
+          float ndl = dot(n, sunD);
+          float dayside = smoothstep(-0.25, 0.35, ndl);
+          vec2 puv = vec2(atan(n.z,n.x)/6.2831853 + uTime*0.004, asin(clamp(n.y,-1.0,1.0))/3.14159265+0.5);
+          float land = texture2D(uNeb, puv*vec2(2.0,1.0)).a;
+          float cloud = texture2D(uNeb, puv*vec2(3.0,1.5)+vec2(uTime*0.006,0.1)).r;
+          vec3 ocean = vec3(0.02,0.09,0.32), landC = mix(vec3(0.08,0.26,0.10), vec3(0.42,0.36,0.2), smoothstep(0.55,0.9,land));
+          vec3 surf = mix(ocean, landC, land);
+          surf = mix(surf, vec3(0.85,0.9,0.95), smoothstep(0.5,0.85,cloud)*0.6);
+          vec3 sunC = vec3(1.0,0.92,0.8);
+          vec3 pcol = surf * (0.015 + dayside*0.95) * sunC;
+          vec3 hv = normalize(sunD - d);
+          pcol += (1.0-land)*pow(max(0.0,dot(n,hv)),60.0)*dayside*0.6;
+          float city = land * smoothstep(0.75,0.98,texture2D(uNeb, puv*vec2(9.0,5.0)).g) * (1.0-dayside);
+          pcol += city * vec3(1.0,0.75,0.4)*0.8;
+          float rim = pow(q, 9.0);
+          vec3 atmo = mix(vec3(0.15,0.45,1.0), vec3(1.0,0.55,0.3), pow(max(0.0,dot(normalize(d-pD*cosA), sunD)),3.0)*0.6);
+          pcol = mix(pcol, atmo*(0.15+dayside*1.1), rim*0.85);
+          float disc = smoothstep(pR-0.0015, pR+0.0015, cosA);
+          float halo = exp(-(pR-cosA)*420.0) * (1.0-disc);
+          col = mix(col, pcol, disc) + halo * atmo * (0.15+dayside*0.6);
+        }
         gl_FragColor=vec4(col,1.0);
       }`,
   }));
@@ -141,13 +173,18 @@ export function createStage(ctx, audio) {
         float grid = max(rings*0.7, spokes*0.4) * exp(-r*0.06);
         vec3 gridCol = hsv(uHue,0.6,1.0);
         vec3 col = base + grid*gridCol*(0.10+0.12*uBeat);
+        // edge caution ring with dashes
+        float edge = smoothstep(11.4,11.55,r)*(1.0-smoothstep(11.95,12.1,r));
+        col += edge * mix(vec3(0.9,0.55,0.12), gridCol, 0.35) * (0.35+0.25*uBeat);
+        float dashes = step(0.5, fract(ang/6.2831853*48.0));
+        col *= 1.0 - edge*dashes*0.75;
         // spectrum reflection glow under the ring of bars
         float u = fract((ang/6.2831853)+0.5);
         float lvl = texture2D(uSpec, vec2(u,0.5)).r;
         float hue = texture2D(uSpec, vec2(u,0.5)).g;
         float near = exp(-pow((r-uRing)/ (0.9+lvl*1.6),2.0));
         vec3 barCol = hsv(hue, 0.85, 1.0);
-        col += barCol * near * lvl * 0.9;
+        col += barCol * near * lvl * 0.7;
         // inner core pool
         col += hsv(uHue,0.5,1.0) * exp(-r*0.9) * (0.25+0.5*uBeat);
         // beat shockwaves
@@ -159,23 +196,44 @@ export function createStage(ctx, audio) {
         #include <fog_fragment>
       }`,
   }));
-  const deck = new THREE.Mesh(D(new THREE.CircleGeometry(120, 96)), deckMat);
-  deck.rotation.x = -Math.PI / 2; deck.position.y = -0.01;
+  const DECK_R = 12.5;
+  const deck = new THREE.Mesh(D(new THREE.CircleGeometry(DECK_R, 128)), deckMat);
+  deck.rotation.x = -Math.PI / 2; deck.position.y = 0;
   group.add(deck);
+  // platform body: bevelled hull hanging below the deck, dark painted metal
+  const hullMat = D(new THREE.MeshPhysicalMaterial({ color: 0x1b2540, metalness: 0.75, roughness: 0.42, clearcoat: 0.6, clearcoatRoughness: 0.3, envMapIntensity: 1.1 }));
+  const hull = new THREE.Mesh(D(new THREE.CylinderGeometry(DECK_R, DECK_R * 0.78, 1.6, 128, 1, true)), hullMat);
+  hull.position.y = -0.8; group.add(hull);
+  const hullCap = new THREE.Mesh(D(new THREE.CircleGeometry(DECK_R * 0.78, 128)), hullMat);
+  hullCap.rotation.x = Math.PI / 2; hullCap.position.y = -1.6; group.add(hullCap);
+  // glowing edge strips + underside thruster glow
+  const stripMat = D(new THREE.MeshBasicMaterial({ color: 0x3ee6ff }));
+  const strip = new THREE.Mesh(D(new THREE.TorusGeometry(DECK_R + 0.02, 0.07, 8, 160)), stripMat);
+  strip.rotation.x = Math.PI / 2; strip.position.y = -0.08; group.add(strip);
+  const strip2 = new THREE.Mesh(D(new THREE.TorusGeometry(DECK_R * 0.78 + 0.02, 0.05, 8, 160)), stripMat);
+  strip2.rotation.x = Math.PI / 2; strip2.position.y = -1.55; group.add(strip2);
+  const underMat = D(new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    uniforms: { uCol: { value: new THREE.Color(0x3ee6ff) }, uK: { value: 1 } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: `varying vec2 vUv; uniform vec3 uCol; uniform float uK; void main(){ float r=length(vUv-0.5)*2.0; float a=smoothstep(1.0,0.2,r)*(0.35+0.25*uK); gl_FragColor=vec4(uCol*a*1.2,a); }`,
+  }));
+  const under = new THREE.Mesh(D(new THREE.PlaneGeometry(DECK_R * 2.6, DECK_R * 2.6)), underMat);
+  under.rotation.x = Math.PI / 2; under.position.y = -2.4; group.add(under);
 
   // ---------------------------------------------------------------- spectrum ring
-  const barGeo = D(new THREE.BoxGeometry(0.2, 1, 0.42, 1, 1, 1)); barGeo.translate(0, 0.5, 0);
-  const barMat = D(new THREE.MeshPhysicalMaterial({ color: 0xffffff, metalness: 0.55, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.15, envMapIntensity: 1.2 }));
+  const barGeo = D(new THREE.BoxGeometry(0.17, 1, 0.34, 1, 1, 1)); barGeo.translate(0, 0.5, 0);
+  const barMat = D(new THREE.MeshPhysicalMaterial({ color: 0x0c1226, metalness: 0.85, roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.12, envMapIntensity: 1.0 }));
   barMat.onBeforeCompile = (sh) => {
     sh.uniforms.uEm = { value: 1.0 };
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform float uEm;')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n#ifdef USE_INSTANCING_COLOR\n totalEmissiveRadiance += vColor * uEm;\n#endif');
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n#ifdef USE_COLOR\n totalEmissiveRadiance += vColor * uEm;\n#endif');
   };
   const bars = new THREE.InstancedMesh(barGeo, barMat, BINS);
   bars.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(BINS * 3), 3);
   group.add(bars);
-  const barHue = (i) => 0.08 + (i / BINS) * 0.52;   // gold -> magenta? no: gold(0.08) -> cyan(0.6)
+  const barHue = (i) => (1.08 - (i / BINS) * 0.53) % 1;   // bass gold -> red -> magenta -> violet -> treble cyan (Star Fox palette)
   const Y_AXIS = new THREE.Vector3(0, 1, 0);
   const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpP = new THREE.Vector3(), tmpS = new THREE.Vector3(), tmpC = new THREE.Color();
   const barLevel = new Float32Array(BINS);
@@ -185,7 +243,7 @@ export function createStage(ctx, audio) {
   const waveGeo = new LineGeometry();
   const wavePos = new Float32Array((WN + 1) * 3), waveCol = new Float32Array((WN + 1) * 3);
   waveGeo.setPositions(wavePos); waveGeo.setColors(waveCol);
-  const waveMat = D(new LineMaterial({ vertexColors: true, linewidth: 3.5, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, worldUnits: false }));
+  const waveMat = D(new LineMaterial({ vertexColors: true, linewidth: 2.4, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, worldUnits: false }));
   waveMat.resolution.set(ctx.size.x, ctx.size.y);
   const halo = new Line2(waveGeo, waveMat); halo.position.y = 2.6; group.add(halo);
   const halo2 = new Line2(waveGeo, waveMat); halo2.position.y = 2.6; halo2.rotation.z = Math.PI; halo2.scale.set(0.82, 0.82, 0.82); group.add(halo2);
@@ -314,19 +372,19 @@ export function createStage(ctx, audio) {
     const spec = audio.synth.spectrum;
     const data = specTex.image.data;
     for (let i = 0; i < BINS; i++) {
-      const target = Math.min(1.4, spec[i]);
+      const target = Math.min(1.0, Math.pow(Math.min(1.6, spec[i]) / 1.6, 0.65));
       barLevel[i] += (target - barLevel[i]) * (target > barLevel[i] ? 0.6 : 0.18);
       const lvl = barLevel[i];
       const a = (i / BINS) * Math.PI * 2 - Math.PI;   // matches deck atan mapping
-      const h = 0.12 + lvl * 4.2;
+      const h = 0.1 + lvl * 2.6;
       tmpP.set(Math.cos(a) * RING_R, 0, Math.sin(a) * RING_R);
       tmpQ.setFromAxisAngle(Y_AXIS, -a);
       tmpS.set(1, h, 1);
       tmpM.compose(tmpP, tmpQ, tmpS); bars.setMatrixAt(i, tmpM);
       const hue = barHue(i);
-      tmpC.setHSL(hue, 0.9, 0.55).multiplyScalar(0.12 + lvl * 2.6 + beatPulse * 0.08);
+      tmpC.setHSL(hue, 0.95, 0.5).multiplyScalar(0.1 + lvl * 1.0 + beatPulse * 0.06);
       bars.setColorAt(i, tmpC);
-      data[i * 4] = Math.min(255, lvl * 200); data[i * 4 + 1] = hue * 255; data[i * 4 + 2] = 0; data[i * 4 + 3] = 255;
+      data[i * 4] = Math.min(255, lvl * 230); data[i * 4 + 1] = hue * 255; data[i * 4 + 2] = 0; data[i * 4 + 3] = 255;
     }
     bars.instanceMatrix.needsUpdate = true; bars.instanceColor.needsUpdate = true; specTex.needsUpdate = true;
 
@@ -334,10 +392,10 @@ export function createStage(ctx, audio) {
     const wave = audio.synth.wave; const R = 3.9;
     for (let i = 0; i <= WN; i++) {
       const k = i % WN; const a = (i / WN) * Math.PI * 2;
-      const w = Math.max(-1, Math.min(1, wave[k] * 0.9));
-      const r = R + w * 0.75 + Math.sin(a * 3 + t * 0.7) * 0.05;
-      wavePos[i * 3] = Math.cos(a) * r; wavePos[i * 3 + 1] = w * 0.55 + Math.sin(a * 2 + t) * 0.08; wavePos[i * 3 + 2] = Math.sin(a) * r;
-      tmpC.setHSL(songHue + 0.05 + Math.abs(w) * 0.12, 0.85, 0.55 + Math.abs(w) * 0.4).multiplyScalar(0.7 + Math.abs(w) * 1.8 + audio.synth.energy * 0.6);
+      const w = Math.max(-1, Math.min(1, wave[k] * 0.6));
+      const r = R + w * 0.55 + Math.sin(a * 3 + t * 0.7) * 0.05;
+      wavePos[i * 3] = Math.cos(a) * r; wavePos[i * 3 + 1] = w * 0.4 + Math.sin(a * 2 + t) * 0.08; wavePos[i * 3 + 2] = Math.sin(a) * r;
+      tmpC.setHSL(songHue + 0.05 + Math.abs(w) * 0.12, 0.85, 0.5 + Math.abs(w) * 0.2).multiplyScalar(0.4 + Math.abs(w) * 0.55 + audio.synth.energy * 0.2);
       waveCol[i * 3] = tmpC.r; waveCol[i * 3 + 1] = tmpC.g; waveCol[i * 3 + 2] = tmpC.b;
     }
     waveGeo.setPositions(wavePos); waveGeo.setColors(waveCol);
@@ -352,10 +410,12 @@ export function createStage(ctx, audio) {
     gyro[0].rotation.x += dt * (0.8 + bass * 3); gyro[1].rotation.y += dt * (0.6 + audio.synth.energy * 2); gyro[2].rotation.z -= dt * 0.9;
     core.position.y = 2.6 + Math.sin(t * 0.8) * 0.12;
     tmpC.setHSL(songHue, 0.8, 0.6);
-    glowMat.color.copy(tmpC).multiplyScalar(1.2 + bass * 3 + flash * 3);
-    glow.scale.setScalar(0.8 + bass * 0.9 + flash * 0.6);
-    beacon.color.copy(tmpC); beacon.intensity = 18 + bass * 60 + flash * 120; beacon.position.copy(core.position);
-    ringMat.emissive.copy(tmpC).multiplyScalar(0.4 + bass * 0.6);
+    glowMat.color.copy(tmpC).multiplyScalar(0.7 + bass * 1.2 + flash * 1.5);
+    glow.scale.setScalar(0.8 + bass * 0.6 + flash * 0.5);
+    beacon.color.copy(tmpC); beacon.intensity = 14 + bass * 40 + flash * 80; beacon.position.copy(core.position);
+    ringMat.emissive.copy(tmpC).multiplyScalar(0.3 + bass * 0.4);
+    stripMat.color.copy(tmpC).multiplyScalar(0.9 + beatPulse * 1.1 + bass * 0.6);
+    underMat.uniforms.uCol.value.copy(tmpC); underMat.uniforms.uK.value = beatPulse + bass;
     flash = Math.max(0, flash - dt * 2.2);
 
     // particles
@@ -382,15 +442,15 @@ export function createStage(ctx, audio) {
     }
 
     // camera: slow orbit + spring kicks (dolly, roll, fov)
-    orbit += dt * 0.07;
+    orbit = Math.PI / 2 + 0.08 + Math.sin(t * 0.11) * 0.7;   // sweep across the planet-facing side
     camKick.v += (0 - camKick.z) * 90 * dt; camKick.v *= Math.exp(-dt * 8); camKick.z += camKick.v * dt;
     camKick.rv += (0 - camKick.roll) * 40 * dt; camKick.rv *= Math.exp(-dt * 5); camKick.roll += camKick.rv * dt;
     camKick.fv += (0 - camKick.fov) * 60 * dt; camKick.fv *= Math.exp(-dt * 7); camKick.fov += camKick.fv * dt;
     const rad = 13.2 - camKick.z * 0.25 - beatPulse * 0.08;
-    const camY = 4.6 + Math.sin(t * 0.31) * 0.5;
+    const camY = 3.9 + Math.sin(t * 0.31) * 0.45;
     camera.position.set(Math.cos(orbit) * rad, camY, Math.sin(orbit) * rad);
     camera.up.set(Math.sin(camKick.roll * 0.15), Math.cos(camKick.roll * 0.15), 0);
-    camera.lookAt(0, 2.2, 0);
+    camera.lookAt(0, 2.0, 0);
     camera.fov = 48 + camKick.fov * 0.25; camera.updateProjectionMatrix();
   }
 

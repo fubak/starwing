@@ -30,18 +30,18 @@ export function createSoundboard(ctx, audio, onAction) {
     .aud-mix .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3ee6ff,#9df5ff);border-radius:3px}
     .aud-mix .bar.d i{background:linear-gradient(90deg,#ffb347,#ff6a2a)}
     .aud-mix .lbl{opacity:.7;min-width:64px}
-    .aud-board{position:absolute;left:34px;right:34px;bottom:28px;display:flex;gap:26px;align-items:flex-end;pointer-events:auto}
+    .aud-board{position:absolute;left:34px;right:34px;bottom:28px;display:flex;gap:22px;align-items:flex-end;pointer-events:auto;justify-content:space-between}
     .aud-grp{display:flex;flex-direction:column;gap:8px}
     .aud-grp .h{font-size:10px;letter-spacing:.4em;opacity:.6;font-weight:700}
-    .aud-pads{display:grid;grid-template-columns:repeat(7,112px);gap:8px}
+    .aud-pads{display:grid;grid-template-columns:repeat(7,104px);gap:8px}
     .aud-music{display:flex;gap:8px}
     .aud-pad{--pc:#3ee6ff;position:relative;height:50px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:linear-gradient(180deg,rgba(20,32,64,.72),rgba(6,10,26,.82));backdrop-filter:blur(6px);
-      color:#e8f4ff;font:700 11px/1 "Segoe UI",system-ui,sans-serif;letter-spacing:.16em;display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;transition:transform .08s,border-color .1s,box-shadow .1s;overflow:hidden}
+      color:#e8f4ff;font:700 10.5px/1 "Segoe UI",system-ui,sans-serif;letter-spacing:.12em;display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;transition:transform .08s,border-color .1s,box-shadow .1s;overflow:hidden}
     .aud-pad::before{content:"";position:absolute;left:10px;right:10px;top:0;height:3px;border-radius:0 0 3px 3px;background:var(--pc);opacity:.75;box-shadow:0 0 10px var(--pc)}
     .aud-pad small{position:absolute;right:8px;bottom:6px;font-size:9px;opacity:.5;letter-spacing:.1em}
     .aud-pad:hover{border-color:var(--pc);transform:translateY(-2px)}
     .aud-pad.hit{transform:scale(.94);border-color:#fff;box-shadow:0 0 22px var(--pc),inset 0 0 30px color-mix(in srgb,var(--pc) 45%,transparent)}
-    .aud-pad.music{width:150px;height:56px;font-size:12px}
+    .aud-pad.music{width:124px;height:56px;font-size:11px}
     .aud-pad.music.active{border-color:var(--pc);box-shadow:0 0 18px var(--pc);background:linear-gradient(180deg,color-mix(in srgb,var(--pc) 40%,rgba(20,32,64,.7)),rgba(6,10,26,.85))}
     .aud-hint{position:absolute;left:0;right:0;bottom:8px;text-align:center;font-size:10px;letter-spacing:.3em;opacity:.45}
     .aud-log{position:absolute;right:34px;bottom:150px;text-align:right;font-size:11px;letter-spacing:.2em;font-weight:600}
