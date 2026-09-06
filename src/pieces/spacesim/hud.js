@@ -18,7 +18,11 @@ export function createHud(ui) {
     W = w; H = h; cv.width = Math.floor(w * dpr); cv.height = Math.floor(h * dpr);
   }
 
-  function callout(text, dur = 1.6) { callouts.push({ text, t0: state.time ?? 0, dur }); }
+  function callout(text, dur = 1.6, style = 'major') {
+    // a new major callout replaces any live one so they never stack over each other
+    if (style === 'major') for (let i = callouts.length - 1; i >= 0; i--) if (callouts[i].style === 'major') callouts.splice(i, 1);
+    callouts.push({ text, t0: state.time ?? 0, dur, style });
+  }
 
   function project(pos, camera) {
     _v.copy(pos).project(camera);
@@ -63,22 +67,26 @@ export function createHud(ui) {
       }
     }
 
-    // ---- reticle (two-stage, Star Fox style)
+    // ---- reticle (two-stage, Star Fox style) projected along the ship's real aim line
     const b = state.boost;
-    g.save();
-    g.globalAlpha = 0.9;
-    g.strokeStyle = accent; g.lineWidth = 2;
-    // near ring
-    g.beginPath(); g.arc(cx, cy, 34 + b * 6, 0, Math.PI * 2); g.stroke();
-    // far reticle
-    g.lineWidth = 1.5; g.globalAlpha = 0.6;
-    g.beginPath(); g.arc(cx, cy, 12, 0, Math.PI * 2); g.stroke();
-    g.globalAlpha = 0.9;
-    for (let i = 0; i < 4; i++) {
-      const a = i * Math.PI / 2 + Math.PI / 4;
-      g.beginPath(); g.moveTo(cx + Math.cos(a) * 42, cy + Math.sin(a) * 42); g.lineTo(cx + Math.cos(a) * 56, cy + Math.sin(a) * 56); g.stroke();
+    let rn = { x: cx, y: cy, behind: false }, rf = { x: cx, y: cy, behind: false };
+    if (state.aimNear && state.aimFar) { rn = project(state.aimNear, camera); rf = project(state.aimFar, camera); }
+    if (!state.maneuver && !rn.behind && !rf.behind) {
+      g.save();
+      g.strokeStyle = accent; g.lineWidth = 2; g.lineCap = 'round';
+      // near stage: open ring with four ticks
+      g.globalAlpha = 0.85;
+      const R1 = 30 + b * 6;
+      for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2; g.beginPath(); g.arc(rn.x, rn.y, R1, a + 0.22, a + Math.PI / 2 - 0.22); g.stroke(); }
+      for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + Math.PI / 4; g.beginPath(); g.moveTo(rn.x + Math.cos(a) * (R1 + 6), rn.y + Math.sin(a) * (R1 + 6)); g.lineTo(rn.x + Math.cos(a) * (R1 + 16), rn.y + Math.sin(a) * (R1 + 16)); g.stroke(); }
+      // far stage: small crosshair dot with a leader line back to the near ring
+      g.globalAlpha = 0.55; g.lineWidth = 1.2;
+      g.beginPath(); g.moveTo(rn.x, rn.y); g.lineTo(rf.x, rf.y); g.stroke();
+      g.globalAlpha = 0.95; g.lineWidth = 1.6;
+      g.beginPath(); g.arc(rf.x, rf.y, 9, 0, Math.PI * 2); g.stroke();
+      g.fillStyle = accent; g.beginPath(); g.arc(rf.x, rf.y, 1.8, 0, Math.PI * 2); g.fill();
+      g.restore();
     }
-    g.restore();
 
     // ---- target markers
     for (const tg of state.targets) {
@@ -97,22 +105,40 @@ export function createHud(ui) {
       }
       const s = THREE.MathUtils.clamp(900 / Math.max(dist, 1), 10, 46);
       const col = tg.locked ? warn : accent;
-      drawBracket(p.x, p.y, s, col, tg.locked ? 2.5 : 1.6, tg.locked ? 0 : Math.PI / 4 * 0 + t * 0.6);
-      if (tg.locked) {
-        g.save(); g.strokeStyle = warn; g.globalAlpha = 0.6; g.lineWidth = 1.5;
-        const rr = s + 10 + 4 * Math.sin(t * 8);
-        g.beginPath(); g.arc(p.x, p.y, rr, 0, Math.PI * 2); g.stroke(); g.restore();
+      if (!tg.locked) {
+        // unlocked: a quiet rotating diamond of four dots (no text clutter)
+        g.save(); g.fillStyle = accent; g.globalAlpha = 0.75;
+        for (let i = 0; i < 4; i++) { const a = t * 0.9 + i * Math.PI / 2; g.beginPath(); g.arc(p.x + Math.cos(a) * s, p.y + Math.sin(a) * s, 1.8, 0, Math.PI * 2); g.fill(); }
+        g.restore();
+        continue;
       }
-      // label: right of the bracket, flipped left/above near the edges; suppressed over the gauges and radar
-      const label = `${tg.name}  ${Math.round(dist)}m`;
-      let lx = p.x + s + 6, ly = p.y - s + 4, align = 'left';
-      if (lx + 110 > W - 40) { lx = p.x - s - 6; align = 'right'; }
-      if (ly < 90) ly = p.y + s + 12;
-      const overGauges = lx < 280 && ly > H - 120, overRadar = lx > W - 200 && ly > H - 190;
+      // locked: solid bracket, pulsing ring, and a proper target tag with a leader line
+      drawBracket(p.x, p.y, s, col, 2.4, 0);
+      g.save(); g.strokeStyle = warn; g.globalAlpha = 0.55; g.lineWidth = 1.4;
+      const rr = s + 9 + 3 * Math.sin(t * 8);
+      g.beginPath(); g.arc(p.x, p.y, rr, 0, Math.PI * 2); g.stroke(); g.restore();
+      // tag: to the upper-right of the bracket, flipped near the edges; suppressed over the gauges and radar
+      const right = p.x + s + 150 < W - 30;
+      const dirx = right ? 1 : -1;
+      const ax0 = p.x + dirx * (s + 4), ay0 = p.y - s - 4;
+      const ax1 = ax0 + dirx * 18, ay1 = ay0 - 14;
+      const tagW = 118, tagH = 30;
+      const tx = right ? ax1 : ax1 - tagW, ty = Math.max(84, ay1 - tagH);
+      const overGauges = tx < 280 && ty + tagH > H - 130, overRadar = tx + tagW > W - 200 && ty + tagH > H - 200;
       if (!overGauges && !overRadar) {
-        g.save(); g.fillStyle = col; g.font = `600 ${11}px ${FONT}`; g.textAlign = align; g.globalAlpha = 0.9; g.letterSpacing = '0.06em';
-        g.shadowColor = 'rgba(0,10,20,0.9)'; g.shadowBlur = 4;
-        g.fillText(label, lx, ly); g.restore();
+        g.save();
+        g.strokeStyle = warn; g.lineWidth = 1.4; g.globalAlpha = 0.85;
+        g.beginPath(); g.moveTo(ax0, ay0); g.lineTo(ax1, ay1); g.lineTo(ax1 + dirx * tagW, ay1); g.stroke();
+        g.globalAlpha = 0.55; g.fillStyle = '#0a0410'; roundRect(g, tx, ty, tagW, tagH, 3); g.fill();
+        g.globalAlpha = 0.95; g.fillStyle = warn; g.fillRect(right ? tx : tx + tagW - 3, ty, 3, tagH);
+        g.fillStyle = '#ffffff'; g.font = `800 12px ${FONT}`; g.letterSpacing = '0.16em'; g.textAlign = 'left';
+        g.fillText(tg.name, tx + (right ? 10 : 8), ty + 13);
+        g.font = `600 10px ${FONT}`; g.fillStyle = warn; g.letterSpacing = '0.12em';
+        g.fillText('LOCK', tx + (right ? 10 : 8), ty + 25);
+        g.textAlign = 'right'; g.fillStyle = '#ffffff'; g.font = `700 12px ${FONT}`; g.letterSpacing = '0.04em';
+        g.fillText(`${Math.round(dist)}`, tx + tagW - (right ? 8 : 10) - 12, ty + 25);
+        g.font = `600 9px ${FONT}`; g.globalAlpha = 0.7; g.fillText('m', tx + tagW - (right ? 8 : 10), ty + 25);
+        g.restore();
       }
     }
 
@@ -123,6 +149,17 @@ export function createHud(ui) {
     g.fillText('ALL-RANGE MODE', 34, 46);
     g.font = `600 11px ${FONT}`; g.fillStyle = accent; g.letterSpacing = '0.2em';
     g.fillText('SECTOR X  ·  METEO BELT', 34, 66);
+    // targets remaining: a row of pips (filled = still alive)
+    if (state.total) {
+      g.font = `700 10px ${FONT}`; g.fillStyle = '#fff'; g.globalAlpha = 0.75; g.letterSpacing = '0.2em';
+      g.fillText('TARGETS', 34, 90);
+      for (let i = 0; i < state.total; i++) {
+        const alive = i < state.remaining;
+        g.globalAlpha = alive ? 0.95 : 0.3; g.fillStyle = alive ? '#ff5e5e' : '#7fe0ff';
+        g.beginPath(); g.moveTo(102 + i * 14, 82); g.lineTo(107 + i * 14, 87); g.lineTo(102 + i * 14, 92); g.lineTo(97 + i * 14, 87); g.closePath();
+        if (alive) g.fill(); else { g.lineWidth = 1; g.strokeStyle = '#7fe0ff'; g.stroke(); }
+      }
+    }
     g.restore();
 
     // ---- speed / boost gauge (bottom-left)
@@ -191,13 +228,15 @@ export function createHud(ui) {
       const k = age / c.dur;
       const pop = k < 0.12 ? easeOutBack(k / 0.12) : 1;
       const fade = k > 0.75 ? 1 - (k - 0.75) / 0.25 : 1;
+      const minor = c.style === 'minor';
       g.save();
-      g.translate(cx, cy - 120); g.scale(pop, pop);
-      g.globalAlpha = fade;
-      g.font = `900 38px ${FONT}`; g.textAlign = 'center'; g.letterSpacing = '0.18em';
-      g.lineWidth = 6; g.strokeStyle = 'rgba(0,20,40,0.7)'; g.strokeText(c.text, 0, 0);
-      const gr = g.createLinearGradient(0, -30, 0, 10); gr.addColorStop(0, '#ffffff'); gr.addColorStop(1, gold);
-      g.fillStyle = gr; g.fillText(c.text, 0, 0);
+      g.translate(cx, minor ? cy + 92 : cy - 120); g.scale(pop, pop);
+      g.globalAlpha = fade * (minor ? 0.9 : 1);
+      g.font = minor ? `800 16px ${FONT}` : `900 38px ${FONT}`; g.textAlign = 'center'; g.letterSpacing = minor ? '0.3em' : '0.18em';
+      g.lineWidth = minor ? 3 : 6; g.strokeStyle = 'rgba(0,20,40,0.7)'; g.strokeText(c.text, 0, 0);
+      if (minor) { g.fillStyle = warn; } else { const gr = g.createLinearGradient(0, -30, 0, 10); gr.addColorStop(0, '#ffffff'); gr.addColorStop(1, gold); g.fillStyle = gr; }
+      g.fillText(c.text, 0, 0);
+      if (!minor) { g.globalAlpha = fade * 0.8; g.fillStyle = gold; const tw = g.measureText(c.text).width; g.fillRect(-tw / 2, 10, tw * Math.min(1, k * 3), 2); }
       g.restore();
     }
 

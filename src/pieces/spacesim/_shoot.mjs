@@ -9,7 +9,9 @@
  * The video is a real-time recording (autoplay input script if the piece
  * supports it) so motion/feel can be judged.
  *
- * Requires the dev server: `npm run dev` (port 5173) — or set BASE_URL.
+ * Uses the HMR-free render server on port 5174 (`NO_HMR=1 npx vite`), falling
+ * back to 5173 — or set BASE_URL. (HMR reloads from other agents' edits would
+ * otherwise wipe window.__engine mid-capture.)
  */
 import { chromium } from 'playwright';
 import fs from 'node:fs';
@@ -23,7 +25,12 @@ const times = opt('times', '1,3,6,10').split(',').map(Number);
 const videoSecs = Number(opt('video', '8'));
 const seed = opt('seed', '1');
 const out = opt('out', path.join('shots', name));
-const base = process.env.BASE_URL ?? 'http://localhost:5173';
+async function pickBase() {
+  if (process.env.BASE_URL) return process.env.BASE_URL;
+  try { const r = await fetch('http://localhost:5174/'); if (r.ok) return 'http://localhost:5174'; } catch {}
+  return 'http://localhost:5173';
+}
+const base = await pickBase();
 const W = 1280, H = 720;
 
 fs.mkdirSync(out, { recursive: true });
@@ -39,11 +46,10 @@ const errors = [];
 // ---- deterministic frames
 {
   const page = await browser.newPage({ viewport: { width: W, height: H } });
-  await page.route('**/@vite/client', (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: 'export const createHotContext=()=>({accept(){},dispose(){},on(){},send(){}});export function injectQuery(u){return u}export function updateStyle(){}export function removeStyle(){}' }));
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
   await page.goto(q('&fixed'), { waitUntil: 'networkidle' });
-  await page.waitForFunction(() => window.__engine?.piece, null, { timeout: 30000 }).catch(() => errors.push('engine never booted'));
+  await page.waitForFunction(() => window.__engine?.piece, null, { timeout: 120000 }).catch(() => errors.push('engine never booted'));
   // Stop the RAF loop so we own stepping.
   await page.evaluate(() => { cancelAnimationFrame(window.__engine._raf); });
   let stepped = 0;
@@ -58,7 +64,7 @@ const errors = [];
       }
       stepped = target;
     }
-    await page.screenshot({ timeout: 180000, path: path.join(out, `t${String(t).padStart(3, '0')}.png`) });
+    await page.screenshot({ timeout: 600000, path: path.join(out, `t${String(t).padStart(3, '0')}.png`) });
     console.log(`frame t=${t}s`);
   }
   await page.close();
@@ -68,10 +74,9 @@ const errors = [];
 if (videoSecs > 0) {
   const vctx = await browser.newContext({ viewport: { width: W, height: H }, recordVideo: { dir: out, size: { width: W, height: H } } });
   const page = await vctx.newPage();
-  await page.route('**/@vite/client', (r) => r.fulfill({ status: 200, contentType: 'application/javascript', body: 'export const createHotContext=()=>({accept(){},dispose(){},on(){},send(){}});export function injectQuery(u){return u}export function updateStyle(){}export function removeStyle(){}' }));
   page.on('pageerror', (e) => errors.push(`pageerror(video): ${e.message}`));
   await page.goto(q(''), { waitUntil: 'networkidle' });
-  await page.waitForFunction(() => window.__engine?.piece, null, { timeout: 30000 }).catch(() => {});
+  await page.waitForFunction(() => window.__engine?.piece, null, { timeout: 120000 }).catch(() => {});
   // Simulate a user gesture then a scripted keyboard session if not autoplay.
   await page.mouse.click(W / 2, H / 2);
   if (!has('autoplay')) {

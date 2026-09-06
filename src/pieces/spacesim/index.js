@@ -17,8 +17,11 @@ const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quater
 const damp = (rate, dt) => 1 - Math.exp(-rate * dt);
 const easeInOutCubic = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 
-export async function create(ctx) {
-  const { scene, camera, renderer, bloom, input, ui, rng, size, audio } = ctx;
+export async function create(ctx, opts = {}) {
+  const { scene, camera, renderer, bloom, input, ui, rng, size, audio, events } = ctx;
+  // ---------------- mission state (exposed to the integrator: dronesRemaining / kills / score / onComplete)
+  const mission = { kills: 0, score: 0, wave: 1, complete: false, completeAt: -1, respawn: opts.respawn ?? true, onComplete: opts.onComplete ?? null };
+  const completeListeners = [];
 
   // ---------------- look (lights, sky dome, env map, grade, bloom)
   const look = applyLook(ctx, 'space', { shadowSize: 10, shadowMap: 1024 });
@@ -39,16 +42,24 @@ export async function create(ctx) {
 
   // ---------------- planet + moon (ahead-left of the spawn heading so the opening shot frames it)
   const planetPos = new THREE.Vector3(-0.40, 0.12, -1).normalize().multiplyScalar(3500);
+  const dbg = new URLSearchParams(location.search);
   const planet = buildPlanet(renderer, { radius: 1250, position: planetPos, preset: look.preset });
-  scene.add(planet.group);
+  if (!dbg.has('noplanet')) scene.add(planet.group);
 
   // ---------------- asteroid belt
-  const belt = buildAsteroidBelt(rng, { count: 780, extent: 560, thickness: 130, look });
+  const belt = buildAsteroidBelt(rng, { count: dbg.has('nobelt') ? 6 : 780, extent: 560, thickness: 130, look });
   scene.add(belt.group);
 
   // ---------------- dust motes, haze sheets (god-ray forward scatter), sun disc
   const dust = buildDust(rng, { sunDir: SUN_DIR, sunColor: look.preset.sun.color });
-  scene.add(dust.group);
+  if (!dbg.has('nodust')) scene.add(dust.group);
+
+  // Harness friendliness (as lookdev does): in fixed-step mode drain the GL queue each frame so stepping N
+  // frames doesn't build a backlog the screenshot then has to wait out on software GL.
+  const gl = renderer.getContext();
+  const syncGL = !!ctx.engine?.fixedStep;
+  const syncPx = new Uint8Array(4);
+  const drainGL = () => { renderer.setRenderTarget(null); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, syncPx); };
 
   // ---------------- ship
   // dynamic import so a mid-edit / renamed ship export degrades to the fallback instead of killing the piece
@@ -65,6 +76,15 @@ export async function create(ctx) {
   scene.add(shipRoot);
   const flame = arwing.getObjectByName('flame');
   const engineGlow = arwing.getObjectByName('engineGlow');
+  // The shared Arwing's engine plume is tuned for the ship showcase; here it bloomed into a white blob that
+  // swallowed the tail silhouette. Dial the plume gain down and keep the disc modest (see per-frame clamp).
+  const plumeMats = [], engineDiscs = [];
+  arwing.traverse((o) => {
+    if (!o.isMesh || !o.material?.isShaderMaterial) return;
+    const u = o.material.uniforms;
+    if (u?.uGain) { plumeMats.push(o.material); u.uGain.value *= 0.55; }
+    if (u?.uIntensity && o.position.z > 3.5) engineDiscs.push(o.material);
+  });
 
   const ship = {
     pos: new THREE.Vector3(0, 0, 0), quat: new THREE.Quaternion(), speed: 55,
@@ -78,7 +98,7 @@ export async function create(ctx) {
   // ---------------- drones (targets)
   const drones = [];
   const anchor = new THREE.Vector3(); // laggy centre drones orbit
-  const droneNames = ['VENOM-1', 'VENOM-2', 'VENOM-3', 'VENOM-4', 'VENOM-5', 'VENOM-6'];
+  const droneNames = ['ARROW', 'BLADE', 'CINDER', 'DAGGER', 'EMBER', 'FANG'];
   const droneKit = buildDrone(envMap);
   for (let i = 0; i < 6; i++) {
     const g = droneKit.make();
@@ -90,15 +110,22 @@ export async function create(ctx) {
   }
 
   // ---------------- lasers
-  const boltGeo = new THREE.CapsuleGeometry(0.28, 5.5, 4, 10); boltGeo.rotateX(Math.PI / 2);
-  const boltMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.3, 2.6, 0.5), toneMapped: false, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
-  const boltCore = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.0, 5.0, 3.0), toneMapped: false });
-  const boltHalo = new THREE.SpriteMaterial({ map: (() => { const cv = document.createElement('canvas'); cv.width = cv.height = 64; const g = cv.getContext('2d'); const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(180,255,190,0.9)'); gr.addColorStop(0.4, 'rgba(60,255,110,0.35)'); gr.addColorStop(1, 'rgba(0,255,80,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t; })(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false });
+  // crisp bolts: a hard, opaque hot core (white-green) inside a thin tight sheath; no big halo smear.
+  // The core is slightly tapered toward the tip so it reads as a projectile, not a tube.
+  const boltGeo = new THREE.CapsuleGeometry(0.22, 7.0, 3, 12); boltGeo.rotateX(Math.PI / 2);
+  {
+    const pa = boltGeo.attributes.position;
+    for (let i = 0; i < pa.count; i++) { const z = pa.getZ(i); const k = THREE.MathUtils.clamp((z + 3.5) / 7, 0, 1); const s = 0.55 + 0.45 * (1 - k * k); pa.setX(i, pa.getX(i) * s); pa.setY(i, pa.getY(i) * s); }
+    boltGeo.computeVertexNormals();
+  }
+  const boltMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.10, 1.35, 0.30), toneMapped: false, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false });
+  const boltCore = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 2.4, 1.5), toneMapped: false });
+  const boltHalo = new THREE.SpriteMaterial({ map: (() => { const cv = document.createElement('canvas'); cv.width = cv.height = 64; const g = cv.getContext('2d'); const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(210,255,220,0.8)'); gr.addColorStop(0.3, 'rgba(60,255,110,0.25)'); gr.addColorStop(1, 'rgba(0,255,80,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64); const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t; })(), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false });
   const bolts = [];
   for (let i = 0; i < 24; i++) {
-    const m = new THREE.Mesh(boltGeo, boltMat);
-    const c = new THREE.Mesh(boltGeo, boltCore); c.scale.set(0.35, 0.35, 0.9); m.add(c);
-    const h = new THREE.Sprite(boltHalo); h.scale.setScalar(3.2); m.add(h);
+    const m = new THREE.Mesh(boltGeo, boltMat); m.scale.set(1.35, 1.35, 1.0);
+    const c = new THREE.Mesh(boltGeo, boltCore); c.scale.set(0.42, 0.42, 0.97); m.add(c);
+    const h = new THREE.Sprite(boltHalo); h.scale.setScalar(1.5); h.position.z = 3.0; m.add(h);
     m.visible = false; scene.add(m);
     bolts.push({ mesh: m, vel: new THREE.Vector3(), life: 0 });
   }
@@ -173,7 +200,8 @@ export async function create(ctx) {
   const camQuat = new THREE.Quaternion();
   const camPos = new THREE.Vector3(0, 3, 14);
   let camShake = 0, camPull = 0;
-  const camOffset = new THREE.Vector3(0, 2.2, 9.6);
+  const camOffset = new THREE.Vector3(0, 2.7, 10.8);
+  const aimNear = new THREE.Vector3(), aimFar = new THREE.Vector3();
 
   // ---------------- autoplay script
   input.script = (t) => {
@@ -247,6 +275,7 @@ export async function create(ctx) {
   let lockedIdx = 0;
 
   function update(dt, t) {
+    if (syncGL) drainGL();
     dt = Math.min(dt, 0.05);
     hud.state.time = t;
     const dpr = Math.min(devicePixelRatio || 1, 2);
@@ -314,6 +343,7 @@ export async function create(ctx) {
       rig.flap(THREE.MathUtils.clamp(-ay * 0.6 + (brakeHeld ? 0.8 : 0) - ship.boost * 0.3, -1, 1));
       rig.setHover(0.4);
       rig.update(dt, t, camera);
+      for (const dm of engineDiscs) dm.uniforms.uIntensity.value = Math.min(dm.uniforms.uIntensity.value, 0.28 + ship.boost * 0.22);
     }
     if (flame) { flame.material.uniforms.uTime.value = t; flame.material.uniforms.uPower.value = 0.6 + ship.boost * 1.0 + 0.25 * (ship.speed / SPEED.cruise); flame.scale.set(1 + ship.boost * 0.3, 1 + ship.boost * 0.3, 0.8 + ship.boost * 1.4 + 0.3 * ship.speed / SPEED.cruise); }
     if (engineGlow) engineGlow.scale.setScalar(1 + ship.boost * 0.5 + 0.06 * Math.sin(t * 30));
@@ -331,7 +361,19 @@ export async function create(ctx) {
         if (b.mesh.position.distanceToSquared(d.obj.position) < 8 * 8) {
           b.mesh.visible = false; d.hp--; d.hit = 1; look.flash(0.12);
           explode(b.mesh.position, 0.35);
-          if (d.hp <= 0) { d.dead = 4; d.obj.visible = false; explode(d.obj.position, 1.6); camShake = Math.max(camShake, 0.35); look.flash(0.45); }
+          if (d.hp <= 0) {
+            d.dead = 1e9; d.obj.visible = false; explode(d.obj.position, 1.6); camShake = Math.max(camShake, 0.35); look.flash(0.45);
+            mission.kills++; mission.score += 500;
+            const left = drones.filter((x) => x.dead <= 0).length;
+            hud.callout(left > 0 ? `${left} LEFT` : 'SECTOR CLEAR', left > 0 ? 0.9 : 2.6, left > 0 ? 'minor' : 'major');
+            if (left === 0 && !mission.complete) {
+              mission.complete = true; mission.completeAt = t;
+              const payload = { kills: mission.kills, score: mission.score, wave: mission.wave };
+              events?.emit?.('spacesim:complete', payload);
+              try { mission.onComplete?.(payload); } catch (err) { console.warn('spacesim onComplete', err); }
+              for (const fn of completeListeners) { try { fn(payload); } catch (err) { console.warn('spacesim onComplete', err); } }
+            }
+          }
           break;
         }
       }
@@ -342,8 +384,13 @@ export async function create(ctx) {
 
     // ---- drones
     anchor.lerp(ship.pos, damp(0.35, dt));
+    // next wave (standalone demo only; the campaign should listen for onComplete instead)
+    if (mission.complete && mission.respawn && t - mission.completeAt > 3.2) {
+      mission.complete = false; mission.completeAt = -1; mission.wave++;
+      for (const d of drones) { d.dead = 0; d.hp = 3; d.obj.visible = true; d.phase += 2.3; d.r = rng.range(90, 240); }
+      hud.callout(`WAVE ${mission.wave}`, 1.6);
+    }
     for (const d of drones) {
-      if (d.dead > 0) { d.dead -= dt; if (d.dead <= 0) { d.hp = 3; d.obj.visible = true; d.phase += 2; } }
       const a = d.phase + t * d.spd;
       d.prev.copy(d.obj.position);
       d.obj.position.set(anchor.x + Math.cos(a) * d.r, anchor.y + Math.sin(a * 1.7 + d.tilt) * 55, anchor.z + Math.sin(a) * d.r * 0.85);
@@ -362,6 +409,7 @@ export async function create(ctx) {
       if (sc > bestScore) { bestScore = sc; best = i; }
     });
     lockedIdx = best;
+    hud.state.remaining = drones.filter((d) => d.dead <= 0).length; hud.state.total = drones.length; hud.state.score = mission.score;
     hud.state.targets = drones.filter((d) => d.dead <= 0).map((d) => ({ pos: d.obj.position, dist: d.obj.position.distanceTo(ship.pos), name: d.name, locked: drones.indexOf(d) === lockedIdx }));
 
     // ---- explosions
@@ -383,23 +431,30 @@ export async function create(ctx) {
     belt.update(dt, ship.pos, t);
     planet.update(t);
 
-    // ---- camera: laggy chase w/ roll, fov kick on boost, shake
+    // ---- camera: anchored in the ship's own frame.
+    // Position AND orientation both come from one smoothed quaternion whose pivot is the ship, so the
+    // Arwing always projects to the same screen spot no matter how hard it pitches; the lag only rotates
+    // the world around it. The lag angle is hard-clamped so loops / U-turns can never out-run the camera.
     _q.copy(ship.quat);
-    // add a fraction of the visual bank so the camera rolls with the ship
-    _q2.setFromAxisAngle(FWD, ship.bank * 0.35); _q.multiply(_q2);
-    camQuat.slerp(_q, damp(m && m.type !== 'barrel' ? 3.2 : 5.5, dt));
-    // position: rigid to the ship (a lerp here trails by speed/rate and shrinks the ship at boost); only the rotation lags
-    camPull += ((ship.boost * 1.8 + (brakeHeld ? -0.8 : 0) + (m && m.type !== 'barrel' ? 2.5 : 0)) - camPull) * damp(4, dt);
-    _v.copy(camOffset); _v.z += camPull; _v.applyQuaternion(camQuat).add(ship.pos);
+    _q2.setFromAxisAngle(FWD, ship.bank * 0.35); _q.multiply(_q2); // roll in with the bank
+    const bigManeuver = m && m.type !== 'barrel';
+    camQuat.slerp(_q, damp(bigManeuver ? 4.0 : 6.0, dt));
+    const lagAng = camQuat.angleTo(_q), lagMax = bigManeuver ? 0.62 : 0.32;
+    if (lagAng > lagMax) camQuat.rotateTowards(_q, lagAng - lagMax);
+    camQuat.normalize();
+    // distance: pull back on boost and during big maneuvers (so the whole loop is legible), tuck in on brake
+    camPull += ((ship.boost * 2.0 + (brakeHeld ? -0.9 : 0) + (bigManeuver ? 3.2 : 0)) - camPull) * damp(4, dt);
+    _v.copy(camOffset); _v.z += camPull; _v.y += camPull * 0.18; _v.applyQuaternion(camQuat).add(ship.pos);
     camPos.copy(_v);
     camShake *= 1 - damp(4, dt);
     const sh = camShake + ship.boost * 0.04;
     camera.position.copy(camPos);
     camera.position.x += (rng.next() - 0.5) * sh; camera.position.y += (rng.next() - 0.5) * sh;
-    // look at a point ahead of the ship, but pull it back toward the ship during loops so the Arwing stays framed
-    _v.copy(FWD).applyQuaternion(ship.quat).multiplyScalar(m && m.type !== 'barrel' ? 8 : 40).add(ship.pos);
-    camera.up.copy(UP).applyQuaternion(camQuat);
-    camera.lookAt(_v);
+    // orientation: the smoothed frame, tilted down so the ship sits just below centre, plus a small
+    // anticipation bias toward where the nose actually points (bounded by lagMax -> ship never leaves frame)
+    camera.quaternion.copy(camQuat).slerp(_q, 0.22);
+    _q2.setFromAxisAngle(RIGHT, -0.085 - camPull * 0.004); camera.quaternion.multiply(_q2);
+    camera.up.copy(UP).applyQuaternion(camera.quaternion);
     const fovT = 60 + ship.boost * 14 + (brakeHeld ? -4 : 0);
     if (Math.abs(camera.fov - fovT) > 0.01) { camera.fov += (fovT - camera.fov) * damp(5, dt); camera.updateProjectionMatrix(); }
     camera.updateMatrixWorld();
@@ -425,6 +480,10 @@ export async function create(ctx) {
     hud.state.boost = ship.boost; hud.state.speed = ship.speed; hud.state.boostMeter = ship.boostMeter;
     hud.state.shipQuat.copy(ship.quat); hud.state.shipPos.copy(ship.pos);
     hud.state.sunPos = dust.sun.position;
+    // reticle follows the ship's true aim line (two stages) instead of being glued to screen centre
+    _v.copy(FWD).applyQuaternion(ship.quat);
+    aimNear.copy(_v).multiplyScalar(70).add(ship.pos); aimFar.copy(_v).multiplyScalar(220).add(ship.pos);
+    hud.state.aimNear = aimNear; hud.state.aimFar = aimFar; hud.state.maneuver = !!bigManeuver;
     hud.draw(camera, t, dt);
   }
 
@@ -438,5 +497,16 @@ export async function create(ctx) {
     input.script = null;
   }
 
-  return { update, dispose };
+  return {
+    update, dispose,
+    get dronesRemaining() { return drones.filter((d) => d.dead <= 0).length; },
+    get kills() { return mission.kills; },
+    get score() { return mission.score; },
+    get complete() { return mission.complete; },
+    get wave() { return mission.wave; },
+    /** Subscribe to wave-clear. Also emitted on ctx.events as 'spacesim:complete'. */
+    onComplete(fn) { completeListeners.push(fn); return () => { const i = completeListeners.indexOf(fn); if (i >= 0) completeListeners.splice(i, 1); }; },
+    /** Integrator: set false so a cleared sector stays cleared (no wave respawn). */
+    setRespawn(v) { mission.respawn = !!v; },
+  };
 }

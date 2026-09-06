@@ -33,24 +33,42 @@ function rockGeometry(seed, detail = 3) {
   const v = new THREE.Vector3();
   const sx = 0.75 + hashNoise(seed, 1, 2) * 0.6, sy = 0.7 + hashNoise(seed, 3, 4) * 0.6, sz = 0.8 + hashNoise(seed, 5, 6) * 0.5;
   // a few random cutting planes: flattened facets give hard, readable edges like real fractured rock
+  // two shallow cutting planes: a single hard shelf per rock gives silhouette interest without the
+  // whole thing reading as a chopped icosphere
   const cuts = [];
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 2; i++) {
     const n = new THREE.Vector3(hashNoise(seed, 10 + i, 1) - 0.5, hashNoise(seed, 20 + i, 2) - 0.5, hashNoise(seed, 30 + i, 3) - 0.5).normalize();
-    cuts.push({ n, d: 0.72 + hashNoise(seed, 40 + i, 4) * 0.22 });
+    cuts.push({ n, d: 0.80 + hashNoise(seed, 40 + i, 4) * 0.18 });
   }
+  // a handful of explicit craters with raised rims (bowl + rim profile) so the surface reads as impacted rock
+  const craters = [];
+  const nCr = 5 + Math.floor(hashNoise(seed, 9, 9) * 5);
+  for (let i = 0; i < nCr; i++) {
+    const c = new THREE.Vector3(hashNoise(seed, 50 + i, 1) - 0.5, hashNoise(seed, 60 + i, 2) - 0.5, hashNoise(seed, 70 + i, 3) - 0.5).normalize();
+    craters.push({ c, r: 0.18 + hashNoise(seed, 80 + i, 4) * 0.32, depth: 0.05 + hashNoise(seed, 90 + i, 5) * 0.09 });
+  }
+  const dir = new THREE.Vector3();
   for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
+    v.fromBufferAttribute(pos, i); dir.copy(v);
     const n = fbm(v.x * 1.6 + seed * 7.1, v.y * 1.6 + seed * 3.3, v.z * 1.6, 4);
     const big = fbm(v.x * 0.7 + seed, v.y * 0.7, v.z * 0.7 + seed * 2, 2);
-    const crater = Math.max(0, smoothNoise3(v.x * 2.5 + seed * 11, v.y * 2.5, v.z * 2.5) - 0.62) * 2.2;
-    const r = 1 + 0.32 * big + 0.16 * n - crater;
+    const mid = fbm(v.x * 3.2 + seed * 2.7, v.y * 3.2, v.z * 3.2 + seed, 3);
+    let r = 1 + 0.30 * big + 0.13 * n + 0.05 * mid;
+    for (const cr of craters) {
+      const d = dir.angleTo(cr.c) / cr.r;
+      if (d < 1.25) {
+        const bowl = d < 1 ? -(1 - d * d) : 0;               // parabolic floor
+        const rim = Math.exp(-((d - 1) * (d - 1)) * 18) * 0.45; // raised lip
+        r += (bowl + rim) * cr.depth;
+      }
+    }
     v.multiplyScalar(r);
     v.x *= sx; v.y *= sy; v.z *= sz;
-    for (const c of cuts) { const h = v.dot(c.n); if (h > c.d) v.addScaledVector(c.n, -(h - c.d) * 0.85); }
+    for (const c of cuts) { const h = v.dot(c.n); if (h > c.d) v.addScaledVector(c.n, -(h - c.d) * 0.7); }
     pos.setXYZ(i, v.x, v.y, v.z);
   }
   g.computeVertexNormals();
-  smoothNormalsByPosition(g, 0.88);
+  smoothNormalsByPosition(g, 0.6);
   return g;
 }
 
@@ -114,42 +132,54 @@ const ROCK_FRAG = /* glsl */ `
     // cracks: thin ridged lines
     float cr = ridged3(p * det * 1.1 + 2.0);
     float crack = smoothstep(0.84, 0.93, cr);
-    float blotch = clamp(fbm2(p * 1.1 + 3.0) * 0.8 + 0.5, 0.0, 1.0);
+    // structure-driven albedo: regolith dust settles in hollows (soft, warm, matte); exposed rock on the
+    // ridges is darker and glossier; a slow large-scale band gives each rock a direction/strata read.
+    float hollow = smoothstep(0.25, -0.35, h0);
+    float strata = 0.5 + 0.5 * sin(dot(vObj, normalize(vec3(0.3, 1.0, 0.2))) * 7.0 + seed + fbm2(p * 0.8) * 2.5);
+    strata = smoothstep(0.35, 0.75, strata);
     float fleck = smoothstep(0.62, 0.74, snoise(p * det * 4.0));
     vec3 albedo; float rough, specK; vec3 emis = vec3(0.0);
-    if (type < 0.5) {            // iron-red: rust with oxide streaks and metal flecks
-      albedo = mix(vec3(0.40, 0.15, 0.08), vec3(0.72, 0.34, 0.16), blotch);
-      albedo = mix(albedo, vec3(0.16, 0.09, 0.07), crack * 0.85);
-      albedo = mix(albedo, vec3(0.62, 0.56, 0.52), fleck * 0.15);
-      rough = 0.55; specK = 0.45;
-    } else if (type < 1.5) {     // grey basalt: cool slate, dark fissures
-      albedo = mix(vec3(0.24, 0.26, 0.31), vec3(0.46, 0.44, 0.42), blotch);
-      albedo = mix(albedo, vec3(0.07, 0.07, 0.09), crack * 0.9);
-      albedo = mix(albedo, vec3(0.75, 0.74, 0.72), fleck * 0.12);
-      rough = 0.62; specK = 0.35;
-    } else if (type < 2.5) {     // ice: glassy pale blue, cyan-lit veins
-      albedo = mix(vec3(0.30, 0.50, 0.78), vec3(0.62, 0.80, 0.94), blotch);
+    if (type < 0.5) {            // iron-red: hematite rock, ochre dust in the hollows, dark oxide strata
+      vec3 rock = mix(vec3(0.34, 0.13, 0.07), vec3(0.58, 0.24, 0.11), strata);
+      vec3 dustC = vec3(0.80, 0.50, 0.28);
+      albedo = mix(rock, dustC, hollow * 0.7);
+      albedo = mix(albedo, vec3(0.14, 0.07, 0.05), crack * 0.85);
+      albedo = mix(albedo, vec3(0.70, 0.62, 0.55), fleck * 0.14);
+      rough = mix(0.45, 0.8, hollow); specK = mix(0.6, 0.15, hollow);
+    } else if (type < 1.5) {     // slate: blue-grey rock, warm tan dust, dark fissures (never a flat grey)
+      vec3 rock = mix(vec3(0.20, 0.24, 0.33), vec3(0.38, 0.40, 0.46), strata);
+      vec3 dustC = vec3(0.62, 0.55, 0.44);
+      albedo = mix(rock, dustC, hollow * 0.75);
+      albedo = mix(albedo, vec3(0.06, 0.06, 0.09), crack * 0.9);
+      albedo = mix(albedo, vec3(0.80, 0.78, 0.74), fleck * 0.14);
+      rough = mix(0.4, 0.8, hollow); specK = mix(0.7, 0.15, hollow);
+    } else if (type < 2.5) {     // ice: glassy pale blue, cyan-lit veins, frost in the hollows
+      albedo = mix(vec3(0.28, 0.48, 0.80), vec3(0.62, 0.80, 0.94), strata);
+      albedo = mix(albedo, vec3(0.86, 0.93, 1.0), hollow * 0.5);
       albedo = mix(albedo, vec3(0.12, 0.30, 0.60), crack * 0.6);
       emis = vec3(0.30, 1.10, 1.60) * crack * vRock.z * (0.7 + 0.3 * sin(uTime * 2.0 + seed * 10.0));
-      rough = 0.22; specK = 1.3;
+      rough = 0.2; specK = 1.4;
     } else {                     // charcoal: near-black with ember veins
-      albedo = mix(vec3(0.09, 0.08, 0.08), vec3(0.24, 0.20, 0.18), blotch);
+      albedo = mix(vec3(0.08, 0.07, 0.07), vec3(0.22, 0.18, 0.16), strata);
+      albedo = mix(albedo, vec3(0.30, 0.26, 0.24), hollow * 0.4);
       emis = vec3(2.2, 0.55, 0.08) * crack * vRock.z * (0.75 + 0.25 * sin(uTime * 3.0 + seed * 7.0));
       rough = 0.45; specK = 0.6;
     }
-    float ao = mix(0.7, 1.0, smoothstep(-0.35, 0.3, h0)) * (1.0 - crack * 0.3);
+    float ao = mix(0.62, 1.0, smoothstep(-0.4, 0.3, h0)) * (1.0 - crack * 0.35);
     // key light: hard terminator, slight wrap, stylised
     float ndl = dot(Nb, uSunDir);
-    float diff = clamp((ndl + 0.12) / 1.12, 0.0, 1.0);
-    diff = mix(diff, smoothstep(0.0, 0.45, diff), 0.6);
+    float diff = clamp((ndl + 0.10) / 1.10, 0.0, 1.0);
+    diff = mix(diff, smoothstep(0.0, 0.5, diff), 0.55);
+    // self-shadow in the hollows on the terminator side (cheap directional occlusion)
+    diff *= 1.0 - hollow * 0.35 * (1.0 - smoothstep(0.2, 0.7, ndl));
     vec3 H = normalize(uSunDir + V);
-    float shin = mix(90.0, 14.0, rough);
-    float spec = pow(max(dot(Nb, H), 0.0), shin) * specK * smoothstep(-0.05, 0.15, ndl);
+    float shin = mix(120.0, 10.0, rough);
+    float spec = pow(max(dot(Nb, H), 0.0), shin) * specK * smoothstep(-0.05, 0.15, ndl) * (shin + 8.0) / 40.0;
     float fres = pow(1.0 - max(dot(N, V), 0.0), 4.0);
-    vec3 amb = mix(uHemiGround, uHemiSky, N.y * 0.5 + 0.5) * 0.22;
+    vec3 amb = mix(uHemiGround, uHemiSky, N.y * 0.5 + 0.5) * 0.24;
     float fd = max(dot(Nb, uFillDir), 0.0);
-    vec3 col = albedo * (uSunCol * diff * 1.35 + amb + uFillCol * fd * 0.16) * ao;
-    col += uSunCol * spec * (0.6 + 0.4 * fleck);
+    vec3 col = albedo * (uSunCol * diff * 1.45 + amb + uFillCol * fd * 0.18) * ao;
+    col += uSunCol * spec * (0.6 + 0.4 * fleck) * (1.0 - hollow * 0.5);
     // rim: warm sun rim on the lit edge, cool sky rim everywhere
     col += fres * (uSunCol * 1.1 * smoothstep(-0.25, 0.35, ndl) + uHemiSky * 0.3) * (albedo * 0.6 + 0.2);
     col += emis;
@@ -176,10 +206,10 @@ export function buildAsteroidBelt(rng, { count = 900, extent = 520, thickness = 
   const variantSpec = [
     { detail: 3, size: () => (rng.next() < 0.06 ? rng.range(34, 60) : rng.range(12, 26)), share: 0.12 },
     { detail: 3, size: () => (rng.next() < 0.04 ? rng.range(60, 110) : rng.range(14, 30)), share: 0.10 },
-    { detail: 2, size: () => rng.range(6, 16), share: 0.20 },
-    { detail: 2, size: () => rng.range(5, 14), share: 0.20 },
-    { detail: 1, size: () => rng.range(1.8, 5.5), share: 0.19 },
-    { detail: 1, size: () => rng.range(1.5, 5.0), share: 0.19 },
+    { detail: 3, size: () => rng.range(6, 16), share: 0.20 },
+    { detail: 3, size: () => rng.range(5, 14), share: 0.20 },
+    { detail: 2, size: () => rng.range(1.8, 5.5), share: 0.19 },
+    { detail: 2, size: () => rng.range(1.5, 5.0), share: 0.19 },
   ];
   const meshes = [];
   const rocks = [];
