@@ -112,11 +112,31 @@ export function createTerrainMaterial() {
           float nA = texture2D(uNoise, wp * 0.0022).r;
           float nB = texture2D(uNoise, wp * 0.011 + 3.1).g;
           float nC = texture2D(uNoise, wp * 0.06).r;
-          float v = (nA - 0.5) * 0.36 + (nB - 0.5) * 0.28 + (nC - 0.5) * 0.14;
+          float nD = texture2D(uNoise, wp * 0.21 + 7.7).g;   // grass tuft micro-detail
+          float v = (nA - 0.5) * 0.40 + (nB - 0.5) * 0.30 + (nC - 0.5) * 0.18 + (nD - 0.5) * 0.10;
           // dirt/dry patches only on greenish surfaces
           float grassy = smoothstep(0.05, 0.25, diffuseColor.g - diffuseColor.r);
           diffuseColor.rgb *= 1.0 + v * mix(0.45, 1.0, grassy);
-          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.25, 1.08, 0.7), grassy * smoothstep(0.58, 0.72, nA * 0.6 + nB * 0.4) * 0.5);
+          // sun-bleached straw patches and darker moss hollows
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.30, 1.10, 0.66), grassy * smoothstep(0.56, 0.72, nA * 0.6 + nB * 0.4) * 0.55);
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.72, 0.9, 0.75), grassy * smoothstep(0.30, 0.18, nA * 0.5 + nB * 0.5) * 0.5);
+          // small clover/flower speckle in the meadows
+          float fl = smoothstep(0.86, 0.9, texture2D(uNoise, wp * 0.5).r) * grassy * smoothstep(0.5, 0.65, nB);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.85, 0.35), fl * 0.6);
+        }`)
+      .replace('#include <normal_fragment_maps>', /* glsl */ `
+        #include <normal_fragment_maps>
+        {
+          // procedural bump from world-space noise so raking sun picks up ground texture
+          vec2 wp = vWorldPos.xz;
+          float e = 0.35;
+          float h0 = texture2D(uNoise, wp * 0.045).r * 0.6 + texture2D(uNoise, wp * 0.17 + 2.3).g * 0.4;
+          float hx = texture2D(uNoise, (wp + vec2(e, 0.0)) * 0.045).r * 0.6 + texture2D(uNoise, (wp + vec2(e, 0.0)) * 0.17 + 2.3).g * 0.4;
+          float hz = texture2D(uNoise, (wp + vec2(0.0, e)) * 0.045).r * 0.6 + texture2D(uNoise, (wp + vec2(0.0, e)) * 0.17 + 2.3).g * 0.4;
+          float dist = length(vViewPosition);
+          float k = 1.4 * (1.0 - smoothstep(150.0, 900.0, dist));
+          vec3 pw = vec3(-(hx - h0), 0.0, -(hz - h0)) * k;
+          normal = normalize(normal + mat3(viewMatrix) * pw);
         }`)
       .replace('#include <dithering_fragment>', /* glsl */ `
         #include <dithering_fragment>

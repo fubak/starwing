@@ -8,15 +8,15 @@ export function noiseTexture() { return (_noiseTex ??= makeNoiseTexture(THREE, 5
 const L = (hex) => new THREE.Color(hex).convertSRGBToLinear();
 export const PALETTE = {
   zenith: L(0x1a52c8),     // deep cobalt
-  mid: L(0x4f9fe6),        // cyan-blue
-  horizon: L(0xd7ecfb),    // pale, slightly warm haze
-  fog: L(0xb9d6ee),        // aerial-perspective colour
-  sunWarm: L(0xffd39a),
+  mid: L(0x4a9ae6),        // cyan-blue
+  horizon: L(0xe2ecf6),    // pale, slightly warm haze
+  fog: L(0xbcd4ea),        // aerial-perspective colour
+  sunWarm: L(0xffc27a),
   sunCore: L(0xfff4e2),
 };
 
-/** Sun ahead-left, ~28 deg elevation: long shadows, glitter path on water, disc peeks into frame on climbs. */
-export const SUN_DIR = new THREE.Vector3(-0.44, 0.47, -0.72).normalize();
+/** Sun low on the left (~25 deg), slightly behind the camera. */
+export const SUN_DIR = new THREE.Vector3(-0.74, 0.42, 0.22).normalize(); // low, warm, over the player's left shoulder: facades front-lit, long shadows ahead
 
 export function skyUniforms() {
   return {
@@ -40,8 +40,10 @@ vec3 skyColor(vec3 d){
   col = mix(col, uZenith, smoothstep(0.12, 0.85, pow(hp, 0.8)));
   float sd = max(dot(d, uSunDir), 0.0);
   // Mie forward-scatter lobe around the sun, strongest low in the sky
-  col += uSunWarm * pow(sd, 5.0) * 0.22 * (1.0 - smoothstep(0.0, 0.5, hp));
-  col += vec3(1.0, 0.88, 0.70) * pow(sd, 32.0) * 0.4;
+  col += uSunWarm * pow(sd, 5.0) * 0.24 * (1.0 - smoothstep(0.0, 0.5, hp));
+  col += vec3(1.0, 0.86, 0.66) * pow(sd, 28.0) * 0.5;
+  // horizon band opposite the sun cools toward violet-blue (Rayleigh)
+  col = mix(col, col * vec3(0.92, 0.95, 1.06), (1.0 - sd) * 0.5 * (1.0 - smoothstep(0.0, 0.3, hp)));
   // below the horizon: dense haze
   col = mix(col, uFogColor * 0.92, smoothstep(0.0, -0.06, h));
   return col;
@@ -51,7 +53,7 @@ vec3 atmosColor(vec3 d){
   vec3 hz = skyColor(vec3(d.x, max(d.y, 0.0) * 0.35, d.z));
   float sd = max(dot(d, uSunDir), 0.0);
   vec3 c = mix(uFogColor, hz, 0.55);
-  c += uSunWarm * pow(sd, 6.0) * 0.30;
+  c += uSunWarm * pow(sd, 5.0) * 0.38;
   return c;
 }
 `;

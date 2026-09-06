@@ -39,25 +39,29 @@ export function createWorld(ctx, opts = {}) {
 
   // ---- lights (own rig unless a lookdev sun is supplied)
   let sun, sunTarget, ownLights = [];
+  // Late-afternoon key: low, warm, strong — against a cool sky/ground bounce so shadows read blue.
   if (opts.look?.sun) {
     sun = opts.look.sun; sunTarget = sun.target;
-    if (opts.look.hemi) { opts.look.hemi.color.set(0x8fc0ff); opts.look.hemi.groundColor.set(0x4d6a3c); opts.look.hemi.intensity = 0.7; }
+    sun.color.set(0xffd6a4); sun.intensity = 3.9;
+    if (opts.look.hemi) { opts.look.hemi.color.set(0x7fb4ff); opts.look.hemi.groundColor.set(0x55684a); opts.look.hemi.intensity = 0.65; }
+    if (opts.look.fill) { opts.look.fill.color.set(0x8fbaff); opts.look.fill.intensity = 0.22; }
   } else {
-    const hemi = new THREE.HemisphereLight(0x8fc0ff, 0x4d6a3c, 0.75);
-    sun = new THREE.DirectionalLight(0xfff0d8, 3.1);
+    const hemi = new THREE.HemisphereLight(0x7fb4ff, 0x55684a, 0.65);
+    sun = new THREE.DirectionalLight(0xffd6a4, 3.9);
     sunTarget = new THREE.Object3D();
     sun.target = sunTarget;
-    const fill = new THREE.DirectionalLight(0x9ec8ff, 0.35);
+    const fill = new THREE.DirectionalLight(0x8fbaff, 0.22);
     fill.position.set(400, 200, 600);
     ownLights = [hemi, sun, sunTarget, fill];
     statics.add(...ownLights);
   }
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.near = 100; sun.shadow.camera.far = 3200;
-  sun.shadow.camera.left = -560; sun.shadow.camera.right = 560; sun.shadow.camera.top = 560; sun.shadow.camera.bottom = -560;
-  sun.shadow.bias = -0.0005; sun.shadow.normalBias = 2.5; sun.shadow.radius = 2;
+  sun.shadow.camera.near = 200; sun.shadow.camera.far = 2600;
+  sun.shadow.camera.left = -520; sun.shadow.camera.right = 520; sun.shadow.camera.top = 520; sun.shadow.camera.bottom = -520;
+  sun.shadow.bias = -0.00035; sun.shadow.normalBias = 0.8; sun.shadow.radius = 2;
   sun.shadow.camera.updateProjectionMatrix();
+  sun.shadow.needsUpdate = true;
 
   // ---- backdrop
   const sky = createSky();
@@ -129,9 +133,10 @@ export function createWorld(ctx, opts = {}) {
       motes.update(dt, speed, camPos);
       sky.uniforms.uTime.value = time;
       // shadow frustum tracks the camera & looks forward
-      sunTarget.position.set(camPos.x, 0, camPos.z - 420);
+      sunTarget.position.set(camPos.x, 20, camPos.z - 360);
       sun.position.copy(sunTarget.position).addScaledVector(SUN_DIR, SUN_DIST);
       sunTarget.updateMatrixWorld();
+      sun.updateMatrixWorld();
     },
     dispose() {
       scene.fog = null;
@@ -162,12 +167,15 @@ export async function create(ctx) {
     const base = lookdev.PRESETS.corneria;
     look = lookdev.applyLook(ctx, {
       ...base, name: 'corneria-world',
-      sun: { ...base.sun, dir: [SUN_DIR.x, SUN_DIR.y, SUN_DIR.z], intensity: 3.2 },
-      fog: { color: 0xb9d6ee, density: FOG_DENSITY },
+      sun: { ...base.sun, dir: [SUN_DIR.x, SUN_DIR.y, SUN_DIR.z], color: 0xffd6a4, intensity: 3.9 },
+      hemi: { sky: 0x7fb4ff, ground: 0x55684a, intensity: 0.65 },
+      fill: { ...base.fill, color: 0x8fbaff, intensity: 0.22 },
+      envIntensity: 0.5,
+      fog: { color: 0xbcd4ea, density: FOG_DENSITY },
       exposure: 1.0,
       bloom: { strength: 0.42, radius: 0.6, threshold: 0.86 },
-      grade: { ...base.grade, contrast: 1.05, saturation: 1.1, vignette: 0.26 },
-    }, { sky: false, shadowSize: 560, shadowMap: 2048 });
+      grade: { ...base.grade, contrast: 1.07, saturation: 1.12, vignette: 0.28, lift: 0x02040a, gain: 0xfff6ec },
+    }, { sky: false, shadowSize: 520, shadowMap: 2048 });
   } catch (e) { console.warn('[world] lookdev unavailable, using own light rig', e); }
 
   const world = createWorld(ctx, { look });
@@ -198,8 +206,16 @@ export async function create(ctx) {
   const look3 = new THREE.Vector3();
   let t = 0, lastZone = '';
 
+  // Harness friendliness: in deterministic (fixed-step) mode drain the GL queue each
+  // frame so a screenshot never has to wait out a backlog of software-rendered frames.
+  const gl = renderer.getContext();
+  const syncGL = !!ctx.engine?.fixedStep;
+  const syncPx = new Uint8Array(4);
+  const drainGL = () => { renderer.setRenderTarget(null); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, syncPx); };
+
   return {
     update(dt) {
+      if (syncGL) drainGL();
       t += dt;
       const ax = input.axes.x, ay = input.axes.y;
       let targetSpeed = 210;
