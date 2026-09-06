@@ -60,52 +60,98 @@ export function makeWindowTexture(rng, size = 512) {
   return tex;
 }
 
-/** Hangar wall plating: pale panels with cobalt trim bands, vents, stencils and a hazard rail. */
-export function makeHangarWallTexture(rng, size = 1024) {
-  const c = document.createElement('canvas'); c.width = c.height = size;
+/** Hangar wall plating: one bay-length strip (u along the bay). Large armour plates in two
+ *  horizontal bands, a recessed cobalt service trunk, vent grilles, bolt rows, stencilled bay
+ *  numbers and grime — designed NOT to read as a repeating box grid. */
+export function makeHangarWallTexture(rng, size = 2048) {
+  const c = document.createElement('canvas'); c.width = size; c.height = size / 2;
+  const W = size, H = size / 2;
   const g = c.getContext('2d');
-  g.fillStyle = '#c9d2dd'; g.fillRect(0, 0, size, size);
-  const cols = 8, rows = 5, cw = size / cols, rh = size / rows;
-  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
-    const v = 0.9 + rng.next() * 0.14;
-    g.fillStyle = `rgb(${Math.round(190 * v)},${Math.round(200 * v)},${Math.round(214 * v)})`;
-    g.fillRect(x * cw + 4, y * rh + 4, cw - 8, rh - 8);
-    // bevel highlight / shadow
-    g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(x * cw + 4, y * rh + 4, cw - 8, 3);
-    g.fillStyle = 'rgba(20,28,44,0.45)'; g.fillRect(x * cw + 4, y * rh + rh - 8, cw - 8, 4);
-    const r = rng.next();
-    if (r < 0.2) { g.fillStyle = 'rgba(24,30,44,0.55)'; for (let k = 0; k < 6; k++) g.fillRect(x * cw + cw * 0.3, y * rh + rh * 0.35 + k * 8, cw * 0.4, 3); }
-    else if (r < 0.32) { g.strokeStyle = 'rgba(28,36,54,0.5)'; g.lineWidth = 3; g.beginPath(); g.arc(x * cw + cw / 2, y * rh + rh / 2, rh * 0.22, 0, Math.PI * 2); g.stroke(); }
-    else if (r < 0.42) { g.fillStyle = 'rgba(30,38,56,0.6)'; g.font = `bold ${Math.floor(rh * 0.22)}px sans-serif`; g.fillText(`${String.fromCharCode(65 + Math.floor(rng.next() * 6))}-${Math.floor(rng.next() * 9) + 1}`, x * cw + 14, y * rh + rh * 0.55); }
-  }
-  // recessed seams
-  g.fillStyle = 'rgba(16,22,34,0.85)';
-  for (let y = 0; y <= rows; y++) g.fillRect(0, y * rh - 3, size, 6);
-  for (let x = 0; x <= cols; x++) g.fillRect(x * cw - 3, 0, 6, size);
-  // cobalt trim band + red hazard line across the middle row
-  g.fillStyle = '#1e4fd8'; g.fillRect(0, rh * 2 - 22, size, 16);
-  g.fillStyle = '#d8342a'; g.fillRect(0, rh * 3 + 6, size, 6);
-  for (let i = 0; i < 400; i++) { g.fillStyle = `rgba(${rng.next() < 0.5 ? '30,40,60' : '255,255,255'},${rng.next() * 0.05})`; g.fillRect(rng.next() * size, rng.next() * size, 2 + rng.next() * 5, 20 + rng.next() * 120); }
+  g.fillStyle = '#9aa6b6'; g.fillRect(0, 0, W, H);
+  // horizontal bands: upper plates (H*0..0.42), trunk (0.42..0.55), lower plates (0.55..0.86), skirting (0.86..1)
+  const plate = (x, y, w, h, tone) => {
+    g.fillStyle = `rgb(${Math.round(148 * tone)},${Math.round(160 * tone)},${Math.round(176 * tone)})`;
+    g.fillRect(x, y, w, h);
+    g.fillStyle = 'rgba(255,255,255,0.22)'; g.fillRect(x, y, w, 4); g.fillRect(x, y, 3, h);
+    g.fillStyle = 'rgba(12,18,30,0.55)'; g.fillRect(x, y + h - 5, w, 5); g.fillRect(x + w - 4, y, 4, h);
+    // bolts
+    g.fillStyle = 'rgba(20,26,38,0.7)';
+    for (const [bx, by] of [[x + 12, y + 12], [x + w - 14, y + 12], [x + 12, y + h - 14], [x + w - 14, y + h - 14]]) { g.beginPath(); g.arc(bx, by, 3.5, 0, Math.PI * 2); g.fill(); }
+  };
+  const band = (y0, y1) => {
+    let x = 0; const h = y1 - y0;
+    while (x < W) {
+      const w = Math.min(W - x, (160 + Math.floor(rng.next() * 3) * 120));
+      const tone = 0.92 + rng.next() * 0.16;
+      plate(x + 3, y0 + 3, w - 6, h - 6, tone);
+      const r = rng.next();
+      if (r < 0.22) { // vent grille
+        g.fillStyle = 'rgba(14,20,32,0.75)';
+        const gw = w * 0.5, gh = h * 0.36, gx = x + (w - gw) / 2, gy = y0 + (h - gh) / 2;
+        g.fillRect(gx, gy, gw, gh); g.fillStyle = 'rgba(150,165,190,0.55)';
+        for (let k = gy + 6; k < gy + gh - 4; k += 9) g.fillRect(gx + 5, k, gw - 10, 3);
+      } else if (r < 0.34) { // stencil
+        g.fillStyle = 'rgba(28,36,54,0.75)'; g.font = `900 ${Math.floor(h * 0.34)}px sans-serif`; g.textBaseline = 'middle';
+        g.fillText(`${String.fromCharCode(65 + Math.floor(rng.next() * 5))}${Math.floor(rng.next() * 9) + 1}`, x + w * 0.18, y0 + h * 0.5);
+      } else if (r < 0.46) { // access hatch
+        g.strokeStyle = 'rgba(20,26,40,0.7)'; g.lineWidth = 5; g.beginPath(); g.roundRect(x + w * 0.25, y0 + h * 0.22, w * 0.5, h * 0.56, 10); g.stroke();
+        g.fillStyle = '#e2b53a'; g.fillRect(x + w * 0.25, y0 + h * 0.22 - 10, w * 0.5, 6);
+      } else if (r < 0.54) { // warning chevron block
+        g.fillStyle = '#d8342a'; g.fillRect(x + w * 0.3, y0 + h * 0.4, w * 0.4, h * 0.2);
+        g.fillStyle = '#f2f4f8'; for (let k = 0; k < 4; k++) g.fillRect(x + w * 0.3 + k * w * 0.1 + 6, y0 + h * 0.4, w * 0.03, h * 0.2);
+      }
+      x += w;
+    }
+  };
+  band(0, H * 0.42); band(H * 0.55, H * 0.86);
+  // recessed cobalt service trunk with conduits and running light slots
+  g.fillStyle = '#0d1422'; g.fillRect(0, H * 0.42, W, H * 0.13);
+  g.fillStyle = '#1e4fd8'; g.fillRect(0, H * 0.435, W, H * 0.045);
+  g.fillStyle = 'rgba(255,255,255,0.18)'; g.fillRect(0, H * 0.435, W, 4);
+  g.fillStyle = '#3a4456'; g.fillRect(0, H * 0.495, W, 10); g.fillRect(0, H * 0.52, W, 6);
+  for (let x = 40; x < W; x += 180) { g.fillStyle = '#ffb060'; g.fillRect(x, H * 0.532, 28, 6); }
+  // skirting: dark with hazard stripe
+  g.fillStyle = '#1c2230'; g.fillRect(0, H * 0.86, W, H * 0.14);
+  g.fillStyle = '#e2b53a'; for (let x = 0; x < W; x += 64) { g.beginPath(); g.moveTo(x, H * 0.905); g.lineTo(x + 26, H * 0.905); g.lineTo(x + 26 + 22, H * 0.955); g.lineTo(x + 22, H * 0.955); g.fill(); }
+  // grime: vertical streaks + soot near skirting
+  for (let i = 0; i < 700; i++) { g.fillStyle = `rgba(${rng.next() < 0.6 ? '20,26,40' : '255,255,255'},${rng.next() * 0.07})`; g.fillRect(rng.next() * W, rng.next() * H, 2 + rng.next() * 6, 20 + rng.next() * 160); }
+  const soot = g.createLinearGradient(0, H * 0.7, 0, H); soot.addColorStop(0, 'rgba(0,0,0,0)'); soot.addColorStop(1, 'rgba(0,0,0,0.35)'); g.fillStyle = soot; g.fillRect(0, 0, W, H);
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
   return tex;
 }
 
+/** Deck plating: dark matte blue-grey plates with tread texture, bolt rows, worn paint
+ *  and a centre lane with hazard chevrons. Dark and rough by design so light sources read as
+ *  soft pools instead of a blown-out specular smear. */
 export function makeFloorTexture(rng, size = 1024) {
   const c = document.createElement('canvas'); c.width = c.height = size;
   const g = c.getContext('2d');
-  g.fillStyle = '#2a3140'; g.fillRect(0, 0, size, size);
-  const n = 8, cs = size / n;
+  g.fillStyle = '#242b38'; g.fillRect(0, 0, size, size);
+  const n = 4, cs = size / n;
   for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-    const v = 0.7 + rng.next() * 0.3;
-    g.fillStyle = `rgb(${Math.round(46 * v)},${Math.round(54 * v)},${Math.round(70 * v)})`;
-    g.fillRect(x * cs + 3, y * cs + 3, cs - 6, cs - 6);
+    const v = 0.82 + rng.next() * 0.28;
+    g.fillStyle = `rgb(${Math.round(40 * v)},${Math.round(47 * v)},${Math.round(62 * v)})`;
+    g.fillRect(x * cs + 5, y * cs + 5, cs - 10, cs - 10);
+    // tread: fine diagonal hatch
+    g.strokeStyle = 'rgba(255,255,255,0.045)'; g.lineWidth = 2;
+    for (let k = -cs; k < cs; k += 14) { g.beginPath(); g.moveTo(x * cs + k, y * cs); g.lineTo(x * cs + k + cs, y * cs + cs); g.stroke(); }
+    // bolt rows along edges
+    g.fillStyle = 'rgba(120,135,160,0.5)';
+    for (let k = 24; k < cs - 20; k += 40) { g.beginPath(); g.arc(x * cs + 14, y * cs + k, 3, 0, 7); g.fill(); g.beginPath(); g.arc(x * cs + cs - 14, y * cs + k, 3, 0, 7); g.fill(); g.beginPath(); g.arc(x * cs + k, y * cs + 14, 3, 0, 7); g.fill(); g.beginPath(); g.arc(x * cs + k, y * cs + cs - 14, 3, 0, 7); g.fill(); }
+    // plate edge bevel
+    g.fillStyle = 'rgba(255,255,255,0.10)'; g.fillRect(x * cs + 5, y * cs + 5, cs - 10, 3);
+    g.fillStyle = 'rgba(0,0,0,0.35)'; g.fillRect(x * cs + 5, y * cs + cs - 9, cs - 10, 4);
   }
-  g.strokeStyle = 'rgba(10,14,22,0.9)'; g.lineWidth = 6;
+  g.strokeStyle = 'rgba(8,11,18,0.95)'; g.lineWidth = 8;
   for (let i = 0; i <= n; i++) { g.beginPath(); g.moveTo(0, i * cs); g.lineTo(size, i * cs); g.stroke(); g.beginPath(); g.moveTo(i * cs, 0); g.lineTo(i * cs, size); g.stroke(); }
-  // hazard chevrons down the middle lane
-  g.fillStyle = 'rgba(255,196,60,0.55)';
-  for (let y = 0; y < size; y += 96) { g.beginPath(); g.moveTo(size * 0.5 - 40, y); g.lineTo(size * 0.5 + 40, y); g.lineTo(size * 0.5 + 40, y + 14); g.lineTo(size * 0.5 - 40, y + 14); g.fill(); }
+  // scuffs / worn paint / oil
+  for (let i = 0; i < 260; i++) { g.fillStyle = `rgba(${rng.next() < 0.5 ? '0,0,0' : '160,175,200'},${rng.next() * 0.08})`; g.fillRect(rng.next() * size, rng.next() * size, 3 + rng.next() * 30, 40 + rng.next() * 220); }
+  for (let i = 0; i < 14; i++) { const x = rng.next() * size, y = rng.next() * size, r = 20 + rng.next() * 60; const o = g.createRadialGradient(x, y, 0, x, y, r); o.addColorStop(0, 'rgba(0,0,0,0.35)'); o.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = o; g.fillRect(x - r, y - r, r * 2, r * 2); }
+  // centre lane: painted yellow edge lines + chevrons (worn)
+  g.fillStyle = 'rgba(226,181,58,0.75)'; g.fillRect(size * 0.5 - 70, 0, 6, size); g.fillRect(size * 0.5 + 64, 0, 6, size);
+  g.fillStyle = 'rgba(226,181,58,0.5)';
+  for (let y = 0; y < size; y += 128) { g.beginPath(); g.moveTo(size * 0.5 - 40, y + 30); g.lineTo(size * 0.5, y); g.lineTo(size * 0.5 + 40, y + 30); g.lineTo(size * 0.5 + 40, y + 46); g.lineTo(size * 0.5, y + 16); g.lineTo(size * 0.5 - 40, y + 46); g.fill(); }
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
   return tex;
@@ -117,7 +163,7 @@ export function makeFloorTexture(rng, size = 1024) {
 export function makeMaterials(rng) {
   const panels = makePanelTexture(rng, '#e6ecf2');
   const panelsDark = makePanelTexture(rng, '#3a4250', 'rgba(10,14,22,0.6)');
-  const floor = makeFloorTexture(rng);
+  const floor = makeFloorTexture(rng, 2048);
   const hwall = makeHangarWallTexture(rng);
   const mats = {
     hull: new THREE.MeshPhysicalMaterial({ color: 0xf2f5f8, map: panels, metalness: 0.1, roughness: 0.42, clearcoat: 0.8, clearcoatRoughness: 0.15, envMapIntensity: 1.0 }),
@@ -129,9 +175,16 @@ export function makeMaterials(rng) {
     glowOrange: new THREE.MeshStandardMaterial({ color: 0xffb060, emissive: 0xff9040, emissiveIntensity: 3.0 }),
     glowWhite: new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff4e0, emissiveIntensity: 1.8 }),
     windows: new THREE.MeshStandardMaterial({ color: 0x0a0c10, emissive: 0xffffff, emissiveMap: makeWindowTexture(rng), emissiveIntensity: 2.2, metalness: 0.6, roughness: 0.4 }),
-    hangarFloor: new THREE.MeshStandardMaterial({ color: 0xffffff, map: floor, metalness: 0.12, roughness: 0.78, envMapIntensity: 0.6 }),
-    hangarWall: new THREE.MeshStandardMaterial({ color: 0xffffff, map: hwall, metalness: 0.35, roughness: 0.55, envMapIntensity: 0.6 }),
-    hangarCeil: new THREE.MeshStandardMaterial({ color: 0x8a94a6, map: panelsDark, metalness: 0.6, roughness: 0.6, envMapIntensity: 0.5 }),
+    // deck: dark, matte, non-metal -> lights read as soft pools, no specular smear
+    hangarFloor: new THREE.MeshStandardMaterial({ color: 0xcfd6e0, map: floor, metalness: 0.0, roughness: 0.94, envMapIntensity: 0.25 }),
+    hangarWall: new THREE.MeshStandardMaterial({ color: 0xffffff, map: hwall, metalness: 0.15, roughness: 0.72, envMapIntensity: 0.35 }),
+    hangarCeil: new THREE.MeshStandardMaterial({ color: 0x3a4250, map: panelsDark, metalness: 0.4, roughness: 0.8, envMapIntensity: 0.3 }),
+    truss: new THREE.MeshStandardMaterial({ color: 0x6d7789, metalness: 0.7, roughness: 0.5, envMapIntensity: 0.6 }),
+    crate: new THREE.MeshStandardMaterial({ color: 0x8b93a3, metalness: 0.3, roughness: 0.7 }),
+    crateBlue: new THREE.MeshStandardMaterial({ color: 0x2456c8, metalness: 0.3, roughness: 0.6 }),
+    drum: new THREE.MeshStandardMaterial({ color: 0xe0b23a, metalness: 0.4, roughness: 0.55 }),
+    glowCyanStrip: new THREE.MeshStandardMaterial({ color: 0x0b2a40, emissive: 0x4fd8ff, emissiveIntensity: 1.1, roughness: 0.5 }),
+    padDark: new THREE.MeshStandardMaterial({ color: 0x1a2130, metalness: 0.2, roughness: 0.85 }),
     bayInner: new THREE.MeshStandardMaterial({ color: 0x0b0e14, side: THREE.BackSide, roughness: 0.9 }),
   };
   panels.repeat.set(1, 1);
@@ -265,48 +318,99 @@ export function buildGreatFox(mats) {
 /* ------------------------------------------------------------------ */
 export function buildHangar(mats) {
   const h = new THREE.Group();
-  const W = 26, H = 12, L = 70;
-  const wall = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.set(rx, ry, rz); m.receiveShadow = true; h.add(m); return m; };
-  mats.hangarFloor.map.repeat.set(2, 6);
-  mats.hangarWall.map.repeat.set(4, 1);
-  wall(new THREE.BoxGeometry(W, 1, L), mats.hangarFloor, 0, -H / 2, 0);
-  wall(new THREE.BoxGeometry(W, 1, L), mats.hangarCeil, 0, H / 2, 0);
+  const W = 30, H = 14, L = 78, FLOOR = -H / 2 + 0.5; // floor top
+  const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, { cast = false, recv = true } = {}) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.set(rx, ry, rz); m.receiveShadow = recv; m.castShadow = cast; h.add(m); return m; };
+  mats.hangarFloor.map.repeat.set(1, L / W);
+  mats.hangarWall.map.repeat.set(2.6, 1);
+  mats.hangarCeil.map.repeat.set(2, 5);
+  add(new THREE.BoxGeometry(W, 1, L), mats.hangarFloor, 0, -H / 2, 0);
+  add(new THREE.BoxGeometry(W, 1, L), mats.hangarCeil, 0, H / 2, 0);
   // side walls as planes so the texture's UV runs along the bay (u along z)
   const sideGeo = new THREE.PlaneGeometry(L, H);
-  wall(sideGeo, mats.hangarWall, -W / 2 + 0.5, 0, 0, 0, Math.PI / 2, 0);
-  wall(sideGeo, mats.hangarWall, W / 2 - 0.5, 0, 0, 0, -Math.PI / 2, 0);
-  wall(new THREE.BoxGeometry(W, H, 1), mats.hangarWall, 0, 0, L / 2); // back wall
+  add(sideGeo, mats.hangarWall, -W / 2 + 0.5, 0, 0, 0, Math.PI / 2, 0);
+  add(sideGeo, mats.hangarWall, W / 2 - 0.5, 0, 0, 0, -Math.PI / 2, 0);
+  const backGeo = new THREE.PlaneGeometry(W, H); backGeo.attributes.uv.array.forEach((v, i) => { if (i % 2 === 0) backGeo.attributes.uv.array[i] = v * (W / L) * 2.6; });
+  add(backGeo, mats.hangarWall, 0, 0, L / 2 - 0.5, 0, Math.PI, 0); // back wall
   // atmosphere: faint additive haze sheets across the bay so the launch lights bloom in the air
-  const hazeMat = new THREE.MeshBasicMaterial({ color: 0x3a5a90, transparent: true, opacity: 0.014, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-  for (let i = 0; i < 6; i++) { const s = new THREE.Mesh(new THREE.PlaneGeometry(W, H), hazeMat); s.position.set(0, 0, -L / 2 + 4 + i * 10); h.add(s); }
-  // ribs + ceiling light bars + side conduits
-  for (let i = 0; i < 9; i++) {
-    const z = -L / 2 + 6 + i * 7;
-    const rib = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 0.9, 0.9), mats.hull); rib.position.set(0, H / 2 - 0.95, z); rib.castShadow = true; h.add(rib);
+  const hazeMat = new THREE.MeshBasicMaterial({ color: 0x3a5a90, transparent: true, opacity: 0.008, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  for (let i = 0; i < 7; i++) { const s = new THREE.Mesh(new THREE.PlaneGeometry(W, H), hazeMat); s.position.set(0, 0, -L / 2 + 4 + i * 10); h.add(s); }
+
+  // ---- structure: ribs (wall pillars + ceiling arch), trusses, gantry
+  const ribGeo = new THREE.BoxGeometry(1.1, H - 0.5, 1.1), archGeo = new THREE.BoxGeometry(W - 0.6, 1.0, 1.1), bandGeo = new THREE.BoxGeometry(1.15, 1.4, 1.15);
+  const trussGeo = new THREE.BoxGeometry(0.22, 0.22, 9.2), lampGeo = new THREE.BoxGeometry(0.22, 0.6, 0.22), ceilLightGeo = new THREE.BoxGeometry(W * 0.5, 0.14, 0.5);
+  for (let i = 0; i < 8; i++) {
+    const z = -L / 2 + 5 + i * 9.5;
+    add(archGeo, mats.hull, 0, H / 2 - 1.0, z, 0, 0, 0, { cast: true });
     for (const s of [-1, 1]) {
-      const r2 = new THREE.Mesh(new THREE.BoxGeometry(0.9, H - 0.5, 0.9), mats.hull); r2.position.set(s * (W / 2 - 0.95), 0, z); r2.castShadow = true; h.add(r2);
-      const band = new THREE.Mesh(new THREE.BoxGeometry(0.95, 1.2, 0.95), mats.hullBlue); band.position.set(s * (W / 2 - 0.95), 1.4, z); h.add(band);
-      const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 7, 10), mats.gunmetal); pipe.rotation.x = Math.PI / 2; pipe.position.set(s * (W / 2 - 1.2), 2.5, z + 3.5); h.add(pipe);
-      const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.5, 0.2), mats.glowOrange); lamp.position.set(s * (W / 2 - 1.2), -1, z); h.add(lamp);
+      add(ribGeo, mats.hull, s * (W / 2 - 1.05), 0, z, 0, 0, 0, { cast: true });
+      add(bandGeo, mats.hullBlue, s * (W / 2 - 1.05), 2.6, z);
+      add(lampGeo, mats.glowOrange, s * (W / 2 - 1.3), FLOOR + 1.6, z);
+      // diagonal roof trusses between arches
+      if (i < 7) { add(trussGeo, mats.truss, s * (W * 0.25), H / 2 - 1.7, z + 4.75, 0, 0, 0); add(trussGeo, mats.truss, s * (W * 0.25), H / 2 - 1.7, z + 4.75, 0.55, 0, 0); }
     }
-    const lt = new THREE.Mesh(new THREE.BoxGeometry(W * 0.55, 0.15, 0.4), mats.glowWhite); lt.position.set(0, H / 2 - 0.55, z + 3.5); h.add(lt);
+    // ceiling light bar (two half-bars leave the centre gantry dark)
+    add(ceilLightGeo, mats.glowWhite, 0, H / 2 - 0.6, z + 4.75);
   }
-  // floor guide strips + launch rails + wheel chocks
-  for (const x of [-6.5, 6.5]) {
-    for (let i = 0; i < 12; i++) { const g = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.08, 3), mats.glow); g.position.set(x, -H / 2 + 0.56, -L / 2 + 2 + i * 6); h.add(g); }
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.5, L - 4), mats.gunmetal); rail.position.set(x, -H / 2 + 0.75, 0); rail.receiveShadow = true; h.add(rail);
-    for (const z of [12, 24]) { const chock = new THREE.Mesh(new THREE.BoxGeometry(5, 0.6, 1.6), mats.hullDark); chock.position.set(x, -H / 2 + 0.8, z + 3); chock.receiveShadow = true; h.add(chock); }
+  // centre gantry rail + hoist trolley
+  add(new THREE.BoxGeometry(2.2, 0.7, L - 8), mats.hullDark, 0, H / 2 - 2.3, 2);
+  add(new THREE.BoxGeometry(3.0, 1.2, 2.6), mats.crateBlue, 0, H / 2 - 3.2, 14, 0, 0, 0, { cast: true });
+  add(new THREE.CylinderGeometry(0.05, 0.05, 3.5, 6), mats.gunmetal, 0, H / 2 - 5.5, 14);
+  add(new THREE.BoxGeometry(1.2, 0.5, 0.4), mats.drum, 0, H / 2 - 7.4, 14);
+
+  // ---- catwalks along both walls with railings, under-lit
+  const deckGeo = new THREE.BoxGeometry(2.4, 0.25, L - 6), railGeo = new THREE.CylinderGeometry(0.05, 0.05, L - 6, 6), postGeo = new THREE.CylinderGeometry(0.05, 0.05, 1.1, 6);
+  const underGeo = new THREE.BoxGeometry(0.12, 0.08, L - 8);
+  for (const s of [-1, 1]) {
+    const x = s * (W / 2 - 2.4);
+    add(deckGeo, mats.truss, x, 1.2, 0);
+    add(railGeo, mats.gunmetal, x - s * 1.1, 2.3, 0, Math.PI / 2);
+    add(railGeo, mats.gunmetal, x - s * 1.1, 1.75, 0, Math.PI / 2);
+    for (let k = 0; k < 13; k++) add(postGeo, mats.gunmetal, x - s * 1.1, 1.75, -L / 2 + 3 + k * 6);
+    add(underGeo, mats.glowCyanStrip, x - s * 1.2, 1.05, 0);
+    // stores under the catwalk: crates, drums, tool carts
+    for (let k = 0; k < 9; k++) {
+      const z = -L / 2 + 6 + k * 8.2 + (k % 3) * 1.1;
+      const kind = (k + (s > 0 ? 1 : 0)) % 4;
+      if (kind === 0) { add(new THREE.BoxGeometry(2.2, 1.6, 2.4), mats.crate, x + s * 0.2, FLOOR + 0.8, z, 0, 0, 0, { cast: true }); add(new THREE.BoxGeometry(1.6, 1.2, 1.7), mats.crateBlue, x + s * 0.3, FLOOR + 2.2, z + 0.2, 0, 0.2, 0, { cast: true }); }
+      else if (kind === 1) { for (let d = 0; d < 3; d++) add(new THREE.CylinderGeometry(0.55, 0.55, 1.5, 14), d === 1 ? mats.drum : mats.hullDark, x + s * 0.4 + (d - 1) * 0.15, FLOOR + 0.75, z + (d - 1) * 1.25, 0, 0, 0, { cast: true }); }
+      else if (kind === 2) { add(new THREE.BoxGeometry(2.6, 0.9, 1.4), mats.hullDark, x, FLOOR + 0.9, z, 0, 0, 0, { cast: true }); add(new THREE.BoxGeometry(2.4, 0.15, 1.2), mats.glowCyanStrip, x, FLOOR + 1.4, z); for (const w of [-1, 1]) add(new THREE.CylinderGeometry(0.3, 0.3, 0.2, 10), mats.gunmetal, x + w * 1.0, FLOOR + 0.3, z + 0.9, Math.PI / 2); }
+      else { add(new THREE.BoxGeometry(1.4, 3.0, 1.2), mats.crateBlue, x + s * 0.4, FLOOR + 1.5, z, 0, 0, 0, { cast: true }); add(new THREE.BoxGeometry(1.0, 0.5, 0.05), mats.glowOrange, x - s * 0.2, FLOOR + 2.4, z - 0.62); }
+    }
+    // wall conduits (3 pipes) and running amber lights
+    for (let p = 0; p < 3; p++) add(new THREE.CylinderGeometry(0.18 - p * 0.03, 0.18 - p * 0.03, L - 4, 10), mats.gunmetal, s * (W / 2 - 0.85), 4.6 + p * 0.45, 0, Math.PI / 2);
   }
-  // gantry over the centre aisle
-  const gantry = new THREE.Mesh(new THREE.BoxGeometry(2, 0.6, L - 10), mats.hullDark); gantry.position.set(0, H / 2 - 2.2, 4); h.add(gantry);
-  // bay mouth frame
-  const frame = new THREE.Mesh(holeBox(W + 2, H + 2, 2, W - 1.5, H - 1.5), mats.gunmetal); frame.position.set(0, 0, -L / 2 - 0.5); h.add(frame);
-  for (const s of [-1, 1]) { const l = new THREE.Mesh(new THREE.BoxGeometry(0.3, H - 2, 0.3), mats.glowOrange); l.position.set(s * (W / 2 - 0.6), 0, -L / 2 - 1.6); h.add(l); }
-  // interior lights
-  // interior lights: cool overheads (kept modest so the white Arwing hulls hold their plating), warm floor bounce at the mouth
-  const l1 = new THREE.PointLight(0xbfe4ff, 34, 60, 1.8); l1.position.set(0, 5.0, 2); h.add(l1);
-  const l2 = new THREE.PointLight(0xffb070, 22, 50, 1.8); l2.position.set(0, -4, -18); h.add(l2);
-  const l3 = new THREE.PointLight(0x9fd8ff, 26, 50, 1.8); l3.position.set(0, 5.0, 26); h.add(l3);
+
+  // ---- launch lanes: cradles, cyan guide strips, floodlights, chocks
+  const lanes = [-6.2, 6.2];
+  const cradleGeo = new THREE.BoxGeometry(4.8, 0.6, 5.6), clampGeo = new THREE.BoxGeometry(0.4, 1.0, 0.7), clampTipGeo = new THREE.BoxGeometry(0.42, 0.18, 0.72), padGeo = new THREE.BoxGeometry(4.4, 0.06, 5.2);
+  const stripGeo = new THREE.BoxGeometry(0.16, 0.05, 3), edgeGeo = new THREE.BoxGeometry(0.1, 0.05, 5.2), edgeGeo2 = new THREE.BoxGeometry(4.4, 0.05, 0.1), lampGeo2 = new THREE.BoxGeometry(0.22, 0.1, 0.22);
+  for (const x of lanes) {
+    for (let i = 0; i < 12; i++) { add(stripGeo, mats.glowCyanStrip, x - 3.2, FLOOR + 0.04, -L / 2 + 3 + i * 6.3); add(stripGeo, mats.glowCyanStrip, x + 3.2, FLOOR + 0.04, -L / 2 + 3 + i * 6.3); }
+    for (const z of [12, 24]) {
+      add(cradleGeo, mats.hullDark, x, FLOOR + 0.3, z + 1.6, 0, 0, 0, { cast: true });
+      add(padGeo, mats.padDark, x, FLOOR + 0.63, z + 1.6);
+      // thin cyan edge lights around the pad instead of a glowing plate
+      for (const s of [-1, 1]) { add(edgeGeo, mats.glowCyanStrip, x + s * 2.2, FLOOR + 0.67, z + 1.6); add(edgeGeo2, mats.glowCyanStrip, x, FLOOR + 0.67, z + 1.6 + s * 2.6); }
+      // wheel clamps: dark posts with a hazard-yellow cap and a small amber lamp
+      for (const s of [-1, 1]) { add(clampGeo, mats.hullDark, x + s * 2.1, FLOOR + 1.1, z + 3.4, 0, 0, s * 0.2, { cast: true }); add(clampTipGeo, mats.drum, x + s * 2.1 - s * 0.1, FLOOR + 1.62, z + 3.4, 0, 0, s * 0.2); add(lampGeo2, mats.glowOrange, x + s * 2.1 - s * 0.12, FLOOR + 1.76, z + 3.4); }
+    }
+  }
+  // centre aisle: painted lane already in texture; add recessed floor lights down the middle
+  for (let i = 0; i < 12; i++) add(new THREE.BoxGeometry(0.5, 0.05, 0.5), mats.glowOrange, 0, FLOOR + 0.03, -L / 2 + 3 + i * 6.3);
+
+  // ---- bay mouth: heavy frame, hazard stripes, orange edge lights, chase lights
+  add(holeBox(W + 2, H + 2, 2.4, W - 2.0, H - 2.0), mats.gunmetal, 0, 0, -L / 2 - 0.6);
+  add(new THREE.BoxGeometry(W - 2, 0.6, 0.3), mats.drum, 0, -H / 2 + 1.3, -L / 2 - 0.1);
+  add(new THREE.BoxGeometry(W - 2, 0.6, 0.3), mats.drum, 0, H / 2 - 1.3, -L / 2 - 0.1);
+  for (const s of [-1, 1]) add(new THREE.BoxGeometry(0.3, H - 2.6, 0.3), mats.glowOrange, s * (W / 2 - 1.15), 0, -L / 2 - 1.85);
+  for (let i = 0; i < 9; i++) add(new THREE.BoxGeometry(0.5, 0.2, 0.2), mats.glowWhite, -W / 2 + 3 + i * (W - 6) / 8, H / 2 - 1.5, -L / 2 - 1.85);
+
+  // ---- lights: cool overheads high up (never near the deck), a soft warm bounce at the mouth kept
+  // well above the floor so the deck shows lit pools, not a specular smear
+  const l1 = new THREE.PointLight(0xbfe4ff, 30, 70, 1.8); l1.position.set(0, 5.5, 4); h.add(l1);
+  const l2 = new THREE.PointLight(0xffb070, 10, 60, 2.0); l2.position.set(0, 2.5, -30); h.add(l2);
+  const l3 = new THREE.PointLight(0x9fd8ff, 24, 60, 1.8); l3.position.set(0, 5.5, 26); h.add(l3);
+  h.userData.dims = { W, H, L, FLOOR, lanes, cradleTop: FLOOR + 0.66 };
   return h;
 }
 

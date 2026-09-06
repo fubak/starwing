@@ -58,7 +58,11 @@ export class Overlay {
     this.root.appendChild(this.big);
 
     // score tally
-    this.tally = el('div', `position:absolute;left:50%;top:38%;transform:translateX(-50%);width:min(44vw,560px);opacity:0;font:700 clamp(14px,1.8vw,24px) ${FONT_UI};letter-spacing:.2em;color:#e8f1ff;`);
+    // score card: right third of frame (the squadron owns the left/lower-left), on a dark glass
+    // panel with a cobalt edge so numbers stay legible over the planet limb
+    this.tally = el('div', `position:absolute;right:7%;top:36%;width:min(31vw,420px);opacity:0;font:700 clamp(13px,1.55vw,22px) ${FONT_UI};letter-spacing:.18em;color:#e8f1ff;
+      padding:1.1em 1.4em 1.2em 1.6em;border-left:3px solid rgba(120,180,255,.85);
+      background:linear-gradient(90deg,rgba(6,12,30,.72),rgba(6,12,30,.55) 70%,rgba(6,12,30,0));box-shadow:inset 0 0 40px rgba(20,40,90,.35);`);
     this.root.appendChild(this.tally);
     this.rows = [];
 
@@ -108,8 +112,8 @@ export class Overlay {
   buildTally(rows) {
     this.tally.innerHTML = '';
     this.rows = rows.map((r) => {
-      const row = el('div', `display:flex;justify-content:space-between;align-items:baseline;padding:.35em 0;border-bottom:1px solid rgba(140,180,255,.25);opacity:0;transform:translateX(40px);`);
-      const k = el('span', `color:#9ecbff;font-size:.8em;letter-spacing:.35em;`); k.textContent = r.label;
+      const row = el('div', `display:flex;justify-content:space-between;align-items:baseline;gap:1em;padding:.32em 0;border-bottom:1px solid rgba(140,180,255,.25);opacity:0;transform:translateX(40px);`);
+      const k = el('span', `color:#9ecbff;font-size:.72em;letter-spacing:.3em;white-space:nowrap;`); k.textContent = r.label;
       const v = el('span', `font-family:${FONT_DISPLAY};font-style:italic;font-weight:900;font-size:1.45em;letter-spacing:.05em;color:#fff;text-shadow:0 0 12px rgba(120,190,255,.6);font-variant-numeric:tabular-nums;`);
       v.textContent = r.format ? r.format(0) : '0';
       row.append(k, v);

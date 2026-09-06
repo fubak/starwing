@@ -48,28 +48,30 @@ class Stage {
     this.ctx = ctx;
     const { scene, rng, camera } = ctx;
     this.scene = scene; this.camera = camera;
+    this._cam0 = { near: camera.near, far: camera.far, fov: camera.fov };
     camera.near = 0.1; camera.far = 6000; camera.updateProjectionMatrix();
+    this.own = []; // everything this stage adds to the scene (and nothing else) is removed in dispose()
 
     // global look (lights, env, grade, sky)
     this.look = applyLook(ctx, CINE_PRESET, { shadowSize: 12, shadowMap: 1024 });
     this.sun = this.look.sun;
     this.sun.shadow.camera.near = 1; this.sun.shadow.camera.far = 400; this.sun.shadow.bias = -0.0003; this.sun.shadow.normalBias = 0.04;
     // warm kicker from camera side so backlit hulls keep their white
-    this.kicker = new THREE.DirectionalLight(0xffe2c0, 0.5); scene.add(this.kicker, this.kicker.target);
-    this.rim = new THREE.DirectionalLight(0x86b8ff, 1.2); scene.add(this.rim, this.rim.target);
+    this.kicker = new THREE.DirectionalLight(0xffe2c0, 0.5); scene.add(this.kicker, this.kicker.target); this.own.push(this.kicker, this.kicker.target);
+    this.rim = new THREE.DirectionalLight(0x86b8ff, 1.2); scene.add(this.rim, this.rim.target); this.own.push(this.rim, this.rim.target);
 
     // planet
     const preset = resolvePreset(THREE, CINE_PRESET);
-    this.planet = makePlanet({ radius: PLANET_R, seed: 7, preset }); this.planet.position.copy(PLANET_POS); scene.add(this.planet);
+    this.planet = makePlanet({ radius: PLANET_R, seed: 7, preset }); this.planet.position.copy(PLANET_POS); scene.add(this.planet); this.own.push(this.planet);
     // art-direction cheat: light the planet from the side so a terminator, ocean glint and night-side cities are in frame
     this.planet.lightDir = new THREE.Vector3(0.92, 0.2, 0.25).normalize(); this.planet.setPreset(preset);
 
     // actors
     this.mats = makeMaterials(rng);
     this.arwings = [];
-    for (let i = 0; i < 4; i++) { const a = makeArwing(); a.visible = false; scene.add(a); this.arwings.push(a); }
-    this.greatFox = buildGreatFox(this.mats); this.greatFox.visible = false; scene.add(this.greatFox);
-    this.hangar = buildHangar(this.mats); this.hangar.visible = false; scene.add(this.hangar);
+    for (let i = 0; i < 4; i++) { const a = makeArwing(); a.visible = false; scene.add(a); this.arwings.push(a); this.own.push(a); }
+    this.greatFox = buildGreatFox(this.mats); this.greatFox.visible = false; scene.add(this.greatFox); this.own.push(this.greatFox);
+    this.hangar = buildHangar(this.mats); this.hangar.visible = false; scene.add(this.hangar); this.own.push(this.hangar);
 
     // camera rig state
     this.rig = { pos: new THREE.Vector3(0, 2, 10), look: new THREE.Vector3(0, 0, 0), fov: 50, roll: 0, shake: 0, lambda: 0, cut: true };
@@ -135,11 +137,17 @@ class Stage {
     const { bloom, scene, renderer } = this.ctx;
     bloom.strength = this._bloom.s; bloom.radius = this._bloom.r; bloom.threshold = this._bloom.t;
     renderer.toneMappingExposure = 1;
+    // Only tear down what this stage created: lookdev look (lights/env/sky/grade), the planet,
+    // the four Arwings, the Great Fox and the hangar set. Other pieces' scene content is untouched.
     this.look.dispose(); this.planet.disposePlanet();
     this.arwings.forEach((a) => a.userData.api.dispose());
-    scene.traverse((o) => { if (o.isMesh && !o.userData.shared) { o.geometry?.dispose?.(); (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.map?.dispose?.(); m.emissiveMap?.dispose?.(); m.dispose(); }); } });
-    scene.clear();
-    this.camera.up.set(0, 1, 0); this.camera.fov = 60; this.camera.updateProjectionMatrix();
+    const seen = new Set();
+    for (const root of [this.greatFox, this.hangar]) root.traverse((o) => { if (o.isMesh || o.isSprite) { o.geometry?.dispose?.(); for (const m of (Array.isArray(o.material) ? o.material : [o.material])) if (m && !seen.has(m)) { seen.add(m); m.map?.dispose?.(); m.emissiveMap?.dispose?.(); m.roughnessMap?.dispose?.(); m.dispose(); } } });
+    for (const m of Object.values(this.mats)) if (m?.isMaterial && !seen.has(m)) { seen.add(m); m.map?.dispose?.(); m.emissiveMap?.dispose?.(); m.dispose(); }
+    for (const o of this.own) scene.remove(o);
+    this.own.length = 0;
+    if (window.__stage === this) delete window.__stage;
+    this.camera.up.set(0, 1, 0); this.camera.near = this._cam0.near; this.camera.far = this._cam0.far; this.camera.fov = this._cam0.fov; this.camera.updateProjectionMatrix();
   }
 }
 
@@ -155,8 +163,14 @@ function aim(ship, dir, bank = 0) {
   ship.up.set(0, 1, 0); ship.lookAt(aimTmp); ship.rotateZ(bank);
 }
 
-function titleSeq(st, ov, { auto = false } = {}) {
+/**
+ * Title screen. opts: { auto?: boolean (alias skipAfter=3.4), skipAfter?: seconds — auto-confirm
+ * after this many seconds (Infinity/undefined = wait for the player), onConfirm?: () => void —
+ * fired the frame the player presses start (before the ~1s flash-out; the promise resolves after). }
+ */
+function titleSeq(st, ov, { auto = false, skipAfter, onConfirm } = {}) {
   const hero = st.arwings[0], gf = st.greatFox;
+  const skipAt = skipAfter ?? (auto ? 3.4 : Infinity);
   let confirmed = -1;
   // basis: camera sits opposite the planet so the planet limb fills the lower frame
   const back = PLANET_DIR.clone().negate();                 // from planet toward camera
@@ -208,8 +222,9 @@ function titleSeq(st, ov, { auto = false } = {}) {
         ov.setFade(seg(c, 0.55, 1.0, Ease.inQuad));
         hero.userData.api.setThrust(1);
         if (c > 1.0) return true;
-      } else if (t > 1.2 && (input.wasPressed('confirm') || input.wasPressed('fire') || (auto && t > 3.4))) {
+      } else if (t > 1.2 && (input.wasPressed('confirm') || input.wasPressed('fire') || t > skipAt)) {
         confirmed = t; st.ctx.audio.tone({ type: 'square', f0: 880, f1: 1320, dur: 0.18, gain: 0.15 });
+        try { onConfirm?.(); } catch (e) { console.warn('cinematics: onConfirm threw', e); }
       }
       ov.setLogo(logoAlpha, logoScale, logoY, glow);
       ov.setPress(press);
@@ -267,7 +282,8 @@ function introSeq(st, ov) {
           aw.forEach((a) => { a.visible = true; a.scale.setScalar(1); a.userData.api.setHover(0); a.userData.api.flap(1); a.userData.api.setThrust(0.1); });
           st.cut();
         }
-        const slots = [[-6.5, -3.2, 12], [6.5, -3.2, 12], [-6.5, -3.2, 24], [6.5, -3.2, 24]];
+        const D = hangar.userData.dims, restY = D.cradleTop + 0.95;
+        const slots = [[D.lanes[0], restY, 12], [D.lanes[1], restY, 12], [D.lanes[0], restY, 24], [D.lanes[1], restY, 24]];
         aw.forEach((a, i) => {
           const s = slots[i], lt = launchT[i], k = u - lt;
           let z = s[2], y = s[1], power = 0.1, pitch = 0;
@@ -277,12 +293,14 @@ function introSeq(st, ov) {
           a.quaternion.copy(hangarQ); a.rotateX(pitch); a.rotateZ(Math.sin(u * 2 + i) * 0.01);
           a.userData.setPower(power);
         });
-        // camera: low behind, slow push toward bay; small kick on each launch
+        // camera: deck-level, offset into the left lane so the near Arwing fills the foreground and the
+        // far pair + bay mouth sit on the right third; slow push in, small kick on each launch
         let kick = 0; launchT.forEach((lt) => { const k = u - lt; if (k > 0 && k < 0.4) kick += Math.sin(k / 0.4 * Math.PI) * 0.5; });
-        const pos = tmpA.set(Math.sin(u * 0.4) * 0.5, -2.2 + seg(u, 0, len, Ease.inOutSine) * 1.6, 36 - seg(u, 0, len, Ease.inOutSine) * 12);
-        const look = tmpB.set(0, -1.6 - kick * 0.4, -60);
+        const push = seg(u, 0, len, Ease.inOutSine);
+        const pos = tmpA.set(-1.6 + Math.sin(u * 0.4) * 0.3, D.FLOOR + 2.4 + push * 1.6, 35.5 - push * 8);
+        const look = tmpB.set(0.8, D.FLOOR + 3.0 - kick * 0.4, -60);
         hangar.localToWorld(pos); hangar.localToWorld(look);
-        st.cam(pos, look, 54 + kick * 3, { lambda: 3.5, roll: kick * 0.02, shake: 0.8 + kick * 3 });
+        st.cam(pos, look, 50 + kick * 3, { lambda: 3.5, roll: -0.02 + kick * 0.02, shake: 0.8 + kick * 3 });
         st.focus(aw[2], 30, { kicker: 0.25, rim: 0.6, sunDir: keyB });
         ov.setFlash(kick * 0.12);
         ov.setFade(1 - seg(u, 0, 0.5, Ease.outCubic) + seg(u, len - 0.2, len, Ease.inQuad));
@@ -342,30 +360,34 @@ function completeSeq(st, ov, stats) {
       st.hideAll(); ov.letterbox(true, 0.9); ov.setFade(1); ov.setCaption(0);
       ov.buildTally(rows); ov.setTally(0); ov.setBig(0, 1.4);
       aw.forEach((a) => { a.visible = true; a.scale.setScalar(1); a.userData.api.setHover(0); a.userData.api.setThrust(0.6); });
-      st.exposure = 1.0;
+      st.exposure = 0.88;
     },
     update(t, dt) {
-      // squadron flies away from camera toward the planet; lead does a victory barrel roll then boosts off
+      // squadron flies away from camera toward the planet; lead does a victory barrel roll then boosts off.
+      // LAYOUT: the ships + planet live in the left ~55% of frame, below the title; the score card
+      // owns the right third. The camera's look point is pushed right/up of the flight line so the
+      // squadron's vanishing point sits at ~(32%, 62%) of the screen and never crosses the type.
       const dir = tmpE.copy(PLANET_DIR);
       const right = tmpF.crossVectors(dir, UP).normalize();
       const up = tmpD.crossVectors(right, dir).normalize();
-      const offs = [[0, 0], [-1, -0.4], [1, -0.4], [0, -1.0]];
+      const offs = [[0, 0], [-1, -0.45], [1, -0.45], [0, -1.0]];
       aw.forEach((a, i) => {
         const boostK = seg(t, 2.4 + i * 0.15, 4.6 + i * 0.15, Ease.inCubic);
         const d = 16 + t * 5 + boostK * 420;
-        const wob = Math.sin(t * 1.3 + i) * 0.4;
+        const wob = Math.sin(t * 1.3 + i) * 0.3;
         const rollK = i === 0 ? seg(t, 0.8, 2.2, Ease.inOutSine) : 0;
-        a.position.copy(dir).multiplyScalar(d).addScaledVector(right, (offs[i][0] * 7) * (1 + boostK * 0.6)).addScaledVector(up, offs[i][1] * 4 + wob + Math.sin(rollK * Math.PI) * 2.5);
+        a.position.copy(dir).multiplyScalar(d).addScaledVector(right, (offs[i][0] * 6) * (1 + boostK * 0.6)).addScaledVector(up, offs[i][1] * 3.5 + wob + Math.sin(rollK * Math.PI) * 1.8);
         const bank = i === 0 ? -rollK * Math.PI * 2 : Math.sin(t * 1.1 + i) * 0.08;
         aim(a, dir, bank);
         a.userData.api.setThrust(0.6 + boostK * 0.4);
         if (i === 0) a.userData.api.flap(Math.sin(rollK * Math.PI) * 0.8);
       });
-      // camera: trails, then gently pulls back and lets them go
+      // camera: trails low and slightly left of the squadron, then gently pulls back and lets them go
       const pull = seg(t, 2.2, 5.5, Ease.inOutSine);
-      const pos = tmpA.copy(dir).multiplyScalar(-2 - pull * 6).addScaledVector(right, 4 - pull * 3).addScaledVector(up, 2.4 + pull * 1.5);
-      const look = tmpB.copy(dir).multiplyScalar(30 + pull * 60).addScaledVector(up, -1);
-      st.cam(pos, look, 48 - pull * 6, { lambda: 3.5, roll: 0.04 - pull * 0.03, shake: 0.4 });
+      const pos = tmpA.copy(dir).multiplyScalar(-2 - pull * 6).addScaledVector(right, -1 - pull * 1).addScaledVector(up, 1.0 + pull * 0.8);
+      // look point offset right (+) and up (+) of the flight line => ships render left / low
+      const look = tmpB.copy(pos).addScaledVector(dir, 60).addScaledVector(right, 17 + pull * 3).addScaledVector(up, 5.5 + pull * 1.5);
+      st.cam(pos, look, 48 - pull * 6, { lambda: 3.5, roll: 0.02 - pull * 0.02, shake: 0.4 });
       st.focus(aw[0], 16);
       st.bloomBoost = seg(t, 2.6, 4.2, Ease.outQuad) * 0.25;
       // UI
@@ -429,8 +451,9 @@ class Director {
 let director = null;
 function getDirector(ctx) { return director ?? (director = new Director(ctx)); }
 
-/** Title screen; resolves when the player confirms (or after ~3.4s with opts.auto). */
-export function playTitle(ctx, opts) { return getDirector(ctx).run(titleSeq(director.stage, director.overlay, opts)); }
+/** Title screen; resolves when the player confirms and the flash-out finishes.
+ *  opts: { skipAfter?: seconds (auto-confirm), auto?: boolean (= skipAfter 3.4), onConfirm?: () => void }. */
+export function playTitle(ctx, opts = {}) { return getDirector(ctx).run(titleSeq(director.stage, director.overlay, opts)); }
 /** Intro: Great Fox fly-by -> hangar launch -> letterboxed level-start pan with caption. */
 export function playIntro(ctx) { return getDirector(ctx).run(introSeq(director.stage, director.overlay)); }
 /** Mission complete: fly-away + score tally. stats = { score, hits, accuracy, bonus }. */
