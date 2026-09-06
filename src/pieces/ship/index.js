@@ -34,11 +34,13 @@ const shimmerShader = {
 // white hull gets a proper key + clear-coat highlight instead of pure rim.
 const SHIP_PRESET = {
   ...PRESETS.space, name: 'ship', label: 'HANGAR · ORBIT',
-  exposure: 1.05,
-  sun: { ...PRESETS.space.sun, dir: [0.12, 0.97, 0.2], intensity: 3.4, size: 0.006, glow: 0.08 },
-  fill: { ...PRESETS.space.fill, dir: [-0.6, 0.1, -0.75], color: 0xbfd4ff, intensity: 1.2 },
-  hemi: { ...PRESETS.space.hemi, ground: 0x2a4a90, intensity: 1.0 },
-  bloom: { strength: 0.5, radius: 0.5, threshold: 1.15 },
+  exposure: 1.05, envIntensity: 0.8,
+  // key from high front-right so each hull facet gets its own value; cool fill from the planet side
+  sun: { ...PRESETS.space.sun, dir: [0.42, 0.78, -0.46], intensity: 3.0, size: 0.022, glow: 0.35 },
+  sky: { ...PRESETS.space.sky, nebula: 0.65, stars: 1.1 },
+  fill: { ...PRESETS.space.fill, dir: [-0.7, 0.15, 0.7], color: 0xbfd4ff, intensity: 1.1 },
+  hemi: { ...PRESETS.space.hemi, sky: 0x6f8ad0, ground: 0x24407e, intensity: 0.9 },
+  bloom: { strength: 0.55, radius: 0.5, threshold: 1.3 },
 };
 
 export async function create(ctx) {
@@ -56,12 +58,13 @@ export async function create(ctx) {
   look.setFocus(new THREE.Vector3(0, 0, 0));
   look.sun.shadow.bias = -0.0006; look.sun.shadow.normalBias = 0.02;
 
-  const planet = makePlanet({ radius: 640, seed: 7 });
+  const planet = makePlanet({ radius: 640, seed: 7, gpu: true, haloScale: 1.045 });
   planet.position.set(120, -690, -260);
-  planet.rotation.x = Math.PI / 2;
-  planet.lightDir = new THREE.Vector3(0.55, 0.62, -0.55).normalize();
+  planet.rotation.set(Math.PI / 2, 2.9, 0);
+  planet.lightDir = new THREE.Vector3(0.4, 0.8, -0.45).normalize();
   planet.setPreset(look.preset);
   scene.add(planet);
+  if (/[?&]noplanet\b/.test(location.search)) planet.visible = false; // debug
   // planet bounce: keeps the belly readable when the camera dips below the ship
   const bounce = new THREE.DirectionalLight(0x4f8cff, 0.9); bounce.position.set(0.3, -1, -0.2); scene.add(bounce, bounce.target);
 

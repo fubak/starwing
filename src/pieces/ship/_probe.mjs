@@ -10,7 +10,7 @@ await page.route('**/@vite/client', (r) => r.fulfill({ contentType: 'application
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror ' + e.message));
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.type() + ' ' + m.text().slice(0, 400)); });
-await page.goto('http://localhost:5173/?piece=ship&seed=1&mute&fixed&autoplay' + extra, { waitUntil: 'networkidle' });
+await page.goto('http://localhost:5174/?piece=ship&seed=1&mute&fixed&autoplay' + extra, { waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.__engine?.piece, null, { timeout: 120000 });
 await page.evaluate(() => cancelAnimationFrame(window.__engine._raf));
 let stepped = 0;
