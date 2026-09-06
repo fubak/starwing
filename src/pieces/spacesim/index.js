@@ -7,6 +7,7 @@ import { buildPlanet, SUN_DIR } from './sky.js';
 import { buildAsteroidBelt } from './asteroids.js';
 import { buildFallbackArwing } from './arwing.js';
 import { buildDrone } from './drone.js';
+import { buildDust } from './dust.js';
 import { createHud } from './hud.js';
 
 const FWD = new THREE.Vector3(0, 0, -1);
@@ -25,11 +26,12 @@ export async function create(ctx) {
   look.preset.sun.dir.set(0.80, 0.46, -0.24).normalize();
   SUN_DIR.copy(look.preset.sun.dir);
   // tweak the resolved preset (setFocus re-pushes it every frame)
-  Object.assign(look.preset.bloom, { strength: 0.6, radius: 0.5, threshold: 0.82 });
+  Object.assign(look.preset.bloom, { strength: 0.55, radius: 0.45, threshold: 0.86 });
   look.preset.exposure = 0.95; look.preset.envIntensity = 0.8;
-  look.preset.sun.glow = 0.55;
-  look.preset.sky.nebula = 1.0;
-  look.preset.hemi.intensity = 1.1; look.preset.fill.intensity = 1.4;
+  // crisp small sun disc (our own sprite draws the core + corona); low sky glow so it isn't a washed-out blob
+  look.preset.sun.glow = 0.28; look.preset.sun.size = 0.012; look.preset.sun.intensity = 3.0;
+  look.preset.sky.nebula = 1.05;
+  look.preset.hemi.intensity = 1.0; look.preset.fill.intensity = 1.3;
   look.preset.fill.dir.set(-0.6, 0.2, 0.75).normalize();
   look.preset.grade.vignette = 0.38; look.preset.grade.saturation = 1.15;
   look.setPreset(look.preset, true); // rebuild env map / sky with the tweaked preset
@@ -41,8 +43,12 @@ export async function create(ctx) {
   scene.add(planet.group);
 
   // ---------------- asteroid belt
-  const belt = buildAsteroidBelt(rng, { count: 720, extent: 560, thickness: 130, envMap });
+  const belt = buildAsteroidBelt(rng, { count: 780, extent: 560, thickness: 130, look });
   scene.add(belt.group);
+
+  // ---------------- dust motes, haze sheets (god-ray forward scatter), sun disc
+  const dust = buildDust(rng, { sunDir: SUN_DIR, sunColor: look.preset.sun.color });
+  scene.add(dust.group);
 
   // ---------------- ship
   // dynamic import so a mid-edit / renamed ship export degrades to the fallback instead of killing the piece
@@ -78,7 +84,7 @@ export async function create(ctx) {
     const g = droneKit.make();
     scene.add(g);
     drones.push({
-      obj: g, name: droneNames[i], phase: rng.range(0, 6.28), r: rng.range(150, 360), spd: rng.range(0.12, 0.28) * rng.sign(),
+      obj: g, name: droneNames[i], phase: rng.range(0, 6.28), r: rng.range(90, 240), spd: rng.range(0.14, 0.3) * rng.sign(),
       tilt: rng.range(-0.6, 0.6), hp: 3, dead: 0, prev: new THREE.Vector3(), hit: 0,
     });
   }
@@ -188,6 +194,19 @@ export async function create(ctx) {
     else if (s < 18.2) { B.push('rollL'); }
     else if (s < 21) { y = -0.3; x = 0.4; B.push('boost'); }
     else { x = Math.sin(t * 0.8) * 0.4; y = Math.cos(t * 0.5) * 0.3; B.push('fire'); }
+    // homing assist: while firing, steer toward the locked drone so the demo actually engages the Venoms
+    if (B.includes('fire') && !ship.maneuver) {
+      const d = drones[lockedIdx];
+      if (d && d.dead <= 0) {
+        _v.copy(d.obj.position).sub(ship.pos);
+        _q.copy(ship.quat).invert(); _v.applyQuaternion(_q);
+        if (_v.z < -1) {
+          const hx = THREE.MathUtils.clamp(_v.x / -_v.z * 2.2, -1, 1);
+          const hy = THREE.MathUtils.clamp(_v.y / -_v.z * 2.2, -1, 1);
+          x = x * 0.35 + hx * 0.75; y = y * 0.35 + hy * 0.75;
+        }
+      }
+    }
     return { x, y, buttons: B };
   };
 
@@ -309,7 +328,7 @@ export async function create(ctx) {
       if (b.life <= 0) { b.mesh.visible = false; continue; }
       for (const d of drones) {
         if (d.dead > 0) continue;
-        if (b.mesh.position.distanceToSquared(d.obj.position) < 5.5 * 5.5) {
+        if (b.mesh.position.distanceToSquared(d.obj.position) < 8 * 8) {
           b.mesh.visible = false; d.hp--; d.hit = 1; look.flash(0.12);
           explode(b.mesh.position, 0.35);
           if (d.hp <= 0) { d.dead = 4; d.obj.visible = false; explode(d.obj.position, 1.6); camShake = Math.max(camShake, 0.35); look.flash(0.45); }
@@ -361,7 +380,7 @@ export async function create(ctx) {
     }
 
     // ---- belt wrap + spin, planet spin
-    belt.update(dt, ship.pos);
+    belt.update(dt, ship.pos, t);
     planet.update(t);
 
     // ---- camera: laggy chase w/ roll, fov kick on boost, shake
@@ -386,6 +405,7 @@ export async function create(ctx) {
     camera.updateMatrixWorld();
     look.setFocus(ship.pos);
     look.update(dt, t);
+    dust.update(dt, t, camera, ship.pos);
 
     // ---- speed lines (in camera space)
     const lineAlpha = THREE.MathUtils.clamp((ship.speed - SPEED.cruise * 1.1) / (SPEED.boost - SPEED.cruise * 1.1), 0, 1);
@@ -404,13 +424,14 @@ export async function create(ctx) {
     // ---- hud
     hud.state.boost = ship.boost; hud.state.speed = ship.speed; hud.state.boostMeter = ship.boostMeter;
     hud.state.shipQuat.copy(ship.quat); hud.state.shipPos.copy(ship.pos);
+    hud.state.sunPos = dust.sun.position;
     hud.draw(camera, t, dt);
   }
 
   function dispose() {
     hud.dispose();
     camera.remove(speedLines); scene.remove(camera); camera.up.set(0, 1, 0); camera.fov = 60; camera.near = 0.1; camera.far = 5000; camera.updateProjectionMatrix();
-    planet.dispose(); belt.dispose(); rig?.dispose?.(); droneKit.dispose();
+    planet.dispose(); belt.dispose(); dust.dispose(); rig?.dispose?.(); droneKit.dispose();
     look.dispose();
     scene.traverse((o) => { if (o.isMesh || o.isPoints || o.isLine || o.isSprite) { o.geometry?.dispose?.(); const mats = Array.isArray(o.material) ? o.material : [o.material]; for (const mm of mats) mm?.dispose?.(); } });
     scene.clear();

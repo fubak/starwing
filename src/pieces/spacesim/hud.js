@@ -41,6 +41,28 @@ export function createHud(ui) {
     const cx = W / 2, cy = H / 2;
     const accent = '#7fe0ff', warn = '#ff5e5e', gold = '#ffd35a';
 
+    // ---- lens flare ghosts (sun on screen and in front of the camera)
+    if (state.sunPos) {
+      const sp = project(state.sunPos, camera);
+      if (!sp.behind && sp.x > -W * 0.3 && sp.x < W * 1.3 && sp.y > -H * 0.3 && sp.y < H * 1.3) {
+        const inside = Math.max(0, 1 - Math.hypot((sp.x - cx) / (W * 0.75), (sp.y - cy) / (H * 0.75)));
+        const dx = cx - sp.x, dy = cy - sp.y;
+        g.save(); g.globalCompositeOperation = 'lighter';
+        // anamorphic streak
+        const sg = g.createLinearGradient(sp.x - W * 0.3, sp.y, sp.x + W * 0.3, sp.y);
+        sg.addColorStop(0, 'rgba(120,180,255,0)'); sg.addColorStop(0.5, `rgba(180,215,255,${0.22 * inside})`); sg.addColorStop(1, 'rgba(120,180,255,0)');
+        const vg = g.createLinearGradient(0, sp.y - 8, 0, sp.y + 8); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(0.5, 'rgba(0,0,0,1)'); vg.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = sg; g.fillRect(sp.x - W * 0.3, sp.y - 8, W * 0.6, 16);
+        g.globalCompositeOperation = 'destination-in'; g.fillStyle = vg; g.fillRect(sp.x - W * 0.3, sp.y - 8, W * 0.6, 16); g.globalCompositeOperation = 'lighter';
+        for (const [k, r, col, a] of [[0.35, 26, '255,190,120', 0.10], [0.62, 12, '160,220,255', 0.16], [0.95, 48, '255,140,180', 0.06], [1.3, 18, '160,255,200', 0.12], [1.75, 70, '120,170,255', 0.05]]) {
+          const x = sp.x + dx * k, y = sp.y + dy * k;
+          const rg = g.createRadialGradient(x, y, 0, x, y, r); rg.addColorStop(0, `rgba(${col},${a * inside})`); rg.addColorStop(0.7, `rgba(${col},${a * inside * 0.6})`); rg.addColorStop(1, `rgba(${col},0)`);
+          g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+        }
+        g.restore();
+      }
+    }
+
     // ---- reticle (two-stage, Star Fox style)
     const b = state.boost;
     g.save();
@@ -81,8 +103,17 @@ export function createHud(ui) {
         const rr = s + 10 + 4 * Math.sin(t * 8);
         g.beginPath(); g.arc(p.x, p.y, rr, 0, Math.PI * 2); g.stroke(); g.restore();
       }
-      g.save(); g.fillStyle = col; g.font = `600 ${11}px ${FONT}`; g.textAlign = 'left'; g.globalAlpha = 0.9;
-      g.fillText(`${tg.name}  ${Math.round(dist)}m`, p.x + s + 6, p.y - s + 4); g.restore();
+      // label: right of the bracket, flipped left/above near the edges; suppressed over the gauges and radar
+      const label = `${tg.name}  ${Math.round(dist)}m`;
+      let lx = p.x + s + 6, ly = p.y - s + 4, align = 'left';
+      if (lx + 110 > W - 40) { lx = p.x - s - 6; align = 'right'; }
+      if (ly < 90) ly = p.y + s + 12;
+      const overGauges = lx < 280 && ly > H - 120, overRadar = lx > W - 200 && ly > H - 190;
+      if (!overGauges && !overRadar) {
+        g.save(); g.fillStyle = col; g.font = `600 ${11}px ${FONT}`; g.textAlign = align; g.globalAlpha = 0.9; g.letterSpacing = '0.06em';
+        g.shadowColor = 'rgba(0,10,20,0.9)'; g.shadowBlur = 4;
+        g.fillText(label, lx, ly); g.restore();
+      }
     }
 
     // ---- top-left mode label

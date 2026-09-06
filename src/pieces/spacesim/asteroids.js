@@ -1,10 +1,13 @@
 // Instanced, varied asteroid belt that wraps around the player so it never runs out.
+// Round 2: custom rock shader — hard directional key with specular + sun rim, four rock
+// families (iron-red, grey basalt, ice with glowing veins, charcoal with ember veins),
+// per-pixel cracks / bump / dust AO and depth haze so the belt reads like Meteo.
 import * as THREE from 'three';
+import { NOISE_GLSL } from './glsl.js';
 
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _p = new THREE.Vector3();
 
 function hashNoise(x, y, z) {
-  // cheap value noise for vertex displacement (deterministic)
   const s = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453;
   return s - Math.floor(s);
 }
@@ -23,12 +26,18 @@ function fbm(x, y, z, oct = 4) {
   return v;
 }
 
+/** Chunky, faceted-but-smooth rock: ellipsoid + fbm + craters + a few hard shelves (flat facets) for silhouette. */
 function rockGeometry(seed, detail = 3) {
   const g = new THREE.IcosahedronGeometry(1, detail);
   const pos = g.attributes.position;
   const v = new THREE.Vector3();
-  // squash to a random ellipsoid then displace with noise for a chunky, cratered look
   const sx = 0.75 + hashNoise(seed, 1, 2) * 0.6, sy = 0.7 + hashNoise(seed, 3, 4) * 0.6, sz = 0.8 + hashNoise(seed, 5, 6) * 0.5;
+  // a few random cutting planes: flattened facets give hard, readable edges like real fractured rock
+  const cuts = [];
+  for (let i = 0; i < 3; i++) {
+    const n = new THREE.Vector3(hashNoise(seed, 10 + i, 1) - 0.5, hashNoise(seed, 20 + i, 2) - 0.5, hashNoise(seed, 30 + i, 3) - 0.5).normalize();
+    cuts.push({ n, d: 0.72 + hashNoise(seed, 40 + i, 4) * 0.22 });
+  }
   for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i);
     const n = fbm(v.x * 1.6 + seed * 7.1, v.y * 1.6 + seed * 3.3, v.z * 1.6, 4);
@@ -37,120 +46,187 @@ function rockGeometry(seed, detail = 3) {
     const r = 1 + 0.32 * big + 0.16 * n - crater;
     v.multiplyScalar(r);
     v.x *= sx; v.y *= sy; v.z *= sz;
+    for (const c of cuts) { const h = v.dot(c.n); if (h > c.d) v.addScaledVector(c.n, -(h - c.d) * 0.85); }
     pos.setXYZ(i, v.x, v.y, v.z);
   }
   g.computeVertexNormals();
-  smoothNormalsByPosition(g);
+  smoothNormalsByPosition(g, 0.88);
   return g;
 }
 
-/** PolyhedronGeometry is non-indexed (faceted). Average normals across coincident positions (ignoring uv seams). */
-function smoothNormalsByPosition(g) {
+/** Average normals across coincident positions, but keep hard creases (angle threshold) so facets stay crisp. */
+function smoothNormalsByPosition(g, creaseCos = 0.8) {
   const pos = g.attributes.position, nor = g.attributes.normal;
-  const acc = new Map();
+  const groups = new Map();
   const key = (i) => `${pos.getX(i).toFixed(4)},${pos.getY(i).toFixed(4)},${pos.getZ(i).toFixed(4)}`;
-  for (let i = 0; i < pos.count; i++) {
-    const k = key(i); let a = acc.get(k); if (!a) { a = [0, 0, 0]; acc.set(k, a); }
-    a[0] += nor.getX(i); a[1] += nor.getY(i); a[2] += nor.getZ(i);
+  for (let i = 0; i < pos.count; i++) { const k = key(i); let a = groups.get(k); if (!a) { a = []; groups.set(k, a); } a.push(i); }
+  const out = new Float32Array(pos.count * 3);
+  const a = new THREE.Vector3(), b = new THREE.Vector3();
+  for (const idx of groups.values()) {
+    for (const i of idx) {
+      a.fromBufferAttribute(nor, i); b.copy(a);
+      for (const j of idx) { if (j === i) continue; const nx = nor.getX(j), ny = nor.getY(j), nz = nor.getZ(j); if (a.x * nx + a.y * ny + a.z * nz > creaseCos) { b.x += nx; b.y += ny; b.z += nz; } }
+      b.normalize(); out[i * 3] = b.x; out[i * 3 + 1] = b.y; out[i * 3 + 2] = b.z;
+    }
   }
-  for (let i = 0; i < pos.count; i++) {
-    const a = acc.get(key(i)); const l = Math.hypot(a[0], a[1], a[2]) || 1;
-    nor.setXYZ(i, a[0] / l, a[1] / l, a[2] / l);
-  }
-  nor.needsUpdate = true;
+  nor.copyArray(out); nor.needsUpdate = true;
 }
 
-function rockTextures() {
-  const S = 256;
-  const cv = document.createElement('canvas'); cv.width = cv.height = S;
-  const g = cv.getContext('2d');
-  const img = g.createImageData(S, S);
-  const height = new Float32Array(S * S);
-  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
-    const u = x / S, v = y / S;
-    // tileable-ish via periodic domain
-    const a = u * Math.PI * 2, b = v * Math.PI * 2;
-    const px = Math.cos(a) * 2, py = Math.sin(a) * 2, pz = Math.cos(b) * 2, pw = Math.sin(b) * 2;
-    let h = 0.5 + 0.25 * fbm(px + pz, py + pw, px * 0.5 - pw, 5) + 0.12 * fbm(px * 4 + pw, py * 4, pz * 4, 3);
-    const spec = smoothNoise3(px * 12, py * 12 + pz * 12, pw * 12);
-    h += (spec - 0.5) * 0.1;
-    height[y * S + x] = h;
-    const i = (y * S + x) * 4;
-    const base = 0.55 + (h - 0.5) * 1.2;
-    const warm = smoothNoise3(px * 0.7, pw * 0.7, pz);
-    img.data[i] = 255 * Math.min(1, base * (0.62 + 0.25 * warm));
-    img.data[i + 1] = 255 * Math.min(1, base * (0.56 + 0.12 * warm));
-    img.data[i + 2] = 255 * Math.min(1, base * (0.50 + 0.02 * warm));
-    img.data[i + 3] = 255;
+const ROCK_VERT = /* glsl */ `
+  attribute vec4 aRock; // type, seed, emissive, spin phase
+  varying vec3 vObj, vW, vN; varying vec4 vRock; varying float vScale; varying mat3 vM;
+  void main() {
+    vObj = position; vRock = aRock;
+    mat3 im3 = mat3(instanceMatrix);
+    vScale = length(im3[0]);
+    vM = mat3(modelMatrix) * im3 / vScale;
+    vN = normalize(vM * normal);
+    vec4 w = modelMatrix * instanceMatrix * vec4(position, 1.0);
+    vW = w.xyz;
+    gl_Position = projectionMatrix * viewMatrix * w;
+  }`;
+
+const ROCK_FRAG = /* glsl */ `
+  ${NOISE_GLSL}
+  uniform vec3 uSunDir, uSunCol, uFillDir, uFillCol, uHemiSky, uHemiGround, uHaze;
+  uniform float uTime, uHazeDensity;
+  varying vec3 vObj, vW, vN; varying vec4 vRock; varying float vScale; varying mat3 vM;
+  // cheap variants: keep the per-pixel cost low enough for software GL too
+  float fbm2(vec3 p) { return 0.5 * snoise(p) + 0.25 * snoise(p * 2.07 + vec3(3.1, 1.3, 7.7)); }
+  float ridged3(vec3 p) {
+    float v = 0.0, a = 0.5;
+    for (int i = 0; i < 3; i++) { v += a * (1.0 - abs(snoise(p))); p = p * 2.1 + vec3(5.2, 1.3, 2.8); a *= 0.5; }
+    return v;
   }
-  g.putImageData(img, 0, 0);
-  const map = new THREE.CanvasTexture(cv);
-  map.colorSpace = THREE.SRGBColorSpace; map.wrapS = map.wrapT = THREE.RepeatWrapping;
-  // normal map from height
-  const cv2 = document.createElement('canvas'); cv2.width = cv2.height = S;
-  const g2 = cv2.getContext('2d');
-  const img2 = g2.createImageData(S, S);
-  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
-    const l = height[y * S + ((x - 1 + S) % S)], r = height[y * S + ((x + 1) % S)];
-    const d = height[((y - 1 + S) % S) * S + x], u = height[((y + 1) % S) * S + x];
-    const nx = (l - r) * 3.0, ny = (d - u) * 3.0;
-    const len = Math.hypot(nx, ny, 1);
-    const i = (y * S + x) * 4;
-    img2.data[i] = 128 + 127 * (nx / len); img2.data[i + 1] = 128 + 127 * (ny / len); img2.data[i + 2] = 128 + 127 * (1 / len); img2.data[i + 3] = 255;
-  }
-  g2.putImageData(img2, 0, 0);
-  const normalMap = new THREE.CanvasTexture(cv2);
-  normalMap.wrapS = normalMap.wrapT = THREE.RepeatWrapping;
-  return { map, normalMap };
-}
+  void main() {
+    vec3 N = normalize(vN);
+    vec3 V = normalize(cameraPosition - vW);
+    float type = vRock.x, seed = vRock.y;
+    vec3 p = vObj + seed * 7.31;
+    float det = mix(2.2, 5.5, smoothstep(3.0, 45.0, vScale));
+    // per-pixel bump from a low-octave noise gradient
+    float e = 0.035;
+    float bd = det * 0.7;
+    float h0 = fbm2(p * bd);
+    vec3 grad = vec3(fbm2((p + vec3(e, 0.0, 0.0)) * bd) - h0, fbm2((p + vec3(0.0, e, 0.0)) * bd) - h0, fbm2((p + vec3(0.0, 0.0, e)) * bd) - h0) / e;
+    grad = vM * grad;
+    vec3 Nb = normalize(N - (grad - N * dot(grad, N)) * 0.3);
+    // cracks: thin ridged lines
+    float cr = ridged3(p * det * 1.1 + 2.0);
+    float crack = smoothstep(0.84, 0.93, cr);
+    float blotch = clamp(fbm2(p * 1.1 + 3.0) * 0.8 + 0.5, 0.0, 1.0);
+    float fleck = smoothstep(0.62, 0.74, snoise(p * det * 4.0));
+    vec3 albedo; float rough, specK; vec3 emis = vec3(0.0);
+    if (type < 0.5) {            // iron-red: rust with oxide streaks and metal flecks
+      albedo = mix(vec3(0.40, 0.15, 0.08), vec3(0.72, 0.34, 0.16), blotch);
+      albedo = mix(albedo, vec3(0.16, 0.09, 0.07), crack * 0.85);
+      albedo = mix(albedo, vec3(0.62, 0.56, 0.52), fleck * 0.15);
+      rough = 0.55; specK = 0.45;
+    } else if (type < 1.5) {     // grey basalt: cool slate, dark fissures
+      albedo = mix(vec3(0.24, 0.26, 0.31), vec3(0.46, 0.44, 0.42), blotch);
+      albedo = mix(albedo, vec3(0.07, 0.07, 0.09), crack * 0.9);
+      albedo = mix(albedo, vec3(0.75, 0.74, 0.72), fleck * 0.12);
+      rough = 0.62; specK = 0.35;
+    } else if (type < 2.5) {     // ice: glassy pale blue, cyan-lit veins
+      albedo = mix(vec3(0.30, 0.50, 0.78), vec3(0.62, 0.80, 0.94), blotch);
+      albedo = mix(albedo, vec3(0.12, 0.30, 0.60), crack * 0.6);
+      emis = vec3(0.30, 1.10, 1.60) * crack * vRock.z * (0.7 + 0.3 * sin(uTime * 2.0 + seed * 10.0));
+      rough = 0.22; specK = 1.3;
+    } else {                     // charcoal: near-black with ember veins
+      albedo = mix(vec3(0.09, 0.08, 0.08), vec3(0.24, 0.20, 0.18), blotch);
+      emis = vec3(2.2, 0.55, 0.08) * crack * vRock.z * (0.75 + 0.25 * sin(uTime * 3.0 + seed * 7.0));
+      rough = 0.45; specK = 0.6;
+    }
+    float ao = mix(0.7, 1.0, smoothstep(-0.35, 0.3, h0)) * (1.0 - crack * 0.3);
+    // key light: hard terminator, slight wrap, stylised
+    float ndl = dot(Nb, uSunDir);
+    float diff = clamp((ndl + 0.12) / 1.12, 0.0, 1.0);
+    diff = mix(diff, smoothstep(0.0, 0.45, diff), 0.6);
+    vec3 H = normalize(uSunDir + V);
+    float shin = mix(90.0, 14.0, rough);
+    float spec = pow(max(dot(Nb, H), 0.0), shin) * specK * smoothstep(-0.05, 0.15, ndl);
+    float fres = pow(1.0 - max(dot(N, V), 0.0), 4.0);
+    vec3 amb = mix(uHemiGround, uHemiSky, N.y * 0.5 + 0.5) * 0.22;
+    float fd = max(dot(Nb, uFillDir), 0.0);
+    vec3 col = albedo * (uSunCol * diff * 1.35 + amb + uFillCol * fd * 0.16) * ao;
+    col += uSunCol * spec * (0.6 + 0.4 * fleck);
+    // rim: warm sun rim on the lit edge, cool sky rim everywhere
+    col += fres * (uSunCol * 1.1 * smoothstep(-0.25, 0.35, ndl) + uHemiSky * 0.3) * (albedo * 0.6 + 0.2);
+    col += emis;
+    // depth haze toward the nebula so far rocks recede
+    float dist = length(cameraPosition - vW);
+    col = mix(col, uHaze, 1.0 - exp(-dist * uHazeDensity));
+    gl_FragColor = vec4(col, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+  }`;
 
 /**
  * @param rng deterministic rng
  * @param opts.count total asteroids, opts.extent half-size of wrap box around the player
  */
-export function buildAsteroidBelt(rng, { count = 900, extent = 520, thickness = 170, envMap = null } = {}) {
-  const { map, normalMap } = rockTextures();
-  const mat = new THREE.MeshStandardMaterial({
-    map, normalMap, normalScale: new THREE.Vector2(0.9, 0.9), roughness: 0.72, metalness: 0.1, envMap, envMapIntensity: 1.0,
-  });
-  const variants = 4;
-  const per = Math.ceil(count / variants);
+export function buildAsteroidBelt(rng, { count = 900, extent = 520, thickness = 170, look = null } = {}) {
+  const uniforms = {
+    uSunDir: { value: new THREE.Vector3(0.8, 0.46, -0.24).normalize() }, uSunCol: { value: new THREE.Color(1, 0.95, 0.85) },
+    uFillDir: { value: new THREE.Vector3(-0.6, 0.2, 0.75).normalize() }, uFillCol: { value: new THREE.Color(0.6, 0.7, 1.0) },
+    uHemiSky: { value: new THREE.Color(0.29, 0.42, 0.75) }, uHemiGround: { value: new THREE.Color(0.23, 0.16, 0.28) },
+    uHaze: { value: new THREE.Color(0.035, 0.03, 0.085) }, uHazeDensity: { value: 0.0011 }, uTime: { value: 0 },
+  };
+  const mat = new THREE.ShaderMaterial({ uniforms, vertexShader: ROCK_VERT, fragmentShader: ROCK_FRAG });
+  const variantSpec = [
+    { detail: 3, size: () => (rng.next() < 0.06 ? rng.range(34, 60) : rng.range(12, 26)), share: 0.12 },
+    { detail: 3, size: () => (rng.next() < 0.04 ? rng.range(60, 110) : rng.range(14, 30)), share: 0.10 },
+    { detail: 2, size: () => rng.range(6, 16), share: 0.20 },
+    { detail: 2, size: () => rng.range(5, 14), share: 0.20 },
+    { detail: 1, size: () => rng.range(1.8, 5.5), share: 0.19 },
+    { detail: 1, size: () => rng.range(1.5, 5.0), share: 0.19 },
+  ];
   const meshes = [];
-  const rocks = []; // {pos, rotAxis, rotSpeed, scale, quat, mesh, index}
-  for (let v = 0; v < variants; v++) {
-    // variants 0-1 are the medium/large rocks (more detail), 2-3 the small pebbles (cheap)
-    const geo = rockGeometry(v * 13 + 1, v < 2 ? 2 : 1);
+  const rocks = [];
+  variantSpec.forEach((spec, v) => {
+    const per = Math.max(1, Math.round(count * spec.share));
+    const geo = rockGeometry(v * 13 + 1, spec.detail);
+    const aRock = new Float32Array(per * 4);
     const im = new THREE.InstancedMesh(geo, mat, per);
     im.castShadow = false; im.receiveShadow = false;
     im.frustumCulled = false;
     im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    const color = new THREE.Color();
     for (let i = 0; i < per; i++) {
-      // belt: a wide slab in the y direction (thin), spread on x/z
       const pos = new THREE.Vector3(rng.range(-extent, extent), rng.range(-thickness, thickness) * Math.pow(rng.next(), 0.6), rng.range(-extent, extent));
-      const sizeRoll = rng.next();
-      const scale = v < 2 ? (sizeRoll < 0.08 ? rng.range(26, 48) : rng.range(8, 20)) : rng.range(2.0, 7);
+      const scale = spec.size();
       const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(rng.range(0, 6.28), rng.range(0, 6.28), rng.range(0, 6.28)));
       const axis = new THREE.Vector3(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).normalize();
-      const rotSpeed = rng.range(0.05, 0.5) * (scale > 20 ? 0.25 : 1);
-      const tint = rng.next();
-      // warm ochre rocks with the occasional cool slate one so the belt reads as varied
-      if (tint < 0.2) color.setHSL(0.58, 0.12, 0.45 + rng.next() * 0.2);
-      else color.setHSL(0.05 + tint * 0.05, 0.3 + rng.next() * 0.25, 0.45 + rng.next() * 0.3);
-      im.setColorAt(i, color);
-      rocks.push({ pos, quat, axis, rotSpeed, scale, mesh: im, index: i });
+      const rotSpeed = rng.range(0.05, 0.5) * (scale > 20 ? 0.25 : 1) * (scale > 50 ? 0.4 : 1);
+      // rock families: iron-red 40%, grey 33%, ice 19%, charcoal/ember 8%
+      const r = rng.next();
+      const type = r < 0.42 ? 0 : r < 0.80 ? 1 : r < 0.92 ? 2 : 3;
+      const emis = type === 2 ? rng.range(0.5, 1.3) : type === 3 ? rng.range(0.6, 1.2) : 0;
+      aRock.set([type, rng.range(0, 40), emis, rng.range(0, 6.28)], i * 4);
+      rocks.push({ pos, quat, axis, rotSpeed, scale, type, mesh: im, index: i });
     }
+    geo.setAttribute('aRock', new THREE.InstancedBufferAttribute(aRock, 4));
     meshes.push(im);
-  }
+  });
   const group = new THREE.Group();
   for (const m of meshes) group.add(m);
+
+  /** Pull light colours / directions from the lookdev preset so the rocks match the rest of the scene. */
+  function syncLook(p) {
+    if (!p) return;
+    uniforms.uSunDir.value.copy(p.sun.dir).normalize();
+    uniforms.uSunCol.value.copy(p.sun.color).multiplyScalar(p.sun.intensity / 2.6);
+    uniforms.uFillDir.value.copy(p.fill.dir).normalize();
+    uniforms.uFillCol.value.copy(p.fill.color).multiplyScalar(p.fill.intensity / 1.35);
+    uniforms.uHemiSky.value.copy(p.hemi.sky).multiplyScalar(p.hemi.intensity * 1.6);
+    uniforms.uHemiGround.value.copy(p.hemi.ground).multiplyScalar(p.hemi.intensity * 1.6);
+  }
+  syncLook(look?.preset);
 
   /** Remove rocks from a sphere (used to clear the spawn point / opening path). */
   function clearAround(p, radius) {
     for (const r of rocks) {
       const d = r.pos.distanceTo(p);
       if (d < radius + r.scale) {
-        // teleport it to the far side of the wrap box instead of deleting it
         _p.copy(r.pos).sub(p).normalize(); if (_p.lengthSq() < 0.5) _p.set(0, 0, 1);
         r.pos.copy(p).addScaledVector(_p, extent * 0.9);
       }
@@ -165,16 +241,15 @@ export function buildAsteroidBelt(rng, { count = 900, extent = 520, thickness = 
     return null;
   }
 
-  function update(dt, center) {
+  function update(dt, center, t = 0) {
+    uniforms.uTime.value = t;
     for (const r of rocks) {
-      // wrap around the player so the belt is endless
       for (const k of ['x', 'z']) {
         const d = r.pos[k] - center[k];
         if (d > extent) r.pos[k] -= extent * 2; else if (d < -extent) r.pos[k] += extent * 2;
       }
       const dy = r.pos.y - center.y;
       if (dy > thickness * 1.6) r.pos.y -= thickness * 3.2; else if (dy < -thickness * 1.6) r.pos.y += thickness * 3.2;
-      // soft collision: never let a rock swallow the player, nudge it aside instead
       const dd = r.pos.distanceTo(center), minD = r.scale + 6;
       if (dd < minD) { _p.copy(r.pos).sub(center); if (_p.lengthSq() < 1e-4) _p.set(1, 0, 0); _p.normalize(); r.pos.addScaledVector(_p, (minD - dd) * Math.min(1, dt * 6)); }
       _q.setFromAxisAngle(r.axis, r.rotSpeed * dt);
@@ -187,7 +262,7 @@ export function buildAsteroidBelt(rng, { count = 900, extent = 520, thickness = 
   }
   function dispose() {
     for (const m of meshes) m.geometry.dispose();
-    mat.dispose(); map.dispose(); normalMap.dispose();
+    mat.dispose();
   }
-  return { group, rocks, update, dispose, clearAround, hitTest, material: mat };
+  return { group, rocks, update, dispose, clearAround, hitTest, material: mat, syncLook };
 }
