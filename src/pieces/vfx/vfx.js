@@ -355,8 +355,9 @@ float noise(vec3 x) { vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
              mix(mix(hash(i+vec3(0,0,1)), hash(i+vec3(1,0,1)), f.x), mix(hash(i+vec3(0,1,1)), hash(i+vec3(1,1,1)), f.x), f.y), f.z); }
 void main() {
   vP = position;
+  // barely-there breathing: the silhouette must stay a perfect smooth sphere
   float n = noise(position * 2.5 + uTime * 1.5);
-  vec3 p = position * (1.0 + 0.05 * (n - 0.5) * (1.0 + uU * 3.0));
+  vec3 p = position * (1.0 + 0.012 * (n - 0.5) * (1.0 + uU * 2.0));
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   vN = normalize(normalMatrix * normal); vV = -mv.xyz;
   gl_Position = projectionMatrix * mv;
@@ -364,7 +365,7 @@ void main() {
 `;
 const BOMB_FRAG = /* glsl */ `
 precision highp float;
-uniform float uTime; uniform float uU; uniform vec3 uColor; uniform float uNear;
+uniform float uTime; uniform float uU; uniform vec3 uColor; uniform vec3 uHot; uniform float uNear; uniform float uInner;
 varying vec3 vN; varying vec3 vV; varying vec3 vP;
 float hash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float noise(vec3 x) { vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
@@ -373,58 +374,78 @@ float noise(vec3 x) { vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
 void main() {
   vec3 n = normalize(vN), v = normalize(vV);
   float facing = abs(dot(n, v));
-  float rim = pow(1.0 - facing, 2.2);
-  float cells = noise(vP * 4.0 + vec3(uTime * 0.8)) * 0.6 + noise(vP * 9.0 - vec3(uTime * 1.3)) * 0.4;
-  float web = smoothstep(0.45, 0.62, cells) * 0.7;
-  float fade = 1.0 - smoothstep(0.55, 1.0, uU);
-  float fill = 0.05 * (1.0 - uU);
-  vec3 col = uColor * (rim * 0.8 + web * (0.1 + 0.4 * rim) + fill) + vec3(1.0) * pow(rim, 4.0) * 0.6;
+  // fresnel shell whose peak sits just INSIDE the silhouette and falls back to
+  // zero at the geometric edge, so the sphere never shows a hard polygon rim.
+  float soft = smoothstep(0.0, 0.16, facing);
+  float rim = pow(1.0 - facing, 3.2) * soft;
+  float rim2 = pow(1.0 - facing, 1.4) * soft;
+  // energy surface: flowing plasma cells + fine latitude scan bands
+  float cells = noise(vP * 3.0 + vec3(uTime * 0.7, -uTime * 0.4, 0.0)) * 0.6 + noise(vP * 7.0 - vec3(0.0, uTime * 1.6, uTime * 0.9)) * 0.4;
+  float web = smoothstep(0.48, 0.66, cells);
+  float bands = 0.5 + 0.5 * sin(vP.y * 60.0 - uTime * 14.0);
+  bands = smoothstep(0.55, 0.95, bands) * 0.35;
+  // life: snap bright on (first 12%) then decay; inner shell lags
+  float on = smoothstep(0.0, 0.08, uU);
+  float fade = (1.0 - smoothstep(0.35, 1.0, uU)) * on;
+  float back = gl_FrontFacing ? 1.0 : 0.2;
+  vec3 col = uColor * (rim2 * 0.28 + web * (0.02 + 0.22 * rim2) + bands * rim2 * 0.5) + uHot * pow(rim, 1.8) * 0.7;
+  col = mix(col, col * vec3(0.7, 0.55, 1.0), uInner);        // inner shell leans violet
   // when the camera is close to / inside the shell the fresnel rim covers the whole disc: thin it out
-  gl_FragColor = vec4(col * fade * uNear, 0.0);
+  gl_FragColor = vec4(col * fade * uNear * back, 0.0);
 }
 `;
 
 class Bomb {
   constructor(vfx) {
     this.vfx = vfx; this.active = false; this.u = 0; this.dur = 2.2; this.maxR = 40;
-    this.mat = new THREE.ShaderMaterial({
+    const mkMat = (inner) => new THREE.ShaderMaterial({
       vertexShader: BOMB_VERT, fragmentShader: BOMB_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide,
       blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
-      uniforms: { uTime: { value: 0 }, uU: { value: 0 }, uColor: { value: PALETTE.bomb }, uNear: { value: 1 } },
+      uniforms: { uTime: { value: 0 }, uU: { value: 0 }, uColor: { value: PALETTE.bomb }, uHot: { value: PALETTE.boostHot }, uNear: { value: 1 }, uInner: { value: inner } },
     });
-    this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), this.mat);
-    this.mesh.visible = false; this.mesh.renderOrder = 15; this.mesh.frustumCulled = false;
+    this.mat = mkMat(0); this.matInner = mkMat(1);
+    const geo = new THREE.SphereGeometry(1, 160, 112);   // dense: the silhouette must read as a perfect circle
+    this.mesh = new THREE.Mesh(geo, this.mat);
+    this.inner = new THREE.Mesh(geo, this.matInner);
+    this.mesh.add(this.inner);
+    this.mesh.visible = false; this.mesh.renderOrder = 15; this.mesh.frustumCulled = false; this.inner.frustumCulled = false; this.inner.renderOrder = 15;
     this.center = V(); this.radius = 0; this.time = 0;
   }
   fire(pos, o = {}) {
     this.active = true; this.u = 0; this.center.copy(pos); this.maxR = o.radius ?? 40; this.dur = o.duration ?? 2.2;
     this.mesh.visible = true; this.mesh.position.copy(pos);
     const vfx = this.vfx;
-    vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.FLASH, colA: PALETTE.bomb, size0: 4, size1: this.maxR * 0.6, life: 0.35 });
-    vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.RING, colA: new THREE.Color(1, 1, 1), colB: PALETTE.bomb, size0: 2, size1: this.maxR * 2.6, life: 1.4 });
-    vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.RING, colA: PALETTE.bomb, colB: PALETTE.charge, size0: 1, size1: this.maxR * 2.2, life: 1.8, delay: 0.15 });
-    for (let i = 0; i < 90; i++) {
+    // crisp nova: a short hard white pop, then thin cyan shock rings; no big soft fills
+    vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.FLASH, colA: PALETTE.bomb, size0: 3, size1: this.maxR * 0.45, life: 0.16 });
+    vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.RING, colA: PALETTE.bomb, colB: PALETTE.charge, size0: 2, size1: this.maxR * 2.4, life: 1.1, rot: 0.28 });
+    vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.RING, colA: PALETTE.charge, colB: new THREE.Color(0.5, 0.3, 1.0), size0: 1, size1: this.maxR * 2.0, life: 1.5, delay: 0.12, rot: 0.2 });
+    for (let i = 0; i < 110; i++) {
       _a.set(vfx.rng() - 0.5, vfx.rng() - 0.5, vfx.rng() - 0.5).normalize().multiplyScalar(this.maxR * (0.5 + vfx.rng() * 0.6) / 1.2);
       vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: _a.x, vy: _a.y, vz: _a.z, type: P.SPARK, colA: PALETTE.boostHot, colB: PALETTE.bomb,
-        size0: 0.5, size1: 0.12, life: 1.0 + vfx.rng() * 0.6, drag: 0.6, delay: vfx.rng() * 0.15 });
+        size0: 0.45, size1: 0.1, life: 1.0 + vfx.rng() * 0.6, drag: 0.6, delay: vfx.rng() * 0.15 });
     }
-    vfx.shake(1.0); vfx.hitStop(0.12); vfx.flashLight(pos, PALETTE.bomb, 60, this.maxR * 3); vfx.flashAmount = Math.max(vfx.flashAmount, 0.3);
+    vfx.shake(1.0); vfx.hitStop(0.12); vfx.flashLight(pos, PALETTE.bomb, 28, this.maxR * 3); vfx.flashAmount = Math.max(vfx.flashAmount, 0.16);
   }
   update(dt, camera) {
     this.time += dt; this.mat.uniforms.uTime.value = this.time;
     if (!this.active) return;
     if (camera) {
       const rel = camera.position.distanceTo(this.center) / Math.max(0.01, this.radius);
-      this.mat.uniforms.uNear.value = 0.12 + 0.88 * THREE.MathUtils.smoothstep(rel, 1.0, 2.2);
+      const nearV = 0.12 + 0.88 * THREE.MathUtils.smoothstep(rel, 1.0, 2.2);
+      this.mat.uniforms.uNear.value = nearV; this.matInner.uniforms.uNear.value = nearV;
     }
     this.u = Math.min(1, this.u + dt / this.dur);
     const e = 1 - Math.pow(1 - this.u, 3);
     this.radius = this.maxR * (e * 1.06 - 0.06 * Math.sin(this.u * Math.PI)); // slight overshoot & settle
     this.mesh.scale.setScalar(Math.max(0.01, this.radius));
-    this.mat.uniforms.uU.value = this.u;
+    // inner shell lags behind the front and lingers a touch longer
+    const ui = Math.max(0, this.u - 0.08) / 0.92, ei = 1 - Math.pow(1 - ui, 3);
+    this.inner.scale.setScalar(Math.max(0.01, 0.06 + 0.78 * ei));
+    this.mat.uniforms.uU.value = this.u; this.matInner.uniforms.uU.value = Math.min(1, ui);
+    this.matInner.uniforms.uTime.value = this.time;
     if (this.u >= 1) { this.active = false; this.mesh.visible = false; this.radius = 0; }
   }
-  dispose() { this.mesh.geometry.dispose(); this.mat.dispose(); }
+  dispose() { this.mesh.geometry.dispose(); this.mat.dispose(); this.matInner.dispose(); }
 }
 
 // ---------- main ----------

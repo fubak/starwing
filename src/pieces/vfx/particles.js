@@ -24,6 +24,8 @@ varying float vU;
 varying float vType;
 varying float vSeed;
 varying float vAge;
+varying float vNear;
+varying float vThick;
 
 float easeOut(float x, float p) { return 1.0 - pow(1.0 - x, p); }
 
@@ -31,6 +33,7 @@ void main() {
   float age = uTime - aTime.x;
   float u = age / max(aTime.y, 1e-4);
   vUv = uv; vColA = aColA; vColB = aColB; vU = u; vType = aParams.x; vSeed = aParams.w; vAge = age;
+  vThick = aRot.x > 0.0 ? aRot.x : 1.0;   // RING: rot slot doubles as band-thickness multiplier
   if (u < 0.0 || u > 1.0) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }
 
   float k = max(aParams.y, 1e-3);
@@ -62,6 +65,12 @@ void main() {
     q = mat2(c, sn, -sn, c) * q;
   }
   mv.xy += q * size;
+  // near-camera fade: a billboard that would intersect the near plane or fill
+  // the frame dissolves instead of clipping into a hard rectangle. Scaled by
+  // sprite size so small sparks may pass close while big smoke fades early.
+  float dist = -mv.z;
+  float nearEnd = 1.0 + size * 0.35;
+  vNear = smoothstep(0.6, nearEnd, dist);
   gl_Position = projectionMatrix * mv;
 }
 `;
@@ -75,6 +84,8 @@ varying float vU;
 varying float vType;
 varying float vSeed;
 varying float vAge;
+varying float vNear;
+varying float vThick;
 
 float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 float vnoise(vec2 p) {
@@ -99,33 +110,42 @@ void main() {
     float fade = 1.0 - smoothstep(0.3, 1.0, u);
     rgb = mix(vColA, vColB, u) * g * fade * 1.6;
     a = 0.0;
-  } else if (vType == 1.0) {                // FIREBALL
+  } else if (vType == 1.0) {                // FIREBALL (chunky, stylised)
     vec2 nq = c * 1.6 + vSeed * 37.0;
-    float n = fbm(nq * 1.4 + vec2(0.0, -vAge * 0.9)) ;
+    float n = fbm(nq * 1.4 + vec2(0.0, -vAge * 0.9));
     float n2 = fbm(nq * 3.1 + vec2(vAge * 0.4, vAge * 0.7));
-    float shape = (1.0 - r * (0.85 + 0.35 * u)) + (n - 0.5) * 0.9 + (n2 - 0.5) * 0.35;
-    float edge = smoothstep(0.02, 0.28, shape);
-    float heat = clamp(shape * 1.9 - u * 1.6 + 0.15, 0.0, 1.0);
+    // billowing silhouette: noise-warped disc that never reaches the quad border
+    float shape = (1.0 - r * (0.95 + 0.4 * u)) + (n - 0.5) * 1.0 + (n2 - 0.5) * 0.4;
+    float mask = 1.0 - smoothstep(0.62, 0.9, r);
+    float edge = smoothstep(0.0, 0.09, shape) * mask;          // crisp cel-like rim
+    float heat = clamp(shape * 1.7 - u * 1.5 + 0.1, 0.0, 1.0);
     heat = heat * heat;
-    // ramp: dark ember -> orange -> yellow -> white
-    vec3 col = mix(vColB * 0.25, vColB, smoothstep(0.0, 0.35, heat));
-    col = mix(col, vColA, smoothstep(0.3, 0.75, heat));
-    col = mix(col, vec3(1.0, 0.98, 0.9) * 1.6, smoothstep(0.7, 1.0, heat));
+    // banded ramp: sooty rim -> deep orange -> hot orange -> yellow -> white core
+    float h = mix(heat, floor(heat * 5.0 + 0.5) / 5.0, 0.55);
+    vec3 soot = vColB * 0.12;
+    vec3 col = mix(soot, vColB, smoothstep(0.02, 0.18, h));
+    col = mix(col, mix(vColB, vColA, 0.5) * 1.15, smoothstep(0.2, 0.45, h));
+    col = mix(col, vColA * 1.25, smoothstep(0.45, 0.7, h));
+    col = mix(col, vec3(1.0, 0.98, 0.92) * 1.7, smoothstep(0.7, 0.95, h));
+    // interior detail: darker creases from the fine noise so it reads as a volume
+    col *= 0.8 + 0.4 * smoothstep(0.3, 0.7, n2);
     float fade = 1.0 - smoothstep(0.55, 1.0, u);
-    a = edge * fade * (1.0 - smoothstep(0.85, 1.0, r));
-    float glow = pow(heat, 1.5) * 1.8;
+    a = edge * fade;
+    float glow = pow(heat, 1.5) * 1.6;
     rgb = col * a + col * glow * a;      // premultiplied + emissive push
-    a *= 0.92;
+    a *= 0.95;
   } else if (vType == 2.0) {                // SMOKE
     vec2 nq = c * 1.5 + vSeed * 53.0;
     float n = fbm(nq * 1.2 + vec2(vAge * 0.15, -vAge * 0.25));
-    float shape = (1.0 - r) + (n - 0.5) * 0.8;
-    float edge = smoothstep(0.05, 0.5, shape);
+    float n2 = fbm(nq * 2.6 + vec2(-vAge * 0.2, vAge * 0.1));
+    float shape = (1.0 - r * 1.1) + (n - 0.5) * 0.8 + (n2 - 0.5) * 0.3;
+    float mask = 1.0 - smoothstep(0.55, 0.88, r);            // organic edge, never the quad
+    float edge = smoothstep(0.03, 0.32, shape) * mask;
     float fade = (1.0 - smoothstep(0.35, 1.0, u)) * smoothstep(0.0, 0.08, u);
     // lit-side gradient: colA is lit, colB shadow
     float lit = clamp(0.5 + c.x * 0.35 - c.y * 0.45 + (n - 0.5), 0.0, 1.0);
     vec3 col = mix(vColB, vColA, lit);
-    a = edge * fade * 0.55;
+    a = edge * fade * 0.6;
     rgb = col * a;
   } else if (vType == 3.0 || vType == 6.0) { // SPARK / EMBER (stretched)
     float core = exp(-c.y * c.y * 9.0) * (1.0 - smoothstep(0.55, 1.0, abs(c.x)));
@@ -136,7 +156,7 @@ void main() {
     a = 0.0;
   } else if (vType == 4.0) {                // RING shockwave
     float rad = mix(0.15, 0.92, 1.0 - pow(1.0 - u, 2.5));
-    float th = 0.045 + 0.09 * u;
+    float th = (0.045 + 0.09 * u) * vThick;
     float band = exp(-pow((r - rad) / th, 2.0));
     // faint fill just inside the wavefront only (outside must stay black or the quad shows)
     float inner = smoothstep(rad - 0.4, rad, r) * (1.0 - smoothstep(rad, rad + th * 1.5, r)) * 0.25 * (1.0 - u);
@@ -152,6 +172,7 @@ void main() {
     rgb = mix(vec3(1.0), vColA, smoothstep(0.0, 0.7, r)) * g * fade * fade * 2.6;
     a = 0.0;
   }
+  rgb *= vNear; a *= vNear;
   if (a <= 0.001 && dot(rgb, rgb) < 1e-5) discard;
   gl_FragColor = vec4(rgb, a);
 }
