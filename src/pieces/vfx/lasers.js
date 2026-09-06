@@ -51,7 +51,7 @@ varying vec3 vColor;
 varying float vFacing;
 void main() {
   // white-hot centre, tinted rim
-  vec3 col = mix(vColor * 1.8, vec3(2.4), pow(vFacing, 1.5));
+  vec3 col = mix(vColor * 1.6, vec3(1.9), pow(vFacing, 2.5));
   gl_FragColor = vec4(col, 1.0);
 }
 `;
@@ -74,11 +74,11 @@ export class LaserSystem {
     this.core = mkInst(new THREE.CapsuleGeometry(0.075, 1.3, 4, 10), new THREE.ShaderMaterial({ vertexShader: CORE_VERT, fragmentShader: CORE_FRAG }), 10);
     this.glow = mkInst(new THREE.CapsuleGeometry(0.28, 1.5, 4, 12), new THREE.ShaderMaterial({
       vertexShader: GLOW_VERT, fragmentShader: GLOW_FRAG, ...add, side: THREE.FrontSide,
-      uniforms: { uHalf: { value: 1.03 }, uTail: { value: 0 }, uGain: { value: 1.1 } },
+      uniforms: { uHalf: { value: 1.03 }, uTail: { value: 0 }, uGain: { value: 0.8 } },
     }), 11);
     this.trail = mkInst(new THREE.CapsuleGeometry(0.14, 4.2, 4, 10), new THREE.ShaderMaterial({
       vertexShader: GLOW_VERT, fragmentShader: GLOW_FRAG, ...add,
-      uniforms: { uHalf: { value: 2.24 }, uTail: { value: 1 }, uGain: { value: 0.9 } },
+      uniforms: { uHalf: { value: 2.24 }, uTail: { value: 1 }, uGain: { value: 0.7 } },
     }), 9);
     this.group = new THREE.Group();
     this.group.add(this.trail, this.glow, this.core);

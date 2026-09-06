@@ -138,14 +138,16 @@ void main() {
     float rad = mix(0.15, 0.92, 1.0 - pow(1.0 - u, 2.5));
     float th = 0.045 + 0.09 * u;
     float band = exp(-pow((r - rad) / th, 2.0));
-    float inner = smoothstep(rad - 0.4, rad, r) * 0.25 * (1.0 - u);
+    // faint fill just inside the wavefront only (outside must stay black or the quad shows)
+    float inner = smoothstep(rad - 0.4, rad, r) * (1.0 - smoothstep(rad, rad + th * 1.5, r)) * 0.25 * (1.0 - u);
     float fade = 1.0 - smoothstep(0.35, 1.0, u);
     rgb = mix(vColA, vColB, u) * (band * 2.0 + inner) * fade;
     a = 0.0;
   } else {                                  // FLASH (star)
     float ang = atan(c.y, c.x);
     float rays = pow(abs(cos(ang * 2.0)), 14.0) * 0.9 + pow(abs(cos(ang * 2.0 + 1.5708)), 40.0) * 0.6;
-    float g = exp(-r * r * 9.0) * 1.4 + rays * exp(-r * 2.2) * 0.9;
+    float edge = 1.0 - smoothstep(0.55, 0.95, r);      // never reach the quad border
+    float g = (exp(-r * r * 9.0) * 1.4 + rays * exp(-r * 3.0) * 0.9) * edge;
     float fade = 1.0 - smoothstep(0.0, 1.0, u);
     rgb = mix(vec3(1.0), vColA, smoothstep(0.0, 0.7, r)) * g * fade * fade * 2.6;
     a = 0.0;

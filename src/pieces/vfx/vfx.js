@@ -61,7 +61,7 @@ void main() {
   float fade = pow(1.0 - vT, 1.4);
   float flick = 0.85 + 0.15 * sin(uTime * 45.0 + vT * 25.0);
   vec3 col = mix(uColor, uHot, core * (1.0 - vT) * 0.9);
-  gl_FragColor = vec4(col * core * fade * uIntensity * 2.4 * flick, 0.0);
+  gl_FragColor = vec4(col * core * fade * uIntensity * 1.5 * flick, 0.0);
 }
 `;
 
@@ -71,10 +71,10 @@ uniform float uIntensity; uniform float uTime;
 void main() {
   vUv = uv;
   vec3 p = position;
-  float len = 0.35 + 1.1 * uIntensity;
+  float len = 0.3 + 0.9 * uIntensity;
   p.y = p.y * len;                              // cone along -y (points backward)
   float wob = 1.0 + 0.08 * sin(uTime * 60.0 + uv.y * 9.0);
-  p.xz *= wob * (0.7 + 0.4 * uIntensity);
+  p.xz *= wob * (0.5 + 0.3 * uIntensity);
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   vec3 n = normalize(normalMatrix * normal);
   vFacing = abs(dot(n, normalize(-mv.xyz)));
@@ -94,7 +94,8 @@ void main() {
   float body = smoothstep(0.0, 0.35, t) * (0.6 + 0.4 * n);
   float g = pow(vFacing, 1.3) * body;
   vec3 col = mix(uColor, uHot, pow(t, 2.0) * 0.9);
-  gl_FragColor = vec4(col * g * (0.9 + 1.8 * uIntensity), 0.0);
+  float tip = smoothstep(0.0, 0.25, t);   // soft tip, no hard cone edge
+  gl_FragColor = vec4(col * g * tip * (0.45 + 0.9 * uIntensity), 0.0);
 }
 `;
 
@@ -363,7 +364,7 @@ void main() {
 `;
 const BOMB_FRAG = /* glsl */ `
 precision highp float;
-uniform float uTime; uniform float uU; uniform vec3 uColor;
+uniform float uTime; uniform float uU; uniform vec3 uColor; uniform float uNear;
 varying vec3 vN; varying vec3 vV; varying vec3 vP;
 float hash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float noise(vec3 x) { vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
@@ -376,9 +377,10 @@ void main() {
   float cells = noise(vP * 4.0 + vec3(uTime * 0.8)) * 0.6 + noise(vP * 9.0 - vec3(uTime * 1.3)) * 0.4;
   float web = smoothstep(0.45, 0.62, cells) * 0.7;
   float fade = 1.0 - smoothstep(0.55, 1.0, uU);
-  float fill = 0.12 * (1.0 - uU);
-  vec3 col = uColor * (rim * 3.0 + web * (0.4 + rim) + fill) + vec3(1.0) * pow(rim, 4.0) * 2.5;
-  gl_FragColor = vec4(col * fade, 0.0);
+  float fill = 0.05 * (1.0 - uU);
+  vec3 col = uColor * (rim * 0.8 + web * (0.1 + 0.4 * rim) + fill) + vec3(1.0) * pow(rim, 4.0) * 0.6;
+  // when the camera is close to / inside the shell the fresnel rim covers the whole disc: thin it out
+  gl_FragColor = vec4(col * fade * uNear, 0.0);
 }
 `;
 
@@ -388,7 +390,7 @@ class Bomb {
     this.mat = new THREE.ShaderMaterial({
       vertexShader: BOMB_VERT, fragmentShader: BOMB_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide,
       blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
-      uniforms: { uTime: { value: 0 }, uU: { value: 0 }, uColor: { value: PALETTE.bomb } },
+      uniforms: { uTime: { value: 0 }, uU: { value: 0 }, uColor: { value: PALETTE.bomb }, uNear: { value: 1 } },
     });
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), this.mat);
     this.mesh.visible = false; this.mesh.renderOrder = 15; this.mesh.frustumCulled = false;
@@ -398,7 +400,7 @@ class Bomb {
     this.active = true; this.u = 0; this.center.copy(pos); this.maxR = o.radius ?? 40; this.dur = o.duration ?? 2.2;
     this.mesh.visible = true; this.mesh.position.copy(pos);
     const vfx = this.vfx;
-    vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.FLASH, colA: PALETTE.bomb, size0: 4, size1: this.maxR * 1.6, life: 0.6 });
+    vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.FLASH, colA: PALETTE.bomb, size0: 4, size1: this.maxR * 0.6, life: 0.35 });
     vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.RING, colA: new THREE.Color(1, 1, 1), colB: PALETTE.bomb, size0: 2, size1: this.maxR * 2.6, life: 1.4 });
     vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.RING, colA: PALETTE.bomb, colB: PALETTE.charge, size0: 1, size1: this.maxR * 2.2, life: 1.8, delay: 0.15 });
     for (let i = 0; i < 90; i++) {
@@ -406,11 +408,15 @@ class Bomb {
       vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: _a.x, vy: _a.y, vz: _a.z, type: P.SPARK, colA: PALETTE.boostHot, colB: PALETTE.bomb,
         size0: 0.5, size1: 0.12, life: 1.0 + vfx.rng() * 0.6, drag: 0.6, delay: vfx.rng() * 0.15 });
     }
-    vfx.shake(1.0); vfx.hitStop(0.12); vfx.flashLight(pos, PALETTE.bomb, 60, this.maxR * 3);
+    vfx.shake(1.0); vfx.hitStop(0.12); vfx.flashLight(pos, PALETTE.bomb, 60, this.maxR * 3); vfx.flashAmount = Math.max(vfx.flashAmount, 0.3);
   }
-  update(dt) {
+  update(dt, camera) {
     this.time += dt; this.mat.uniforms.uTime.value = this.time;
     if (!this.active) return;
+    if (camera) {
+      const rel = camera.position.distanceTo(this.center) / Math.max(0.01, this.radius);
+      this.mat.uniforms.uNear.value = 0.12 + 0.88 * THREE.MathUtils.smoothstep(rel, 1.0, 2.2);
+    }
     this.u = Math.min(1, this.u + dt / this.dur);
     const e = 1 - Math.pow(1 - this.u, 3);
     this.radius = this.maxR * (e * 1.06 - 0.06 * Math.sin(this.u * Math.PI)); // slight overshoot & settle
@@ -439,6 +445,8 @@ export function createVfx(ctx, opts = {}) {
     particles, debris, lasers, group, rng, PALETTE,
     timeScale: 1, trauma: 0, hitStopT: 0, time: 0,
     shakeOffset: V(), shakeRoll: 0,
+    /** 0..1 full-screen white flash request (decays each frame); feed to a grade pass. */
+    flashAmount: 0,
     _lightT: 0, _lightPeak: 0,
 
     // --- weapons
@@ -451,11 +459,11 @@ export function createVfx(ctx, opts = {}) {
     twinLaser(left, right, dir, o = {}) { return [this.laser(left, dir, o), this.laser(right, dir, o)]; },
 
     muzzleFlash(pos, dir, color, scale = 1) {
-      particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.FLASH, colA: color, size0: 0.6 * scale, size1: 1.7 * scale, life: 0.11, rot: rng() * 6.28 });
-      particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.SOFT, colA: color, colB: color, size0: 1.4 * scale, size1: 0.4 * scale, life: 0.16 });
-      for (let i = 0; i < 4; i++) {
-        _a.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).multiplyScalar(6).addScaledVector(dir, 14);
-        particles.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: _a.x, vy: _a.y, vz: _a.z, type: P.SPARK, colA: new THREE.Color(1, 1, 1), colB: color, size0: 0.18 * scale, size1: 0.03, life: 0.18, drag: 3 });
+      particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.FLASH, colA: color, size0: 0.3 * scale, size1: 0.8 * scale, life: 0.08, rot: rng() * 6.28 });
+      particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.SOFT, colA: color, colB: color, size0: 0.6 * scale, size1: 0.2 * scale, life: 0.1 });
+      for (let i = 0; i < 3; i++) {
+        _a.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).multiplyScalar(5).addScaledVector(dir, 12);
+        particles.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: _a.x, vy: _a.y, vz: _a.z, type: P.SPARK, colA: new THREE.Color(1, 1, 1), colB: color, size0: 0.12 * scale, size1: 0.02, life: 0.14, drag: 3 });
       }
     },
 
@@ -523,8 +531,10 @@ export function createVfx(ctx, opts = {}) {
         particles.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: _b.x * 0.95, vy: _b.y * 0.95, vz: _b.z * 0.95, type: P.EMBER, colA: hot, colB: cool,
           size0: size * 0.5, size1: 0.1, life: 0.6 + rng() * 0.5, drag: 0.35 });
       }
+      if (o.quiet) return;                      // secondary kills: no camera/screen response
       this.flashLight(pos, hot, 30 * size, 40 * size);
       this.shake(Math.min(1, 0.25 * size));
+      if (o.flash !== false) this.flashAmount = Math.min(0.35, this.flashAmount + 0.04 * size);
       if (size >= 2) this.hitStop(0.05 + 0.02 * size);
     },
 
@@ -554,11 +564,12 @@ export function createVfx(ctx, opts = {}) {
       this.time += sdt;
       particles.update(sdt); debris.update(sdt, camera);
       lasers.update(sdt, opts.hitTest);
-      charge.update(sdt, camera); bombFx.update(sdt);
+      charge.update(sdt, camera); bombFx.update(sdt, camera);
       // light decay
       if (light.visible) { this._lightT += dt; light.intensity = this._lightPeak * Math.exp(-this._lightT * 7) * (0.8 + 0.2 * Math.sin(this._lightT * 70)); if (light.intensity < 0.05) light.visible = false; }
       // trauma-based shake (real time, not hit-stopped)
       this.trauma = Math.max(0, this.trauma - dt * 1.6);
+      this.flashAmount = Math.max(0, this.flashAmount - dt * 3.5);
       const s = this.trauma * this.trauma;
       const t = this.time * 1 + performance.now() * 0.001 * 0; // deterministic in fixed mode
       const T = this._shakeClock = (this._shakeClock ?? 0) + dt * 30;
