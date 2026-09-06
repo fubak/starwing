@@ -36,7 +36,7 @@ export function createHud(ctx) {
   const shieldMod = el('div', 'sw-mod sw-shield', root); shieldMod.dataset.dir = '0,-1';
   el('div', 'sw-label', shieldMod, 'SHIELD');
   const shieldRow = el('div', 'sw-row', shieldMod);
-  const shieldCv = mkCanvas(330, 30, dpr); shieldRow.appendChild(shieldCv);
+  const shieldCv = mkCanvas(340, 40, dpr); shieldRow.appendChild(shieldCv);
   const sg = shieldCv.getContext('2d');
   const lives = el('div', 'sw-lives', shieldMod);
   el('div', 'sw-label', lives, 'ARWING');
@@ -53,7 +53,7 @@ export function createHud(ctx) {
 
   // ---- boost gauge
   const boostMod = el('div', 'sw-mod sw-boost', root); boostMod.dataset.dir = '0,1';
-  const boostCv = mkCanvas(300, 34, dpr); boostMod.appendChild(boostCv);
+  const boostCv = mkCanvas(300, 40, dpr); boostMod.appendChild(boostCv);
   const bg = boostCv.getContext('2d');
   const boostLbl = el('div', 'sw-label', boostMod, 'BOOST');
 
@@ -68,18 +68,22 @@ export function createHud(ctx) {
   // ---- comm window
   const comm = el('div', 'sw-comm', root);
   const port = el('div', 'sw-port', comm);
-  const portrait = createPortrait(172, dpr);
-  port.appendChild(portrait.canvas);
-  el('div', 'sw-frame', port);
+  const screen = el('div', 'sw-screen', port);
+  const portrait = createPortrait(164, dpr);
+  screen.appendChild(portrait.canvas);
+  el('div', 'sw-glass', screen);
   for (const c of ['c1', 'c2', 'c3', 'c4']) el('div', 'sw-corner ' + c, port);
-  const bubble = el('div', 'sw-bubble', comm); el('div', 'sw-tab', bubble);
+  for (const c of ['r1', 'r2', 'r3', 'r4']) el('div', 'sw-rivet ' + c, port);
+  const sig = el('div', 'sw-sig', port); const sigBars = [3, 5, 7, 9, 10].map((h) => { const i = el('i', '', sig); i.style.height = h + 'px'; return i; });
+  const idEl = el('div', 'sw-id', port, 'COMM 01');
+  const bubble = el('div', 'sw-bubble', comm); el('div', 'sw-tab', bubble); el('div', 'sw-hl', bubble);
   comm.style.opacity = '0';
   const nameEl = el('div', 'sw-name', bubble, 'FOX');
   const textEl = el('div', 'sw-text', bubble, '');
 
   // ---- banner + warning
   const banner = el('div', 'sw-banner', root);
-  el('div', 'sw-bg', banner); el('div', 'sw-bl', banner);
+  el('div', 'sw-bg', banner); el('div', 'sw-bl', banner); el('div', 'sw-bl b2', banner); el('div', 'sw-bl b3', banner);
   const bannerCv = mkCanvas(W, 240, dpr); bannerCv.style.cssText = 'position:absolute;left:0;top:-120px'; banner.appendChild(bannerCv);
   const bnG = bannerCv.getContext('2d');
   const warn = el('div', 'sw-warn', root, 'SHIELD CRITICAL');
@@ -112,7 +116,8 @@ export function createHud(ctx) {
     say(name, text, opts = {}) {
       const id = String(name).toLowerCase();
       portrait.setCharacter(id); portrait.open(); portrait.setMood(opts.mood ?? 'calm');
-      nameEl.textContent = (opts.label ?? name).toUpperCase();
+      nameEl.innerHTML = (opts.label ?? name).toUpperCase() + `<b>${opts.callsign ?? { fox: 'LEADER', peppy: 'WING 2', falco: 'WING 3', slippy: 'WING 4' }[id] ?? 'COMM'}</b>`;
+      idEl.textContent = { fox: 'CH 01 · FOX', peppy: 'CH 02 · PEPPY', falco: 'CH 03 · FALCO', slippy: 'CH 04 · SLIPPY' }[id] ?? 'CH 00';
       st.say = { text, i: 0, timer: 0, done: false, hold: opts.hold ?? 2.8, speed: opts.speed ?? 0.032 };
       textEl.innerHTML = '<span class="sw-cur"></span>';
       if (st.commAge < 0 || st.commOut >= 0) st.commAge = 0;
@@ -134,84 +139,125 @@ export function createHud(ctx) {
   };
 
   // ---- drawing
+  /**
+   * Chunky bevelled gauge housing: dark brushed-metal slab with a raised
+   * outer lip (light top edge / dark bottom edge), an inset trough that the
+   * liquid-glass fill sits in, and a soft drop shadow so it lifts off the
+   * scene. `shape(pad)` must trace the housing outline expanded by `pad`.
+   */
+  function housing(g, shape, glow = 0, tint = '150,220,255') {
+    // drop shadow
+    g.save(); g.translate(0, 3); shape(1.5); g.fillStyle = 'rgba(0,4,16,.55)'; g.fill(); g.restore();
+    // outer metal lip
+    shape(3); const lip = g.createLinearGradient(0, 0, 0, 40); lip.addColorStop(0, '#8fa9cc'); lip.addColorStop(0.35, '#3a5275'); lip.addColorStop(0.7, '#1a2740'); lip.addColorStop(1, '#5a7499');
+    g.fillStyle = lip; g.fill();
+    g.lineWidth = 1; g.strokeStyle = `rgba(${tint},${0.45 + glow * 0.45})`; g.stroke();
+    // inner trough
+    shape(0); const tr = g.createLinearGradient(0, 0, 0, 40); tr.addColorStop(0, '#02060f'); tr.addColorStop(0.5, '#071427'); tr.addColorStop(1, '#0a1a30');
+    g.fillStyle = tr; g.fill();
+    g.save(); shape(0); g.clip();
+    // inner shadow at top of trough + faint floor highlight
+    const ish = g.createLinearGradient(0, 0, 0, 40); ish.addColorStop(0, 'rgba(0,0,0,.7)'); ish.addColorStop(0.25, 'rgba(0,0,0,0)'); ish.addColorStop(0.9, 'rgba(120,190,255,.06)'); ish.addColorStop(1, 'rgba(120,190,255,.14)');
+    g.fillStyle = ish; g.fillRect(-10, -10, 400, 60);
+    g.restore();
+  }
+  /** glassy liquid fill shading: bright top bead, core, dark base, bottom bounce */
+  function glassFill(g, x, y, w, h, grad) {
+    g.fillStyle = grad; g.fillRect(x, y, w, h);
+    const sheen = g.createLinearGradient(0, y, 0, y + h);
+    sheen.addColorStop(0, 'rgba(255,255,255,.75)'); sheen.addColorStop(0.12, 'rgba(255,255,255,.45)'); sheen.addColorStop(0.4, 'rgba(255,255,255,.04)');
+    sheen.addColorStop(0.62, 'rgba(0,0,0,.08)'); sheen.addColorStop(0.9, 'rgba(0,0,0,.42)'); sheen.addColorStop(1, 'rgba(255,255,255,.18)');
+    g.fillStyle = sheen; g.fillRect(x, y, w, h);
+  }
+
   function drawShield(dt) {
     const s = spring(st.shield, st.shieldTarget, dt, 90, 12);
     st.shieldGhost = st.shieldGhost > s ? Math.max(s, st.shieldGhost - dt * 0.35) : s;
     st.shieldFlash = Math.max(0, st.shieldFlash - dt * 3);
     st.glintT += dt * 1.1; if (st.glintT > 1.6) { st.glintNext -= dt; if (st.glintNext <= 0) { st.glintT = -0.2; st.glintNext = 2.5 + Math.random() * 2; } }
-    const g = sg, w = 330, h = 30; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
-    const x0 = 4, y0 = 4, bw = w - 8, bh = h - 8, skew = 8;
-    const shape = (x, ww, yy = y0, hh = bh) => { g.beginPath(); g.moveTo(x + skew, yy); g.lineTo(x + ww + skew, yy); g.lineTo(x + ww, yy + hh); g.lineTo(x, yy + hh); g.closePath(); };
-    // housing
-    shape(x0, bw - skew); g.fillStyle = 'rgba(4,14,34,.78)'; g.fill();
-    g.lineWidth = 1.5; g.strokeStyle = 'rgba(150,220,255,.75)'; g.stroke();
-    // ghost (damage trail)
+    const g = sg, w = 340, h = 40; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    const x0 = 8, y0 = 8, bw = w - 20, bh = 22, skew = 9;
+    const shape = (pad = 0) => { g.beginPath(); g.moveTo(x0 + skew - pad * 0.4, y0 - pad); g.lineTo(x0 + bw + pad, y0 - pad); g.lineTo(x0 + bw - skew + pad * 0.4, y0 + bh + pad); g.lineTo(x0 - pad, y0 + bh + pad); g.closePath(); };
     const low = s < 0.3;
-    g.save(); shape(x0 + 2, bw - skew - 4, y0 + 2, bh - 4); g.clip();
-    const inner = bw - skew - 4;
-    if (st.shieldGhost > s + 0.002) { g.fillStyle = 'rgba(255,90,60,.7)'; g.fillRect(x0 + 2, y0, inner * st.shieldGhost + skew, bh); }
-    // fill gradient
+    housing(g, shape, low ? 0.5 + 0.5 * Math.sin(st.t * 14) : 0, low ? '255,120,90' : '150,220,255');
+    g.save(); shape(-1.5); g.clip();
+    const inner = bw - skew - 3;
+    const fx = x0 + 1.5, fy = y0 + 1.5, fh = bh - 3;
+    // ghost (damage trail)
+    if (st.shieldGhost > s + 0.002) { g.fillStyle = 'rgba(255,90,60,.75)'; g.fillRect(fx, fy, inner * st.shieldGhost + skew, fh); }
+    // fill
     const fw = inner * s;
     const grad = g.createLinearGradient(x0, 0, x0 + inner, 0);
     if (low) { grad.addColorStop(0, '#ff5a3c'); grad.addColorStop(1, '#ffb347'); }
-    else { grad.addColorStop(0, '#22d3a0'); grad.addColorStop(0.55, '#5ee8ff'); grad.addColorStop(1, '#a8f6ff'); }
-    g.fillStyle = grad; g.fillRect(x0 + 2, y0, fw + skew, bh);
-    // vertical sheen
-    const sheen = g.createLinearGradient(0, y0, 0, y0 + bh); sheen.addColorStop(0, 'rgba(255,255,255,.55)'); sheen.addColorStop(0.35, 'rgba(255,255,255,.08)'); sheen.addColorStop(0.6, 'rgba(0,0,0,.05)'); sheen.addColorStop(1, 'rgba(0,0,0,.35)');
-    g.fillStyle = sheen; g.fillRect(x0 + 2, y0, fw + skew, bh);
-    // segments
-    const n = 20, segW = inner / n;
-    for (let i = 1; i < n; i++) { const x = x0 + 2 + i * segW; g.fillStyle = 'rgba(4,14,34,.85)'; g.beginPath(); g.moveTo(x + skew - 1, y0); g.lineTo(x + skew + 1, y0); g.lineTo(x + 1, y0 + bh); g.lineTo(x - 1, y0 + bh); g.closePath(); g.fill(); }
-    // moving glint over filled part
-    if (st.glintT >= -0.2 && st.glintT <= 1.2) {
-      const gx = x0 + 2 + (fw + skew) * st.glintT;
-      const gl = g.createLinearGradient(gx - 22, 0, gx + 22, 0); gl.addColorStop(0, 'rgba(255,255,255,0)'); gl.addColorStop(0.5, 'rgba(255,255,255,.85)'); gl.addColorStop(1, 'rgba(255,255,255,0)');
-      g.fillStyle = gl; g.fillRect(Math.max(x0, gx - 24), y0, Math.min(48, fw + skew - (gx - 24 - x0)), bh);
+    else { grad.addColorStop(0, '#12c48e'); grad.addColorStop(0.5, '#3fe0ff'); grad.addColorStop(1, '#b6f9ff'); }
+    glassFill(g, fx, fy, fw + skew, fh, grad);
+    // leading-edge bright cap
+    if (fw > 2) { const cap = g.createLinearGradient(fx + fw + skew - 12, 0, fx + fw + skew, 0); cap.addColorStop(0, 'rgba(255,255,255,0)'); cap.addColorStop(1, 'rgba(255,255,255,.9)'); g.fillStyle = cap; g.fillRect(fx + fw + skew - 12, fy, 12, fh); }
+    // segment dividers: bevelled (dark line + light line)
+    const n = 16, segW = inner / n;
+    for (let i = 1; i < n; i++) {
+      const x = fx + i * segW;
+      g.fillStyle = 'rgba(2,8,20,.9)'; g.beginPath(); g.moveTo(x + skew - 1.2, fy); g.lineTo(x + skew + 1.2, fy); g.lineTo(x + 1.2, fy + fh); g.lineTo(x - 1.2, fy + fh); g.closePath(); g.fill();
+      g.fillStyle = 'rgba(255,255,255,.14)'; g.beginPath(); g.moveTo(x + skew + 1.2, fy); g.lineTo(x + skew + 1.9, fy); g.lineTo(x + 1.9, fy + fh); g.lineTo(x + 1.2, fy + fh); g.closePath(); g.fill();
     }
-    // low flash / damage flash
-    if (low && Math.sin(st.t * 14) > 0) { g.fillStyle = 'rgba(255,255,255,.28)'; g.fillRect(x0 + 2, y0, fw + skew, bh); }
+    // glint sweeping the filled part (skewed to match the segments)
+    if (st.glintT >= -0.2 && st.glintT <= 1.2) {
+      const gx = fx + (fw + skew) * st.glintT;
+      g.save(); g.beginPath(); g.rect(fx, fy, fw + skew, fh); g.clip();
+      g.transform(1, 0, -skew / fh, 1, 0, 0);
+      const gl = g.createLinearGradient(gx - 26, 0, gx + 26, 0); gl.addColorStop(0, 'rgba(255,255,255,0)'); gl.addColorStop(0.45, 'rgba(255,255,255,.9)'); gl.addColorStop(0.55, 'rgba(255,255,255,.9)'); gl.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = gl; g.fillRect(gx - 26 + skew, fy - 5, 52, fh + 10);
+      g.restore();
+    }
+    if (low && Math.sin(st.t * 14) > 0) { g.fillStyle = 'rgba(255,255,255,.28)'; g.fillRect(fx, fy, fw + skew, fh); }
     if (st.shieldFlash > 0) { g.fillStyle = `rgba(255,255,255,${st.shieldFlash * 0.7})`; g.fillRect(x0, y0, w, bh); }
     g.restore();
-    // end caps ticks
-    g.fillStyle = '#cfefff'; g.fillRect(x0 + skew + inner * 0.5 + 2, y0 - 3, 2, 4); g.fillRect(x0 + skew + inner * 0.5 - 1, y0 + bh - 1, 2, 4);
+    // half-way index mark on the lip
+    g.fillStyle = '#e8f7ff'; g.beginPath(); g.moveTo(x0 + skew + inner * 0.5 + 2, y0 - 6); g.lineTo(x0 + skew + inner * 0.5 + 5, y0 - 3); g.lineTo(x0 + skew + inner * 0.5 - 1, y0 - 3); g.closePath(); g.fill();
     warn.style.opacity = low ? String(0.6 + 0.4 * Math.sin(st.t * 10)) : '0';
 
     // lives & bombs
     const lg = livesCv.getContext('2d'); lg.setTransform(dpr, 0, 0, dpr, 0, 0); lg.clearRect(0, 0, 120, 18);
     for (let i = 0; i < 3; i++) {
-      const x = 12 + i * 28, on = i < st.lives; lg.fillStyle = on ? '#cfefff' : 'rgba(120,180,220,.25)'; lg.shadowColor = 'rgba(120,220,255,.9)'; lg.shadowBlur = on ? 6 : 0;
+      const x = 12 + i * 28, on = i < st.lives;
+      lg.shadowColor = 'rgba(120,220,255,.9)'; lg.shadowBlur = on ? 6 : 0;
+      const gr = lg.createLinearGradient(0, 2, 0, 15); gr.addColorStop(0, '#ffffff'); gr.addColorStop(1, '#8fd0ff');
+      lg.fillStyle = on ? gr : 'rgba(120,180,220,.25)';
       lg.beginPath(); lg.moveTo(x, 2); lg.lineTo(x + 10, 15); lg.lineTo(x, 11); lg.lineTo(x - 10, 15); lg.closePath(); lg.fill();
     }
     const bgc = bombCv.getContext('2d'); bgc.setTransform(dpr, 0, 0, dpr, 0, 0); bgc.clearRect(0, 0, 80, 18);
-    for (let i = 0; i < 3; i++) { const on = i < st.bombs; bgc.fillStyle = on ? '#ffd75e' : 'rgba(255,215,94,.2)'; bgc.shadowColor = 'rgba(255,190,60,.9)'; bgc.shadowBlur = on ? 6 : 0; bgc.beginPath(); bgc.arc(10 + i * 24, 9, 5.5, 0, Math.PI * 2); bgc.fill(); if (on) { bgc.fillStyle = '#fff'; bgc.fillRect(9 + i * 24, 1, 2, 4); } }
+    for (let i = 0; i < 3; i++) {
+      const on = i < st.bombs, cx = 10 + i * 24;
+      const gr = bgc.createRadialGradient(cx - 2, 7, 0.5, cx, 9, 6); gr.addColorStop(0, '#fff6c8'); gr.addColorStop(0.5, '#ffd75e'); gr.addColorStop(1, '#b57a10');
+      bgc.fillStyle = on ? gr : 'rgba(255,215,94,.2)'; bgc.shadowColor = 'rgba(255,190,60,.9)'; bgc.shadowBlur = on ? 6 : 0;
+      bgc.beginPath(); bgc.arc(cx, 9, 5.5, 0, Math.PI * 2); bgc.fill(); bgc.shadowBlur = 0;
+      if (on) { bgc.fillStyle = '#fff'; bgc.fillRect(cx - 1, 1, 2, 4); }
+    }
   }
 
   function drawBoost(dt) {
     const v = spring(st.boost, st.boostTarget, dt, 110, 14);
     const active = st.boostMode === 'boost' || st.boostMode === 'brake';
     st.boostGlow += ((active ? 1 : 0) - st.boostGlow) * Math.min(1, dt * 8);
-    const g = bg, w = 300, h = 34; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
-    const cx = w / 2, y = 8, bh = 14, bw = 240;
-    // trapezoid housing (wider at top)
-    const shape = (pad) => { g.beginPath(); g.moveTo(cx - bw / 2 - pad, y - pad); g.lineTo(cx + bw / 2 + pad, y - pad); g.lineTo(cx + bw / 2 - 10 + pad, y + bh + pad); g.lineTo(cx - bw / 2 + 10 - pad, y + bh + pad); g.closePath(); };
-    shape(0); g.fillStyle = 'rgba(4,14,34,.78)'; g.fill(); g.strokeStyle = `rgba(150,220,255,${0.5 + st.boostGlow * 0.4})`; g.lineWidth = 1.5; g.stroke();
-    g.save(); shape(-2); g.clip();
+    const g = bg, w = 300, h = 40; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    const cx = w / 2, y = 8, bh = 18, bw = 250;
     const brake = st.boostMode === 'brake';
+    // trapezoid housing (wider at top)
+    const shape = (pad = 0) => { g.beginPath(); g.moveTo(cx - bw / 2 - pad, y - pad); g.lineTo(cx + bw / 2 + pad, y - pad); g.lineTo(cx + bw / 2 - 12 + pad * 0.6, y + bh + pad); g.lineTo(cx - bw / 2 + 12 - pad * 0.6, y + bh + pad); g.closePath(); };
+    housing(g, shape, st.boostGlow, brake ? '255,120,90' : '150,220,255');
+    g.save(); shape(-1.5); g.clip();
+    const fx = cx - bw / 2, fy = y + 1.5, fh = bh - 3;
     const c0 = brake ? '#ff5a3c' : '#2f7dff', c1 = brake ? '#ffb347' : '#8ff4ff';
-    const grad = g.createLinearGradient(cx - bw / 2, 0, cx + bw / 2, 0); grad.addColorStop(0, c0); grad.addColorStop(1, c1);
-    g.fillStyle = grad; g.fillRect(cx - bw / 2, y, bw * v, bh);
-    const sheen = g.createLinearGradient(0, y, 0, y + bh); sheen.addColorStop(0, 'rgba(255,255,255,.5)'); sheen.addColorStop(0.4, 'rgba(255,255,255,.05)'); sheen.addColorStop(1, 'rgba(0,0,0,.3)');
-    g.fillStyle = sheen; g.fillRect(cx - bw / 2, y, bw * v, bh);
-    // energy chevrons scrolling while active
+    const grad = g.createLinearGradient(fx, 0, fx + bw, 0); grad.addColorStop(0, c0); grad.addColorStop(1, c1);
+    glassFill(g, fx, fy, bw * v, fh, grad);
     if (st.boostGlow > 0.02) {
       g.fillStyle = `rgba(255,255,255,${0.35 * st.boostGlow})`;
       const off = (st.t * 220) % 24;
-      for (let x = cx - bw / 2 - 24 + off; x < cx - bw / 2 + bw * v; x += 24) { g.beginPath(); g.moveTo(x, y); g.lineTo(x + 6, y); g.lineTo(x + 14, y + bh); g.lineTo(x + 8, y + bh); g.closePath(); g.fill(); }
+      for (let x = fx - 24 + off; x < fx + bw * v; x += 24) { g.beginPath(); g.moveTo(x, fy); g.lineTo(x + 6, fy); g.lineTo(x + 14, fy + fh); g.lineTo(x + 8, fy + fh); g.closePath(); g.fill(); }
     }
-    for (let i = 1; i < 8; i++) { const x = cx - bw / 2 + (bw / 8) * i; g.fillStyle = 'rgba(4,14,34,.8)'; g.fillRect(x - 0.75, y, 1.5, bh); }
+    for (let i = 1; i < 10; i++) { const x = fx + (bw / 10) * i; g.fillStyle = 'rgba(2,8,20,.9)'; g.fillRect(x - 1, fy, 2, fh); g.fillStyle = 'rgba(255,255,255,.14)'; g.fillRect(x + 1, fy, 0.7, fh); }
     g.restore();
-    // glow under bar
-    if (st.boostGlow > 0.02) { const gl = g.createLinearGradient(0, y + bh, 0, y + bh + 10); gl.addColorStop(0, brake ? `rgba(255,90,60,${0.45 * st.boostGlow})` : `rgba(90,180,255,${0.45 * st.boostGlow})`); gl.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gl; g.fillRect(cx - bw / 2 + 10, y + bh, bw * v - 10, 10); }
+    if (st.boostGlow > 0.02) { const gl = g.createLinearGradient(0, y + bh + 3, 0, y + bh + 14); gl.addColorStop(0, brake ? `rgba(255,90,60,${0.5 * st.boostGlow})` : `rgba(90,180,255,${0.5 * st.boostGlow})`); gl.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gl; g.fillRect(fx + 12, y + bh + 3, bw * v - 12, 11); }
     boostLbl.textContent = brake ? 'BRAKE' : 'BOOST';
     boostLbl.className = 'sw-label' + (st.boostMode === 'boost' ? ' hot' : brake ? ' brake' : '');
   }
@@ -291,15 +337,24 @@ export function createHud(ctx) {
       g.restore();
       if (acquired) {
         g.save(); g.globalAlpha = la; g.translate(lx, ly); g.rotate(-st.t * 2.4); g.strokeStyle = 'rgba(255,120,90,.8)'; g.lineWidth = 2; g.setLineDash([10, 8]); g.beginPath(); g.arc(0, 0, rad * 1.35, 0, Math.PI * 2); g.stroke(); g.setLineDash([]); g.restore();
-        g.save(); g.globalAlpha = la; g.fillStyle = '#ff4a3a'; g.shadowColor = 'rgba(255,60,40,.9)'; g.shadowBlur = 8;
-        g.font = `italic 700 15px "Liberation Sans Narrow","Arial Narrow",sans-serif`; g.textAlign = 'left';
-        const tx = lx + rad + 14, ty = ly - rad + 4;
-        g.fillText('LOCK', tx, ty);
-        g.fillStyle = '#ffd75e'; g.font = `italic 700 12px "Liberation Sans Narrow","Arial Narrow",sans-serif`;
-        g.fillText(`${Math.round(target ? target.dist : 0).toString().padStart(4, '0')} M`, tx, ty + 15);
+        // tag plate: leader line from the bracket corner to a dark plate that
+        // carries LOCK + range, kept clear of the rotating bracket & ring
+        const tagIn = clamp((st.lockAge - 0.55) / 0.25, 0, 1), te = easeOutBack(tagIn, 1.5);
+        const ox = rad * 1.35 + 10, oy = -rad * 1.35 - 6;
+        const px = lx + ox * te, py = ly + oy * te;
+        g.save(); g.globalAlpha = la * easeOutCubic(tagIn * 2);
+        g.strokeStyle = 'rgba(255,110,90,.9)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(lx + rad * 0.72, ly - rad * 0.72); g.lineTo(px, py); g.lineTo(px + 90, py); g.stroke();
+        const dist = `${Math.round(target ? target.dist : 0).toString().padStart(4, '0')}M`;
+        g.font = `italic 700 19px ${FONT}`; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+        const pw = 92, ph = 40;
+        g.fillStyle = 'rgba(6,10,24,.9)'; g.beginPath(); g.moveTo(px, py - ph); g.lineTo(px + pw, py - ph); g.lineTo(px + pw, py); g.lineTo(px, py); g.closePath(); g.fill();
+        g.fillStyle = '#ff4a3a'; g.fillRect(px, py - ph, 3, ph);
+        g.shadowColor = 'rgba(255,60,40,.7)'; g.shadowBlur = 6;
+        g.fillStyle = '#ff5a4a'; g.fillText('LOCK', px + 9, py - 21);
+        g.shadowBlur = 0; g.fillStyle = '#ffd75e'; g.font = `italic 700 16px ${FONT}`; g.fillText(dist, px + 9, py - 5);
+        // signal ticks on the right of the plate
+        g.fillStyle = 'rgba(255,255,255,.85)'; for (let i = 0; i < 3; i++) { const on = Math.floor(st.t * 6 + i) % 3 === 0; g.globalAlpha = la * (on ? 1 : 0.3); g.fillRect(px + pw - 16 + i * 5, py - 12 - i * 3, 3, 8 + i * 3); }
         g.restore();
-        // bar under
-        g.save(); g.globalAlpha = la; g.strokeStyle = 'rgba(255,74,58,.9)'; g.lineWidth = 2; g.beginPath(); g.moveTo(lx + rad + 12, ly - rad - 6); g.lineTo(lx + rad + 60, ly - rad - 6); g.stroke(); g.restore();
       }
     }
   }
@@ -356,7 +411,7 @@ export function createHud(ctx) {
     }
   }
 
-  const bannerBg = banner.querySelector('.sw-bg'), bannerLine = banner.querySelector('.sw-bl');
+  const bannerBg = banner.querySelector('.sw-bg'), bannerLines = [...banner.querySelectorAll('.sw-bl')];
   function animate(dt) {
     // module intro: slide in with overshoot, staggered
     if (st.introT >= 0) {
@@ -394,10 +449,12 @@ export function createHud(ctx) {
       const tin = b.age, tout = b.age - b.dur;
       const pin = clamp(tin / 0.35, 0, 1), pout = clamp(tout / 0.3, 0, 1);
       bannerBg.style.transform = `translate(-50%,-50%) scaleY(${easeOutBack(pin, 1.3) * (1 - easeInCubic(pout))})`;
-      bannerLine.style.transform = `scaleX(${easeOutCubic(pin) * (1 - easeInCubic(pout))})`;
+      bannerLines.forEach((l, i) => { const p = clamp((tin - i * 0.06) / 0.4, 0, 1); l.style.transform = `scaleX(${easeOutCubic(p) * (1 - easeInCubic(pout))})`; });
       drawBanner(b, tin, tout, pout);
       if (pout >= 1) { st.banner = null; bnG.setTransform(1, 0, 0, 1, 0, 0); bnG.clearRect(0, 0, bannerCv.width, bannerCv.height); }
     }
+    // comm signal-strength bars flicker while a transmission is live
+    if (st.commAge >= 0) { const lvl = st.say && !st.say.done ? 3 + Math.floor(Math.abs(Math.sin(st.t * 7)) * 2.99) : 5; sigBars.forEach((b, i) => { b.style.opacity = i < lvl ? '1' : '.22'; }); }
     // cursor blink (JS-driven)
     const cur = textEl.querySelector('.sw-cur'); if (cur) cur.style.opacity = Math.floor(st.t * 4) % 2 ? '0' : '1';
   }
