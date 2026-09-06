@@ -162,14 +162,18 @@ function rockMaterial(opts = {}) {
       void main(){
         vec3 N = normalize(vN);
         // strata bands along world height + coarse grime
-        float band = sin(vW.y * 0.55 + noise(vW.xz * 0.05) * 3.0) * 0.5 + 0.5;
-        float grime = noise(vW.xz * 0.18 + vW.y * 0.1);
-        vec3 alb = mix(colA, colB, 0.25 + smoothstep(0.35, 0.75, band) * 0.45 + grime * 0.3);
+        float band = sin(vW.y * 0.42 + noise(vW.xz * 0.05) * 3.0 + noise(vec2(vW.y * 0.3, vW.x * 0.02)) * 2.0) * 0.5 + 0.5;
+        float grime = noise(vW.xz * 0.18 + vW.y * 0.1) * 0.6 + noise(vW.xz * 0.6 + vW.y * 0.4) * 0.4;
+        vec3 alb = mix(colA, colB, 0.3 + smoothstep(0.3, 0.8, band) * 0.28 + grime * 0.3);
+        // dark vertical streaks (water runoff / cracks)
+        float crack = smoothstep(0.62, 0.72, noise(vec2(atan(vW.z - vW.x * 0.3, vW.x) * 6.0, vW.y * 0.08)));
+        alb *= 1.0 - crack * 0.3;
         // mossy cap on upward faces near the top
         float cap = smoothstep(0.45, 0.9, N.y) * smoothstep(0.55, 0.95, vH);
         alb = mix(alb, colTop, cap);
-        // waterline darkening
-        alb *= 0.7 + 0.3 * smoothstep(0.0, 6.0, vW.y);
+        // waterline: dark wet band with a pale salt/foam tide line just above it
+        alb *= 0.55 + 0.45 * smoothstep(0.0, 7.0, vW.y);
+        alb = mix(alb, vec3(0.92, 0.9, 0.86), smoothstep(1.2, 2.2, vW.y) * (1.0 - smoothstep(2.6, 4.0, vW.y)) * 0.35);
         float ndl = max(dot(N, sunDir), 0.0);
         // wrapped diffuse + sky/ground ambient so shadow sides stay readable and warm
         float wrap = max(dot(N, sunDir) * 0.6 + 0.4, 0.0);
@@ -211,20 +215,38 @@ function rockGeometry(rng, radialSeg = 14, heightSeg = 7) {
   return flat;
 }
 
-/** Sea stacks flanking the corridor, recycled as the ship passes. */
+function foamTexture() {
+  const S = 128, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(S / 2, S / 2, S * 0.18, S / 2, S / 2, S / 2);
+  gr.addColorStop(0, 'rgba(255,255,255,0.0)'); gr.addColorStop(0.18, 'rgba(255,255,255,0.85)'); gr.addColorStop(0.45, 'rgba(255,255,255,0.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, S, S);
+  // break the ring up with radial noise
+  let sd = 11; const rnd = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
+  g.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < 40; i++) { const a = rnd() * 6.283, r = S * (0.2 + rnd() * 0.3); g.beginPath(); g.arc(S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r, 4 + rnd() * 9, 0, 6.283); g.fillStyle = `rgba(0,0,0,${0.3 + rnd() * 0.5})`; g.fill(); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+
+/** Sea stacks flanking the corridor, recycled as the ship passes. Three rock variants + foam collars. */
 export class Pillars {
-  constructor(rng, count = 64) {
+  constructor(rng, count = 66) {
     this.rng = rng;
     this.count = count;
-    this.geo = rockGeometry(rng);
-    this.mat = rockMaterial({ a: 0xa87858, b: 0xe8c09a, top: 0x7aa654 });
-    this.mesh = new THREE.InstancedMesh(this.geo, this.mat, count);
-    this.mesh.frustumCulled = false;
+    this.mesh = new THREE.Group();
+    this.mat = rockMaterial({ a: 0x9a6a52, b: 0xdcb08c, top: 0x6f9a4c });
+    this.geos = [rockGeometry(rng, 14, 7), rockGeometry(rng, 12, 8), rockGeometry(rng, 16, 6)];
+    const per = Math.ceil(count / this.geos.length);
+    this.insts = this.geos.map((g) => { const m = new THREE.InstancedMesh(g, this.mat, per); m.frustumCulled = false; this.mesh.add(m); return m; });
+    this.foamTex = foamTexture();
+    this.foamMat = new THREE.MeshBasicMaterial({ map: this.foamTex, transparent: true, opacity: 0.8, depthWrite: false, fog: true, color: 0xfff4e8 });
+    const foamGeo = new THREE.PlaneGeometry(1, 1); foamGeo.rotateX(-Math.PI / 2);
+    this.foam = new THREE.InstancedMesh(foamGeo, this.foamMat, count); this.foam.frustumCulled = false; this.foam.renderOrder = 2; this.mesh.add(this.foam);
     this.items = [];
     this.M = new THREE.Matrix4(); this.q = new THREE.Quaternion(); this.s = new THREE.Vector3(); this.p = new THREE.Vector3();
     this.up = new THREE.Vector3(0, 1, 0);
     for (let i = 0; i < count; i++) {
-      const it = { x: 0, z: -i * 26 - 60, h: 0, w: 0, rot: 0, tilt: 0 };
+      const it = { x: 0, z: -i * 25 - 60, h: 0, w: 0, rot: 0, tilt: 0, v: i % this.geos.length, k: Math.floor(i / this.geos.length) };
       this.roll(it, it.z);
       this.items.push(it);
     }
@@ -237,25 +259,34 @@ export class Pillars {
     it.x = side * (near ? r.range(30, 48) : r.range(48, 150));
     it.z = z;
     it.h = near ? r.range(20, 45) : r.range(18, 95);
-    it.w = it.h * r.range(0.18, 0.36);
+    it.w = it.h * r.range(0.16, 0.4);
+    it.sq = r.range(0.75, 1.3);
     it.rot = r.range(0, Math.PI * 2);
     it.tilt = r.range(-0.08, 0.08);
   }
-  update(shipZ) {
+  update(shipZ, t = 0) {
     let minZ = Infinity;
     for (const it of this.items) minZ = Math.min(minZ, it.z);
     for (let i = 0; i < this.items.length; i++) {
       const it = this.items[i];
-      if (it.z > shipZ + 80) { this.roll(it, minZ - 26); minZ = it.z; }
+      if (it.z > shipZ + 80) { this.roll(it, minZ - 25); minZ = it.z; }
       this.q.setFromAxisAngle(this.up, it.rot);
-      this.s.set(it.w, it.h, it.w);
+      this.s.set(it.w * it.sq, it.h, it.w / it.sq);
       this.p.set(it.x, -1.5, it.z);
       this.M.compose(this.p, this.q, this.s);
-      this.mesh.setMatrixAt(i, this.M);
+      this.insts[it.v].setMatrixAt(it.k, this.M);
+      // foam collar breathing with the swell
+      const fw = it.w * (2.6 + 0.25 * Math.sin(t * 1.3 + it.rot * 3.0));
+      this.q.setFromAxisAngle(this.up, it.rot + t * 0.02);
+      this.s.set(fw * it.sq, 1, fw / it.sq);
+      this.p.set(it.x, 0.35, it.z);
+      this.M.compose(this.p, this.q, this.s);
+      this.foam.setMatrixAt(i, this.M);
     }
-    this.mesh.instanceMatrix.needsUpdate = true;
+    for (const m of this.insts) m.instanceMatrix.needsUpdate = true;
+    this.foam.instanceMatrix.needsUpdate = true;
   }
-  dispose() { this.geo.dispose(); this.mat.dispose(); }
+  dispose() { for (const g of this.geos) g.dispose(); this.mat.dispose(); this.foamTex.dispose(); this.foamMat.dispose(); }
 }
 
 /** Far island silhouettes in haze: ring of big rocks that parallax slowly. */
