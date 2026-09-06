@@ -16,11 +16,27 @@ export const ZONES = {
 };
 const KEYS = Object.keys(ZONES.plains);
 
+/** Default zone timeline: a long plains opening (~13 s at 215 u/s), then city, canyon, ocean, and round again. */
+export const DEFAULT_SCHEDULE = [
+  { start: 0, name: 'plains' }, { start: 2800, name: 'city' }, { start: 5400, name: 'canyon' },
+  { start: 7600, name: 'ocean' }, { start: 9600, name: 'plains' }, { start: 11400, name: 'city' },
+];
+
 export class ZoneSchedule {
-  constructor() {
-    // absolute distance (positive, along travel) where each zone starts
-    this.list = [{ start: -1e9, name: 'plains' }, { start: 1350, name: 'city' }, { start: 3500, name: 'canyon' }, { start: 5500, name: 'ocean' }, { start: 7400, name: 'plains' }, { start: 9000, name: 'city' }];
-    this.blend = 420;
+  /**
+   * @param {object} [opts]
+   * @param {{start:number,name:string}[]} [opts.list]  zone starts in travel distance (units)
+   * @param {number} [opts.offset]  shifts every start (positive = zones arrive later)
+   * @param {number} [opts.blend]   cross-fade length between zones
+   */
+  constructor(opts = {}) {
+    const src = (opts.list ?? DEFAULT_SCHEDULE).map((z) => ({ start: z.start + (opts.offset ?? 0), name: z.name }))
+      .filter((z) => ZONES[z.name]).sort((a, b) => a.start - b.start);
+    // absolute distance (positive, along travel) where each zone starts; the first zone extends backwards forever
+    if (!src.length) src.push({ start: 0, name: 'plains' });
+    src[0] = { start: -1e9, name: src[0].name };
+    this.list = src;
+    this.blend = opts.blend ?? 420;
   }
   /** Force `name` to begin just beyond the horizon. */
   spawn(name, dist, ahead = CHUNK * (NUM_CHUNKS - 1)) {
@@ -76,24 +92,32 @@ export function heightAt(x, d, p) {
     const plateau = 18 + 3 * vnoise(x * 0.01, d * 0.01);
     h = h + (plateau - h) * p.urban;
   }
-  // river channel
+  // river channel (widens into a broad canal through the city so the towers frame the rail)
+  const rw = RIVER_W * (1 + 0.9 * p.urban);
   const dx = Math.abs(x - riverX(d));
-  const mask = 1 - smooth((dx - RIVER_W * 0.3) / (RIVER_W * 1.7));
+  const mask = 1 - smooth((dx - rw * 0.3) / (rw * 1.7));
   const bed = -18 + 6 * vnoise(x * 0.02, d * 0.02);
   h = h + (bed - h) * mask;
-  // shallow bank shelf so the shoreline reads
-  const bank = smooth((dx - RIVER_W) / 70) * (1 - smooth((dx - RIVER_W) / 150));
-  h -= bank * 4;
+  // shallow bank shelf so the shoreline reads; in the city it becomes a stepped embankment
+  const bank = smooth((dx - rw) / 70) * (1 - smooth((dx - rw) / 150));
+  h -= bank * 4 * (1 - p.urban);
+  if (p.urban > 0.001) {
+    const quay = smooth((dx - rw * 1.05) / 12) * p.urban;
+    h = h + (Math.max(h, 12) - h) * quay;   // quay wall rises straight out of the water
+  }
   return h;
 }
+
+/** Half-width of the clear flight corridor around the rail (props stay outside it). */
+export const CORRIDOR = 215;
 
 // ---------------------------------------------------------------- colours (linear)
 const C = (hex) => new THREE.Color(hex).convertSRGBToLinear();
 const COL = {
-  grassA: C(0x4a9c38), grassB: C(0x8ecb4e), grassC: C(0x2d7a44), grassDry: C(0xb8c25a),
+  grassA: C(0x46a03a), grassB: C(0x93cf52), grassC: C(0x2a7a48), grassDry: C(0xc2c964), grassMeadow: C(0x6fbf3e),
   dirt: C(0x8a6c4c), rock: C(0x6f6a72), rockB: C(0x9a9088), cliff: C(0x4c4a56),
   sand: C(0xe2d3a4), snow: C(0xf2f6fc), bed: C(0x3f7f66), deep: C(0x1c4a52),
-  urban: C(0x8d97a6), urbanB: C(0xb7c1cf), road: C(0x3a414d), roadLine: C(0xd8d2a0), plaza: C(0x6f8fa8),
+  urban: C(0x8d97a6), urbanB: C(0xb7c1cf), road: C(0x3a414d), roadLine: C(0xd8d2a0), plaza: C(0x6f8fa8), quay: C(0xa9b3bd), quayDark: C(0x5d6873),
   canyonRock: C(0xb5714a), canyonRockB: C(0xe0a76e), canyonDark: C(0x7a4630),
 };
 const tmp = new THREE.Color(), tmp2 = new THREE.Color();
@@ -137,6 +161,22 @@ export function createTerrainMaterial() {
           float k = 1.4 * (1.0 - smoothstep(150.0, 900.0, dist));
           vec3 pw = vec3(-(hx - h0), 0.0, -(hz - h0)) * k;
           normal = normalize(normal + mat3(viewMatrix) * pw);
+        }`)
+      .replace('#include <lights_fragment_begin>', /* glsl */ `
+        #include <lights_fragment_begin>
+        {
+          // Wrap / sky-bounce lighting: the low sun would otherwise leave every back-slope
+          // as a hard black terminator. Soft ground-bounce (warm) below, sky (cool) above.
+          vec3 sunV = normalize(mat3(viewMatrix) * uSunDir);          // sun in view space (normal is view space)
+          float upV = dot(normal, mat3(viewMatrix) * vec3(0.0, 1.0, 0.0));
+          float ndl = dot(normal, sunV);
+          float wrap = smoothstep(-0.9, 0.5, ndl) * (1.0 - smoothstep(0.0, 0.6, ndl));
+          reflectedLight.indirectDiffuse += diffuseColor.rgb * (vec3(0.72, 0.66, 0.50) * 0.34 * wrap + vec3(0.40, 0.55, 0.85) * 0.12 * (0.5 + 0.5 * upV));
+          // faint sheen on grass at grazing angles (dew / blade specular) so hills have volume
+          vec3 Vv = normalize(vViewPosition);
+          vec3 Hh = normalize(Vv + sunV);
+          float sheen = pow(max(dot(normal, Hh), 0.0), 18.0) * pow(1.0 - max(dot(normal, Vv), 0.0), 2.0);
+          reflectedLight.directSpecular += vec3(1.0, 0.92, 0.7) * sheen * 0.18;
         }`)
       .replace('#include <dithering_fragment>', /* glsl */ `
         #include <dithering_fragment>
@@ -197,8 +237,11 @@ export class TerrainChunk {
         const nv = fbm(x * 0.012 + 40, d * 0.012, 3);
         const nv2 = vnoise(x * 0.004 + 7, d * 0.004);
         tmp.copy(COL.grassA).lerp(COL.grassB, 0.5 + 0.5 * nv);
+        tmp.lerp(COL.grassMeadow, smooth((vnoise(x * 0.0025 + 21, d * 0.0025) + 0.1) / 0.5) * 0.5);
         tmp.lerp(COL.grassDry, smooth((nv2 - 0.25) / 0.5) * 0.55);
         tmp.lerp(COL.grassC, smooth((h - 45) / 60) * 0.6);
+        // valley floors slightly cooler / lusher than the sunlit crests
+        tmp.lerp(COL.grassC, smooth((14 - h) / 10) * 0.25);
         // canyon uses warm banded rock
         if (p.ridged > 0.01) {
           const band = 0.5 + 0.5 * Math.sin(h * 0.35 + 2.0 * vnoise(x * 0.01, d * 0.01));
@@ -224,7 +267,12 @@ export class TerrainChunk {
           tmp2.lerp(COL.road, grid);
           tmp2.lerp(COL.roadLine, line * 0.6);
           const dxr = Math.abs(x - rx);
-          tmp.lerp(tmp2, p.urban * smooth((dxr - 100) / 40));
+          const rwu = 58 * (1 + 0.9 * p.urban);
+          tmp.lerp(tmp2, p.urban * smooth((dxr - rwu * 1.15) / 30));
+          // concrete quay wall + promenade lip along the canal (no sand / dirt in the city)
+          const wall = smooth((dxr - rwu * 0.85) / 12) * (1 - smooth((dxr - rwu * 1.15) / 30));
+          tmp2.copy(COL.quay).lerp(COL.quayDark, smooth((slope - 0.3) / 0.3) * 0.7);
+          tmp.lerp(tmp2, p.urban * wall);
         }
         // shore sand + river bed
         tmp.lerp(COL.sand, smooth((6 - h) / 5) * (1 - smooth((-2 - h) / 6)));

@@ -34,18 +34,22 @@ export function createMotes(rng, count = 220) {
   mesh.frustumCulled = false; mesh.renderOrder = 6;
   const items = [];
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  // biased below the camera: streaks against the sky read as scratches, against the ground they read as speed
   const BOX = { x: 220, y: 120, z: 330 };
-  for (let i = 0; i < count; i++) items.push({ x: rng.range(-BOX.x, BOX.x), y: rng.range(-BOX.y, BOX.y), z: -rng.range(0, BOX.z), s: rng.range(0.25, 0.7) });
+  const ry = () => rng.range(-BOX.y, BOX.y * 0.35);
+  for (let i = 0; i < count; i++) items.push({ x: rng.range(-BOX.x, BOX.x), y: ry(), z: -rng.range(0, BOX.z), s: rng.range(0.2, 0.5) });
   return {
     mesh, uniforms,
     /** cam = camera world position; speed = world units/s */
     update(dt, speed, cam) {
-      uniforms.uStretch.value = 6 + speed * 0.06;
-      uniforms.uAlpha.value = 0.25 + Math.min(1, speed / 360) * 0.5;
+      // only really visible when boosting: at cruise they were reading as white scratches on the sky
+      const boost = Math.min(1, Math.max(0, (speed - 230) / 140));
+      uniforms.uStretch.value = 4 + speed * 0.04;
+      uniforms.uAlpha.value = 0.05 + boost * 0.5;
       for (let i = 0; i < count; i++) {
         const it = items[i];
         it.z += speed * dt;
-        if (it.z > 20) { it.z -= BOX.z; it.x = rng.range(-BOX.x, BOX.x); it.y = rng.range(-BOX.y, BOX.y); }
+        if (it.z > 20) { it.z -= BOX.z; it.x = rng.range(-BOX.x, BOX.x); it.y = ry(); }
         v.set(cam.x + it.x, cam.y + it.y, cam.z + it.z);
         m.compose(v, q, sc.set(it.s, it.s, it.s));
         mesh.setMatrixAt(i, m);

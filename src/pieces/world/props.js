@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { vnoise } from './noise.js';
-import { CHUNK, heightAt, riverX } from './terrain.js';
+import { CHUNK, CORRIDOR, heightAt, riverX } from './terrain.js';
 import { patchAtmosphere, skyUniforms, noiseTexture } from './sky.js';
 
 const _m = new THREE.Matrix4(), _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _e = new THREE.Euler();
@@ -86,14 +86,19 @@ function createBuildingMaterial(shared) {
           if (planar) fc = abs(n.x) > 0.5 ? vec2(vLocal.z, vLocal.y) : vec2(vLocal.x, vLocal.y);
           else fc = vec2(atan(vLocal.z, vLocal.x) * length(vLocal.xz), vLocal.y);
           float s1 = fract(vSeed * 7.13), s2 = fract(vSeed * 3.71), s3 = fract(vSeed * 11.9);
-          vec2 cellSize = vec2(3.0 + 3.0 * s1, 3.6 + 1.2 * s2);
+          vec2 cellSize = vec2(1.6 + 1.4 * s1, 3.2 + 0.6 * s2);
           vec2 cf = fc / cellSize;
           vec2 cell = floor(cf), f = fract(cf);
           // window rectangle inside the cell; style: punched windows vs ribbon glass vs curtain wall
           float style = s3;
-          float wx = style < 0.35 ? 0.58 : (style < 0.7 ? 0.92 : 0.98);
-          float wy = style < 0.35 ? 0.55 : (style < 0.7 ? 0.52 : 0.86);
-          float win = step(abs(f.x - 0.5), wx * 0.5) * step(abs(f.y - 0.55), wy * 0.5);
+          float wx = style < 0.25 ? 0.66 : (style < 0.55 ? 0.90 : 0.96);
+          float wy = style < 0.25 ? 0.60 : (style < 0.55 ? 0.58 : 0.80);
+          // anti-aliased window edges (fwidth) so distant facades don't sparkle
+          vec2 aa = fwidth(cf) * 0.75 + 1e-4;
+          float win = (1.0 - smoothstep(wx * 0.5 - aa.x, wx * 0.5 + aa.x, abs(f.x - 0.5))) * (1.0 - smoothstep(wy * 0.5 - aa.y, wy * 0.5 + aa.y, abs(f.y - 0.55)));
+          // far away the grid dissolves into a mean glass coverage (no moire)
+          float lod = smoothstep(0.35, 0.9, max(aa.x, aa.y) * 2.0);
+          win = mix(win, wx * wy, lod);
           // podium (ground floors) and roof plate are not glazed
           float podium = 1.0 - smoothstep(4.0, 7.0, vLocal.y);
           float crown = smoothstep(vScale.y - 2.5, vScale.y - 1.0, vLocal.y);
@@ -111,8 +116,13 @@ function createBuildingMaterial(shared) {
           facade = mix(facade, facade * 0.9 + vAccent * 0.25, fin);
           facade = mix(facade, vAccent, band);
           // glass: tinted dark blue-green, lit windows glow warm/cool
-          vec3 glass = mix(vec3(0.06, 0.10, 0.15), vec3(0.10, 0.20, 0.26), s2);
-          float lit = step(0.82 - 0.12 * s3, bhash(cell + 17.0));
+          vec3 glass = mix(vec3(0.07, 0.12, 0.17), vec3(0.12, 0.22, 0.27), s2);
+          // curtain-wall towers: glass carries a faint tint of the facade colour (bronze / teal / clear)
+          glass = mix(glass, glass * (0.6 + 0.8 * facade), 0.35);
+          // spandrel strip between floors reads slightly lighter (floor slab)
+          float slab = 1.0 - smoothstep(0.03, 0.08, abs(f.y - 0.06));
+          glass = mix(glass, glass * 1.6 + 0.04, slab * step(0.55, style) * (1.0 - lod));
+          float lit = step(0.94 - 0.05 * s3, bhash(cell + 17.0)) * (1.0 - lod);   // daytime: only a few windows lit
           // lit windows fade with distance so the skyline doesn't sparkle into noise
           lit *= 1.0 - smoothstep(500.0, 1500.0, length(vViewPosition));
           float warm = step(0.35, bhash(cell + 91.0));
@@ -131,14 +141,22 @@ function createBuildingMaterial(shared) {
         }`)
       .replace('#include <roughnessmap_fragment>', /* glsl */ `
         #include <roughnessmap_fragment>
-        roughnessFactor = mix(roughnessFactor, 0.28, gWin);
+        roughnessFactor = mix(roughnessFactor, 0.18, gWin);
         roughnessFactor = mix(roughnessFactor, 0.85, gRoof);`)
       .replace('#include <metalnessmap_fragment>', /* glsl */ `
         #include <metalnessmap_fragment>
-        metalnessFactor = mix(metalnessFactor, 0.55, gWin);`)
+        metalnessFactor = mix(metalnessFactor, 0.7, gWin);`)
       .replace('#include <emissivemap_fragment>', /* glsl */ `
         #include <emissivemap_fragment>
-        totalEmissiveRadiance += gGlow * 0.7;`);
+        totalEmissiveRadiance += gGlow * 0.7;
+        {
+          // glass mirrors the sky: fresnel-weighted analytic sky reflection so the skyline reads glassy
+          vec3 wN = inverseTransformDirection(normal, viewMatrix);
+          vec3 wV = normalize(vWorldPos - cameraPosition);
+          vec3 wR = reflect(wV, wN);
+          float fr = 0.18 + 0.82 * pow(1.0 - max(dot(-wV, wN), 0.0), 4.0);
+          totalEmissiveRadiance += skyColor(normalize(wR)) * gWin * fr * 0.45;
+        }`);
   };
   patchAtmosphere(mat, shared);
   mat.customProgramCacheKey = () => 'building-atmos';
@@ -252,11 +270,13 @@ function cypressGeometry() {
   return paintTree(g, trunk.attributes.position.count, 0x1d5c3d, 0x4f9a55, 1.4);
 }
 function archGeometry() {
-  const arc = new THREE.TorusGeometry(1, 0.075, 10, 40, Math.PI);
-  const pillarL = new THREE.CylinderGeometry(0.09, 0.12, 0.6, 10); pillarL.translate(-1, -0.3, 0);
+  const arc = new THREE.TorusGeometry(1, 0.05, 10, 56, Math.PI);
+  // pylons: the ring stands on two flared piers rising out of the water
+  const pillarL = new THREE.CylinderGeometry(0.07, 0.12, 0.6, 10); pillarL.translate(-1, -0.28, 0);
   const pillarR = pillarL.clone(); pillarR.translate(2, 0, 0);
-  const beam = new THREE.BoxGeometry(2.3, 0.05, 0.25); beam.translate(0, 0.02, 0);
-  return mergeGeometries([arc, pillarL, pillarR, beam], false);
+  const footL = new THREE.CylinderGeometry(0.16, 0.2, 0.06, 12); footL.translate(-1, 0.0, 0);
+  const footR = footL.clone(); footR.translate(2, 0, 0);
+  return mergeGeometries([arc, pillarL, pillarR, footL, footR], false);
 }
 
 // ---------------------------------------------------------------- props manager
@@ -335,7 +355,7 @@ export class Props {
       for (let k = 0; k < n; k++) {
         const ang = rng.range(0, 6.28), rad = Math.sqrt(rng.next()) * cr;
         const x = cx + Math.cos(ang) * rad, d = cd + Math.sin(ang) * rad;
-        if (Math.abs(x - riverX(d)) < 70) continue;
+        if (Math.abs(x - riverX(d)) < 90) continue;
         const h = H(x, d);
         if (h < 4 || h > 95) continue;
         const slope = Math.abs(H(x + 3, d) - h) + Math.abs(H(x, d + 3) - h);
@@ -362,10 +382,10 @@ export class Props {
     const nSp = Math.floor(9 * p.spires);
     for (let k = 0; k < nSp; k++) {
       const x = rng.range(-1000, 1000), d = d0 + rng.range(0, CHUNK);
-      if (Math.abs(x - riverX(d)) < 110) continue;
+      const r = rng.range(12, 34), hh = rng.range(50, 170) * (p.ridged > 0.5 ? 1.3 : 1);
+      if (Math.abs(x - riverX(d)) < CORRIDOR * 0.8 + r) continue;   // never inside the flight corridor
       const h = H(x, d);
       if (h < 2) continue;
-      const r = rng.range(12, 34), hh = rng.range(50, 170) * (p.ridged > 0.5 ? 1.3 : 1);
       this.tint.setHSL(0.07 + rng.range(-0.02, 0.02), 0.2, rng.range(0.8, 0.96));
       claim(this.spires, x, h - 6, -d, rng.range(0, 6.28), r, hh, r * rng.range(0.7, 1.2), this.tint, rng.range(-0.06, 0.06), rng.range(-0.06, 0.06));
     }
@@ -374,10 +394,12 @@ export class Props {
       for (let gz = 20; gz < CHUNK; gz += 60) for (let gx = -900; gx <= 900; gx += 60) {
         if (rng.next() > p.towers * 0.92) continue;
         const d = d0 + gz + rng.range(-6, 6), x = gx + rng.range(-6, 6);
-        const dr = Math.abs(x - riverX(d));
-        if (dr < 120) continue;
+        // the rail follows the river: keep every lot (plus its widest footprint) outside the corridor
+        const dr = Math.min(Math.abs(x - riverX(d)), Math.abs(x - riverX(d + 40)), Math.abs(x - riverX(d - 40)));
+        if (dr < CORRIDOR) continue;
         const h = H(x, d);
         if (h < 6) continue;
+        const frontRow = dr < CORRIDOR + 90;    // first row along the canal: denser, taller — a real canyon wall
         const core = 1 - Math.min(1, Math.abs(x) / 700);        // 1 downtown .. 0 edge
         const seed = rng.next() * 100;
         // palette: Corneria whites/greys, sandstone, teal glass, with accent stripes in blue / orange / red
@@ -391,12 +413,12 @@ export class Props {
         else if (ap < 0.7) this.accent.setHSL(0.07, 0.95, 0.55);   // orange
         else if (ap < 0.85) this.accent.setHSL(0.0, 0.8, 0.5);     // red
         else this.accent.setHSL(0.48, 0.7, 0.6);                   // teal
-        const tall = rng.next() < 0.3 + 0.35 * core;
+        const tall = rng.next() < 0.3 + 0.35 * core + (frontRow ? 0.3 : 0);
         if (tall) {
           const type = Math.floor(rng.next() * this.buildings.length);
           const pool = this.buildings[type];
           const w = rng.range(20, 34) * (type === 5 ? 1.5 : 1);
-          const ht = rng.range(50, 110) + core * rng.range(40, 150);
+          const ht = rng.range(50, 110) + core * rng.range(40, 150) + (frontRow ? 30 : 0);
           const id = claim(pool, x, h - 3, -d, Math.round(rng.range(0, 3)) * Math.PI / 2, w, ht, w * rng.range(0.8, 1.2), this.tint);
           if (id >= 0) pool.setExtras(id, seed, this.accent);
           if (ht > 130 && type !== 3) claim(this.beacons, x, h - 1 + ht * (type === 0 ? 1.4 : 1.1), -d, 0, 2.2, 2.2, 2.2, null);
@@ -411,14 +433,15 @@ export class Props {
         }
       }
     }
-    // arches over the river
-    if (i % 2 === 0 && rng.next() < p.arches) {
+    // ring gates over the river (spaced out: they are a landmark, not a fence)
+    if (i % 3 === 0 && rng.next() < p.arches * 0.8) {
       const d = d0 + CHUNK / 2;
       const xr = riverX(d);
       const dir = Math.atan2(riverX(d + 10) - riverX(d - 10), 20);
-      const R = rng.range(70, 110);
+      // ring gates are wide enough that the whole rail envelope (x +-110, y 10..130) passes through the opening
+      const R = rng.range(150, 185);
       this.tint.setHSL(0.58, 0.2, 0.92);
-      claim(this.arches, xr, -6, -d, dir, R, R, R, this.tint);
+      claim(this.arches, xr, -4, -d, dir, R, R, R, this.tint);
     }
     this.chunkClaims.set(i, claims);
   }
