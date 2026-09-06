@@ -10,13 +10,8 @@ export class Overlay {
     this.root = el('div', `position:absolute;inset:0;overflow:hidden;pointer-events:none;`);
     ui.appendChild(this.root);
 
-    // colour grade + vignette (subtle warm/cool split, soft dark edges)
-    // (plain alpha blending only: blend modes / CSS filters are extremely slow in software compositing)
-    this.vignette = el('div', `position:absolute;inset:0;background:radial-gradient(ellipse at 50% 48%, rgba(10,16,40,0) 50%, rgba(6,10,28,.45) 82%, rgba(2,4,12,.8) 100%);`);
-    this.root.appendChild(this.vignette);
-    // faint grain for film feel
-    this.grain = el('div', `position:absolute;inset:-4%;opacity:.045;background-image:url(${grainDataUrl()});background-size:180px 180px;`);
-    this.root.appendChild(this.grain);
+    // (vignette + grain live in the lookdev grade pass; full-screen DOM layers are
+    // expensive in software compositing so we keep the overlay to bars/text only)
 
     // letterbox
     this.barTop = el('div', `position:absolute;left:0;right:0;top:0;height:12%;background:#000;transform:translateY(-100%);`);
@@ -145,7 +140,6 @@ export class Overlay {
   update(dt) {
     this.time += dt;
     this._tickLetter(dt);
-    this.grain.style.transform = `translate(${(Math.sin(this.time * 31) * 3).toFixed(1)}%,${(Math.cos(this.time * 27) * 3).toFixed(1)}%)`;
   }
 
   dispose() { this.root.remove(); }
