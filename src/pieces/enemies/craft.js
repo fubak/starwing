@@ -58,31 +58,36 @@ export function glowSpriteTexture() {
 
 // ---------------------------------------------------------------- materials
 export const PALETTE = {
-  hull: 0x2a4a33,      // dark venom green
+  hull: 0x2f5a3a,      // venom green
   hullDark: 0x1a2d22,
-  accent: 0x4b1e78,    // imperial purple
-  trim: 0x2c3038,      // gunmetal
-  glow: 0xc45cff,      // violet plasma
+  accent: 0x5a2290,    // imperial purple
+  trim: 0x3a3f4a,      // gunmetal
+  glow: 0xd06cff,      // violet plasma
   eye: 0xb6ff3c,       // acid green
 };
+
+/** World scale of every craft (baked into geometry) so they read at rail-shooter distances. */
+export const CRAFT_SCALE = 1.75;
 
 export function makeCraftMaterials(glowColor = PALETTE.glow) {
   const tex = panelTexture();
   const hull = new THREE.MeshPhysicalMaterial({
-    color: PALETTE.hull, metalness: 0.55, roughness: 0.5, roughnessMap: tex,
-    clearcoat: 0.55, clearcoatRoughness: 0.25, envMapIntensity: 1.1,
+    color: PALETTE.hull, metalness: 0.45, roughness: 0.42, roughnessMap: tex,
+    clearcoat: 0.7, clearcoatRoughness: 0.2, envMapIntensity: 1.4,
+    sheen: 0.6, sheenColor: new THREE.Color(0x7a3cff), sheenRoughness: 0.5,
   });
   const accent = new THREE.MeshPhysicalMaterial({
-    color: PALETTE.accent, metalness: 0.65, roughness: 0.32, roughnessMap: tex,
-    clearcoat: 0.9, clearcoatRoughness: 0.12, envMapIntensity: 1.3,
+    color: PALETTE.accent, metalness: 0.6, roughness: 0.28, roughnessMap: tex,
+    clearcoat: 1.0, clearcoatRoughness: 0.1, envMapIntensity: 1.6,
+    iridescence: 0.6, iridescenceIOR: 1.6,
   });
-  const trim = new THREE.MeshStandardMaterial({ color: PALETTE.trim, metalness: 0.95, roughness: 0.38, envMapIntensity: 1.2 });
+  const trim = new THREE.MeshStandardMaterial({ color: PALETTE.trim, metalness: 0.95, roughness: 0.32, envMapIntensity: 1.4 });
   const glass = new THREE.MeshPhysicalMaterial({
     color: 0x0c0616, metalness: 0.9, roughness: 0.06, clearcoat: 1, clearcoatRoughness: 0.03,
     emissive: new THREE.Color(glowColor).multiplyScalar(0.12), envMapIntensity: 2,
   });
   const glow = new THREE.MeshStandardMaterial({
-    color: 0x000000, emissive: glowColor, emissiveIntensity: 5, roughness: 1, metalness: 0,
+    color: 0x000000, emissive: glowColor, emissiveIntensity: 7, roughness: 1, metalness: 0, toneMapped: false,
   });
   return { hull, accent, trim, glass, glow };
 }
@@ -115,6 +120,7 @@ class Kit {
       if (!this.parts[slot].length) continue;
       const geoms = this.parts[slot].map((g) => g.index ? g.toNonIndexed() : g);
       const merged = mergeGeometries(geoms, false);
+      merged.scale(CRAFT_SCALE, CRAFT_SCALE, CRAFT_SCALE);
       geoms.forEach((g) => g.dispose());
       const mesh = new THREE.Mesh(merged, mats[slot]);
       mesh.userData.slot = slot;
@@ -127,11 +133,11 @@ class Kit {
     for (const e of this.engines) {
       const sm = new THREE.SpriteMaterial({ map: tex, color: mats.glow.emissive, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.9 });
       const sp = new THREE.Sprite(sm);
-      sp.position.copy(e.p); sp.scale.setScalar(e.size * 3.2);
-      sp.userData.slot = 'engineGlow'; sp.userData.baseScale = e.size * 3.2;
+      sp.position.copy(e.p).multiplyScalar(CRAFT_SCALE); sp.scale.setScalar(e.size * 3.2 * CRAFT_SCALE);
+      sp.userData.slot = 'engineGlow'; sp.userData.baseScale = e.size * 3.2 * CRAFT_SCALE;
       group.add(sp);
     }
-    group.userData.engines = this.engines.map((e) => e.p);
+    group.userData.engines = this.engines.map((e) => e.p.clone().multiplyScalar(CRAFT_SCALE));
     group.userData.glowMeshes = glowMeshes;
     return group;
   }
@@ -242,6 +248,7 @@ export function buildEnemyCraft(kind = 'vulture', opts = {}) {
   const info = fn(kit);
   const group = kit.build(mats);
   Object.assign(group.userData, info, { kind, mats, glowColor, flashMats: [mats.hull, mats.accent, mats.trim] });
+  group.userData.radius = info.radius * CRAFT_SCALE;
   return group;
 }
 

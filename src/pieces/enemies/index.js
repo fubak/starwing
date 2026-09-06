@@ -20,8 +20,8 @@ export async function create(ctx) {
   // ---- camera: stationary gun-camera, slightly above the deck, looking down-range
   const camBase = new THREE.Vector3(0, 6, 0);
   camera.position.copy(camBase);
-  camera.fov = 58; camera.near = 0.5; camera.far = 6000; camera.updateProjectionMatrix();
-  camera.lookAt(0, 4, -100);
+  camera.fov = 52; camera.near = 0.5; camera.far = 8000; camera.updateProjectionMatrix();
+  camera.lookAt(0, 9, -100);
   const camQ0 = camera.quaternion.clone();
 
   const env = createEnvironment(ctx);
@@ -33,14 +33,15 @@ export async function create(ctx) {
 
   // ---- state
   const aim = new THREE.Vector2(0, 0);         // smoothed reticle in NDC
-  let fireCd = 0, side = 1, shake = 0, flash = 0, t = 0, waveTimer = 0, waveIx = 0, score = 0;
+  let fireCd = 0, side = 1, shake = 0, flash = 0, t = 0, waveTimer = 2.8, waveIx = 0, score = 0;
   const _v = new THREE.Vector3(), _w = new THREE.Vector3();
 
   // wave choreography: kicks off immediately so the first frames are busy
   const OPENING = [
-    { kind: 'v', craft: 'vulture', path: 'strafe', mirror: 1, startDist: 30, speed: 95 },
-    { kind: 'snake', craft: 'hornet', path: 'swoop', mirror: -1, startDist: 230, speed: 90 },
-    { kind: 'circle', craft: 'mantis', path: 'cross', mirror: 1, startDist: 150, speed: 70 },
+    { kind: 'v', craft: 'vulture', path: 'strafe', mirror: 1, startDist: 30, speed: 95 },        // roars past overhead from behind
+    { kind: 'snake', craft: 'hornet', path: 'swoop', mirror: -1, startDist: 240, speed: 90 },    // swoops in from the left at ~t=1.5
+    { kind: 'circle', craft: 'mantis', path: 'cross', mirror: 1, startDist: 250, speed: 70 },    // heavy ring crossing at ~t=2
+    { kind: 'line', craft: 'vulture', path: 'dive', mirror: -1, startDist: 120, speed: 100 },   // dive-bombers from above at ~t=3
   ];
   const ROTATION = [
     { kind: 'v', path: 'dive' }, { kind: 'line', path: 'strafe' }, { kind: 'snake', path: 'weave' },
@@ -74,7 +75,7 @@ export async function create(ctx) {
     if (waveTimer <= 0) {
       const o = ROTATION[waveIx++ % ROTATION.length];
       launch({ ...o, mirror: rng.sign() });
-      waveTimer = rng.range(3.2, 4.6);
+      waveTimer = rng.range(2.6, 3.8);
     }
 
     // aim (input axes -> reticle) with damping
@@ -116,7 +117,7 @@ export async function create(ctx) {
   }
 
   function dispose() {
-    em.dispose(); env.dispose(); hud.dispose(); scene.remove(player);
+    em.dispose(); env.dispose(); hud.dispose(); scene.remove(player); input.script = null;
   }
 
   return { update, dispose };

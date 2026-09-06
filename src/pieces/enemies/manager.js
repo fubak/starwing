@@ -10,8 +10,8 @@
  * Events emitted on ctx.events: 'enemy:spawn', 'enemy:hit', 'enemy:killed', 'player:hit'
  */
 import * as THREE from 'three';
-import { buildEnemyCraft, disposeCraft, CRAFT_KINDS } from './craft.js';
-import { BoltPool, ExplosionPool, SpritePool } from './fx.js';
+import { buildEnemyCraft, disposeCraft, CRAFT_KINDS, CRAFT_SCALE } from './craft.js';
+import { BoltPool, ExplosionPool, SpritePool, Trail } from './fx.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _t = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _m = new THREE.Matrix4(), _e = new THREE.Euler();
@@ -21,12 +21,12 @@ export const FORMATIONS = ['v', 'snake', 'circle', 'line'];
 
 // ---- path templates (relative to player; player looks down -Z). x mirrored randomly.
 const PATHS = {
-  swoop: [[130, 70, -460], [40, 30, -260], [-25, 6, -110], [-30, -6, 20], [-10, -14, 140]],
-  cross: [[-240, 40, -380], [-60, 22, -220], [70, 8, -120], [190, -6, -30], [320, -14, 60]],
-  dive: [[60, 220, -420], [25, 90, -240], [-15, 20, -120], [-35, -2, -20], [-45, -10, 120]],
-  strafe: [[26, -6, 60], [14, 4, -60], [-12, 14, -220], [-40, 40, -420], [-60, 70, -640]],
-  weave: [[-120, 20, -480], [40, 30, -320], [-40, 5, -180], [30, 12, -80], [-20, 0, 30], [-40, -8, 140]],
-  loop: [[0, 30, -420], [0, 20, -260], [0, 10, -170], [0, 70, -170], [0, 90, -230], [0, 30, -260], [0, -5, -130], [20, -10, 40], [40, -14, 130]],
+  swoop: [[110, 60, -420], [40, 28, -230], [-18, 8, -90], [-26, -4, 20], [-10, -12, 140]],
+  cross: [[-200, 36, -340], [-60, 20, -190], [40, 8, -95], [150, -4, -20], [280, -12, 70]],
+  dive: [[50, 200, -400], [22, 80, -210], [-10, 18, -95], [-28, 0, -15], [-40, -10, 120]],
+  strafe: [[22, -4, 60], [12, 4, -50], [-10, 12, -180], [-36, 36, -380], [-60, 70, -640]],
+  weave: [[-100, 18, -440], [36, 26, -290], [-34, 6, -160], [26, 10, -70], [-16, 0, 30], [-36, -8, 140]],
+  loop: [[0, 26, -400], [0, 18, -240], [0, 10, -150], [0, 62, -150], [0, 80, -210], [0, 26, -240], [0, -4, -110], [18, -10, 40], [40, -14, 130]],
 };
 
 function makePath(name, mirror, rng) {
@@ -40,9 +40,9 @@ function makePath(name, mirror, rng) {
 /** Formation offset (in path frame: x=right, y=up, z=along) + delay along path (world units). */
 function formationSlot(kind, i, n, t) {
   switch (kind) {
-    case 'v': { const k = Math.ceil(i / 2), side = i % 2 ? -1 : 1; return { off: new THREE.Vector3(side * 7 * k, -1.2 * k, 0), back: 6 * k }; }
-    case 'line': return { off: new THREE.Vector3((i - (n - 1) / 2) * 8, 0, 0), back: 0 };
-    case 'snake': return { off: new THREE.Vector3(0, 0, 0), back: 11 * i, wiggle: i };
+    case 'v': { const k = Math.ceil(i / 2), side = i % 2 ? -1 : 1; return { off: new THREE.Vector3(side * 11 * k, -1.8 * k, 0), back: 9 * k }; }
+    case 'line': return { off: new THREE.Vector3((i - (n - 1) / 2) * 13, 0, 0), back: 0 };
+    case 'snake': return { off: new THREE.Vector3(0, 0, 0), back: 16 * i, wiggle: i };
     case 'circle': { return { off: new THREE.Vector3(0, 0, 0), back: 0, ring: (i / n) * Math.PI * 2 }; }
     default: return { off: new THREE.Vector3(0, 0, 0), back: 0 };
   }
@@ -67,7 +67,7 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
     const n = o.count ?? (kind === 'circle' ? 6 : kind === 'v' ? 5 : kind === 'snake' ? 6 : 4);
     const speed = (o.speed ?? rng.range(75, 105)) * (craft === 'mantis' ? 0.8 : craft === 'vulture' ? 1.15 : 1);
     waveId++;
-    const wave = { id: waveId, kind, craft, path, n, speed, t0: time, ringR: craft === 'mantis' ? 12 : 8, ringW: rng.sign() * 1.6 };
+    const wave = { id: waveId, kind, craft, path, n, speed, t0: time, ringR: craft === 'mantis' ? 18 : 13, ringW: rng.sign() * 1.6 };
     for (let i = 0; i < n; i++) {
       const g = buildEnemyCraft(craft);
       const slot = formationSlot(kind, i, n, time);
@@ -76,6 +76,7 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
         dist: -slot.back - 2 * i, speed, state: 'fly', flash: 0, punch: 0, fireCd: rng.range(0.8, 2.4), age: 0, phase: rng.range(0, 6.28),
         vel: new THREE.Vector3(), spin: new THREE.Vector3(), dieT: 0, smokeCd: 0, pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, 1),
         scaleIn: 0,
+        trails: g.userData.engines.map(() => new Trail(scene, g.userData.glowColor, { n: 14, width: craft === 'mantis' ? 0.6 : 0.45, opacity: 0.6 })),
       };
       g.visible = false;
       scene.add(g); list.push(e); stats.spawned++;
@@ -100,7 +101,7 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
 
     // formation offsets
     const s = e.slot; let ox = s.off.x, oy = s.off.y;
-    if (s.wiggle !== undefined) { ox += Math.sin(e.dist * 0.05 + s.wiggle * 0.9) * 9; oy += Math.cos(e.dist * 0.05 + s.wiggle * 0.9) * 4; }
+    if (s.wiggle !== undefined) { ox += Math.sin(e.dist * 0.05 + s.wiggle * 0.9) * 13; oy += Math.cos(e.dist * 0.05 + s.wiggle * 0.9) * 6; }
     if (s.ring !== undefined) { const a = s.ring + (time - e.wave.t0) * e.wave.ringW; ox += Math.cos(a) * e.wave.ringR; oy += Math.sin(a) * e.wave.ringR; }
     // idle bob
     oy += Math.sin(time * 2.1 + e.phase) * 0.35;
@@ -128,8 +129,8 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
         if (e.state !== 'fly') return;
         _b.copy(playerRef.position).sub(e.pos).normalize();
         _b.x += rng.range(-0.035, 0.035); _b.y += rng.range(-0.03, 0.03); _b.normalize();
-        const side = (k % 2 ? -1 : 1) * 2.2;
-        _a.set(side, -0.2, 2.5).applyQuaternion(e.group.quaternion).add(e.pos);
+        const side = (k % 2 ? -1 : 1) * 2.2 * CRAFT_SCALE;
+        _a.set(side, -0.2 * CRAFT_SCALE, 2.5 * CRAFT_SCALE).applyQuaternion(e.group.quaternion).add(e.pos);
         enemyBolts.fire(_a, _b, 240, e);
         e.punch = Math.max(e.punch, 0.3); // recoil
       });
@@ -151,19 +152,22 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
   }
 
   function kill(e) {
-    e.state = 'dying'; e.dieT = 0; e.dieDur = rng.range(0.6, 1.1);
-    e.vel.copy(e.fwd).multiplyScalar(e.speed * 0.55).add(new THREE.Vector3(rng.range(-10, 10), rng.range(-6, 2), rng.range(-10, 10)));
-    e.spin.set(rng.range(-5, 5), rng.range(-3, 3), rng.range(-9, 9));
-    explosions.spawn(e.pos, 0.45);
+    e.state = 'dying'; e.dieT = 0; e.dieDur = rng.range(0.7, 1.2);
+    e.vel.copy(e.fwd).multiplyScalar(e.speed * 0.6).add(new THREE.Vector3(rng.range(-10, 10), rng.range(4, 12), rng.range(-10, 10)));
+    e.spin.set(rng.range(-4, 4), rng.range(-2, 2), rng.sign() * rng.range(7, 12));
+    explosions.spawn(e.pos, 0.55);
     stats.kills++;
     events?.emit('enemy:killed', { kind: e.kind, position: e.pos.clone(), wave: e.wave.kind });
   }
 
   function updateDying(e, dt) {
     e.dieT += dt;
-    e.vel.y -= 25 * dt;
+    e.vel.y -= 34 * dt;
     e.group.position.addScaledVector(e.vel, dt); e.pos.copy(e.group.position);
-    _e.set(e.spin.x * dt, e.spin.y * dt, e.spin.z * dt); _q.setFromEuler(_e); e.group.quaternion.multiply(_q);
+    // spin accelerates (anticipation: slow tumble -> violent roll)
+    const acc = 0.4 + Math.min(1, e.dieT / e.dieDur) * 1.4;
+    _e.set(e.spin.x * dt * acc, e.spin.y * dt * acc, e.spin.z * dt * acc); _q.setFromEuler(_e); e.group.quaternion.multiply(_q);
+    for (let i = 0; i < e.trails.length; i++) { _b.copy(e.group.userData.engines[i]).applyQuaternion(e.group.quaternion).add(e.pos); e.trails[i].push(_b); e.trails[i].update(ctx.camera, 0.5); }
     e.smokeCd -= dt;
     if (e.smokeCd <= 0) {
       e.smokeCd = 0.03;
@@ -173,7 +177,7 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
     // flicker glow
     setFlash(e, 0.4 + 0.6 * Math.random());
     if (e.dieT >= e.dieDur) {
-      explosions.spawn(e.pos, e.kind === 'mantis' ? 1.5 : 1.0);
+      explosions.spawn(e.pos, e.kind === 'mantis' ? 1.8 : 1.2);
       for (let i = 0; i < 10; i++) sprites.emit({ p: e.pos, vel: new THREE.Vector3(rng.range(-1, 1), rng.range(-0.5, 1), rng.range(-1, 1)).multiplyScalar(22), size: 4, grow: 2.5, dur: 1.6, color: 0x15141a, opacity: 0.6 });
       remove(e);
     }
@@ -186,6 +190,7 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
   function remove(e) {
     const i = list.indexOf(e); if (i >= 0) list.splice(i, 1);
     scene.remove(e.group); disposeCraft(e.group);
+    e.trails.forEach((t) => t.dispose());
   }
 
   function updateBolts(dt) {
@@ -193,7 +198,7 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
     // enemy bolts vs player
     if (playerRef?.position) {
       for (const b of [...enemyBolts.bolts]) {
-        if (b.p.distanceTo(playerRef.position) < 4.5) {
+        if (b.p.distanceTo(playerRef.position) < 5.5) {
           enemyBolts.remove(b); stats.playerHits++;
           events?.emit('player:hit', { position: b.p.clone() });
           for (let i = 0; i < 8; i++) sprites.emit({ p: b.p, vel: new THREE.Vector3(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).multiplyScalar(12), size: 1.2, grow: 0.5, dur: 0.4, color: 0xff6a80, additive: true, opacity: 1 });
@@ -231,8 +236,11 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
         if (e.punch > 0) { e.punch = Math.max(0, e.punch - dt * 5); }
         const k = 1 + Math.sin(e.punch * Math.PI) * 0.14 * e.punch;
         e.group.scale.set(k, k, 1 / k);
-        // engine glow pulse
+        // engine glow pulse + ribbon trails
         for (const c of e.group.children) if (c.userData.slot === 'engineGlow') c.scale.setScalar(c.userData.baseScale * (0.85 + 0.25 * Math.sin(time * 27 + e.phase)));
+        if (e.group.visible) {
+          for (let j = 0; j < e.trails.length; j++) { _b.copy(e.group.userData.engines[j]).applyQuaternion(e.group.quaternion).add(e.pos); e.trails[j].push(_b); e.trails[j].update(ctx.camera); }
+        }
       } else if (e.state === 'dying') {
         updateDying(e, dt);
       }

@@ -163,6 +163,56 @@ export class ExplosionPool {
   dispose() { this.items.forEach((e) => e.dispose()); }
 }
 
+// ---------------------------------------------------------------- engine ribbon trails
+const _c = new THREE.Vector3(), _d = new THREE.Vector3(), _w = new THREE.Vector3();
+export class Trail {
+  /** Camera-facing ribbon behind a moving point. push(worldPos) each frame, update(camera). */
+  constructor(scene, color, { n = 16, width = 0.55, opacity = 0.75 } = {}) {
+    this.n = n; this.width = width; this.pts = []; this.scene = scene;
+    const g = new THREE.BufferGeometry();
+    this.pos = new Float32Array(n * 2 * 3); this.alpha = new Float32Array(n * 2);
+    g.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    g.setAttribute('aA', new THREE.BufferAttribute(this.alpha, 1));
+    const idx = [];
+    for (let i = 0; i < n - 1; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    g.setIndex(idx);
+    this.mesh = new THREE.Mesh(g, new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      uniforms: { uColor: { value: new THREE.Color(color) }, uOpacity: { value: opacity } },
+      vertexShader: /* glsl */`attribute float aA; varying float vA; void main(){ vA = aA; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+      fragmentShader: /* glsl */`uniform vec3 uColor; uniform float uOpacity; varying float vA; void main(){ gl_FragColor = vec4(uColor * (0.6 + 1.4*vA*vA), vA*uOpacity); }`,
+    }));
+    this.mesh.frustumCulled = false; this.mesh.visible = false;
+    scene.add(this.mesh);
+  }
+  reset() { this.pts.length = 0; this.mesh.visible = false; }
+  push(p) {
+    if (this.pts.length >= this.n) this.pts.pop();
+    this.pts.unshift(p.clone());
+  }
+  update(camera, boost = 1) {
+    const P = this.pts; if (P.length < 2) { this.mesh.visible = false; return; }
+    this.mesh.visible = true;
+    const n = this.n;
+    for (let i = 0; i < n; i++) {
+      const k = Math.min(i, P.length - 1), p = P[k];
+      const q = P[Math.min(k + 1, P.length - 1)], r = P[Math.max(k - 1, 0)];
+      _d.copy(r).sub(q); if (_d.lengthSq() < 1e-6) _d.set(0, 0, 1);
+      _c.copy(camera.position).sub(p);
+      _w.crossVectors(_d, _c).normalize();
+      const u = i / (n - 1), w = this.width * boost * (1 - u) * (0.4 + 0.6 * Math.min(1, i * 0.5));
+      const a = (1 - u) * (k < P.length - 1 ? 1 : 0);
+      const o = i * 6;
+      this.pos[o] = p.x + _w.x * w; this.pos[o + 1] = p.y + _w.y * w; this.pos[o + 2] = p.z + _w.z * w;
+      this.pos[o + 3] = p.x - _w.x * w; this.pos[o + 4] = p.y - _w.y * w; this.pos[o + 5] = p.z - _w.z * w;
+      this.alpha[i * 2] = this.alpha[i * 2 + 1] = a;
+    }
+    this.mesh.geometry.attributes.position.needsUpdate = true;
+    this.mesh.geometry.attributes.aA.needsUpdate = true;
+  }
+  dispose() { this.scene.remove(this.mesh); this.mesh.geometry.dispose(); this.mesh.material.dispose(); }
+}
+
 // ---------------------------------------------------------------- smoke / hit sparks (sprite pool)
 export class SpritePool {
   constructor(scene, n = 120) {

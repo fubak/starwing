@@ -7,7 +7,10 @@ import * as THREE from 'three';
 const CSS = `
 .en-hud{position:absolute;inset:0;pointer-events:none;overflow:hidden;font-family:"Segoe UI",Roboto,"Helvetica Neue",system-ui,sans-serif;color:#dff6ff}
 .en-mk{position:absolute;left:0;top:0;width:64px;height:64px;transform:translate(-50%,-50%);will-change:transform;opacity:0;transition:opacity .12s}
-.en-mk i{position:absolute;width:14px;height:14px;border:2px solid #7cf2b0;filter:drop-shadow(0 0 6px rgba(124,242,176,.9))}
+.en-mk i{position:absolute;width:12px;height:12px;border:1.5px solid rgba(124,242,176,.7);filter:drop-shadow(0 0 5px rgba(124,242,176,.6))}
+.en-mk b{display:none}
+.en-mk.lock b{display:block}
+.en-mk.lock i{width:16px;height:16px;border-width:2.5px}
 .en-mk i:nth-child(1){left:0;top:0;border-right:0;border-bottom:0}
 .en-mk i:nth-child(2){right:0;top:0;border-left:0;border-bottom:0}
 .en-mk i:nth-child(3){left:0;bottom:0;border-right:0;border-top:0}
@@ -81,7 +84,7 @@ export function createLockOnHud(ctx, em) {
       _p.copy(e.pos).project(camera);
       if (_p.z > 1 || Math.abs(_p.x) > 1.05 || Math.abs(_p.y) > 1.05) continue;
       const d = e.pos.distanceTo(camera.position);
-      if (d > 380) continue;
+      if (d > 260) continue;
       seen.add(e);
       let el = markers.get(e);
       if (!el) { el = mk('div', 'en-mk', '<i></i><i></i><i></i><i></i><b></b>'); root.appendChild(el); markers.set(e, el); el.userData = { s: 0 }; }
@@ -90,8 +93,7 @@ export function createLockOnHud(ctx, em) {
       const sx = (_p.x * 0.5 + 0.5) * W, sy = (-_p.y * 0.5 + 0.5) * H;
       el.style.transform = `translate(${sx}px,${sy}px) translate(-50%,-50%)`;
       el.style.width = el.style.height = `${el.userData.s}px`;
-      el.style.opacity = 1;
-      el.lastChild.textContent = `${NAMES[e.kind]}  ${Math.round(d)}m`;
+      el.style.opacity = THREE.MathUtils.clamp(1.4 - d / 260, 0.35, 1);
       const dd = Math.hypot(_p.x - aim.x, _p.y - aim.y);
       if (dd < bestD) { bestD = dd; best = { e, ndc: new THREE.Vector2(_p.x, _p.y), d }; }
     }

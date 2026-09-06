@@ -1,10 +1,11 @@
 /**
- * Showcase environment for the enemies piece: Corneria-style late-afternoon
- * sky dome, procedural ocean, sun/sky lighting, PMREM environment for real
- * specular response, and a light grade/vignette pass.
+ * Showcase environment for the enemies piece.
+ * Uses the shared lookdev rig (sky, sun/hemi/fill, PMREM env, ACES exposure,
+ * bloom, grade) with a custom "Venom sunset" preset, plus a procedural ocean
+ * and a lookdev planet on the horizon.
  */
 import * as THREE from 'three';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { applyLook, makePlanet, PRESETS } from '../lookdev/index.js';
 
 const NOISE_GLSL = /* glsl */`
   float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
@@ -14,63 +15,34 @@ const NOISE_GLSL = /* glsl */`
   }
   float fbm(vec2 p){
     float v = 0.0, a = 0.5; mat2 m = mat2(1.6,1.2,-1.2,1.6);
-    for(int i=0;i<5;i++){ v += a*vnoise(p); p = m*p; a *= 0.5; }
+    for(int i=0;i<4;i++){ v += a*vnoise(p); p = m*p; a *= 0.5; }
     return v;
   }
 `;
 
-export const SKY = {
-  zenith: new THREE.Color(0x0f2f7a),
-  mid: new THREE.Color(0x4c8fe0),
-  horizon: new THREE.Color(0xf2c9a4),
-  ground: new THREE.Color(0x14313f),
-  sunDir: new THREE.Vector3(0.45, 0.62, 0.55).normalize(), // behind-right-above camera: key light on approaching craft
-  sunColor: new THREE.Color(0xffe6c4),
+/** Custom look: late golden hour over the Venom sea. Sun low, in frame (upper-right),
+ *  warm key + violet fill from behind the camera so approaching hulls read. */
+export const ENEMY_LOOK = {
+  ...PRESETS.sunset,
+  name: 'venomSunset',
+  label: 'VENOM SEA · DUSK',
+  exposure: 1.05,
+  envIntensity: 0.75,
+  bloom: { strength: 0.5, radius: 0.6, threshold: 0.86 },
+  sun: { dir: [0.5, 0.3, -0.6], color: 0xffb870, intensity: 3.2, size: 0.035, glow: 0.6 },
+  hemi: { sky: 0x7a5cc0, ground: 0x1c2a34, intensity: 0.9 },
+  fill: { dir: [-0.55, 0.45, 0.7], color: 0xffa0b8, intensity: 2.3 },
+  fog: { color: 0xf09456, density: 0.0009 },
+  sky: { zenith: 0x2a1a60, horizon: 0xff9a44, ground: 0x2a1a30, haze: 5.0, stars: 0.25, nebula: 0.3, nebulaA: 0x3a1e6a, nebulaB: 0xb0326e, milky: 0.0 },
+  grade: { contrast: 1.1, saturation: 1.18, lift: 0x06020a, gain: 0xfff0e2, gamma: 1.0, vignette: 0.38, grain: 0.02 },
 };
 
-export function makeSkyMaterial(withClouds = true) {
-  return new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: {
-      uZenith: { value: SKY.zenith }, uMid: { value: SKY.mid }, uHorizon: { value: SKY.horizon },
-      uGround: { value: SKY.ground }, uSun: { value: SKY.sunDir }, uTime: { value: 0 }, uClouds: { value: withClouds ? 1 : 0 },
-    },
-    vertexShader: /* glsl */`
-      varying vec3 vDir;
-      void main(){ vec4 wp = modelMatrix * vec4(position,1.0); vDir = normalize(wp.xyz - cameraPosition);
-        gl_Position = projectionMatrix * viewMatrix * wp; }`,
-    fragmentShader: /* glsl */`
-      varying vec3 vDir; uniform vec3 uZenith,uMid,uHorizon,uGround,uSun; uniform float uTime, uClouds;
-      ${NOISE_GLSL}
-      void main(){
-        vec3 d = normalize(vDir); float y = d.y;
-        vec3 sky = mix(uMid, uZenith, smoothstep(0.05, 0.75, y));
-        sky = mix(uHorizon, sky, smoothstep(-0.02, 0.22, y));
-        // sun glow + disc
-        float sd = max(dot(d, uSun), 0.0);
-        sky += vec3(1.0,0.85,0.6) * pow(sd, 6.0) * 0.35 + vec3(1.0,0.95,0.85) * pow(sd, 300.0) * 3.0;
-        // clouds: stratus band projected onto a plane above the viewer
-        if (uClouds > 0.5 && y > 0.005) {
-          vec2 uv = d.xz / (y + 0.08) * 1.6 + vec2(uTime*0.004, 0.0);
-          float c = fbm(uv * 0.9);
-          float cov = smoothstep(0.48, 0.72, c) * smoothstep(0.0, 0.08, y) * (1.0 - smoothstep(0.35, 0.8, y));
-          vec3 cloudCol = mix(vec3(0.55,0.62,0.78), vec3(1.05,0.98,0.93), smoothstep(0.5, 0.9, c) * 0.8 + sd*0.3);
-          sky = mix(sky, cloudCol, cov * 0.85);
-        }
-        // below horizon (only seen by env-map capture & through gaps)
-        vec3 g = mix(uHorizon, uGround, smoothstep(0.0, 0.25, -y));
-        vec3 col = y < 0.0 ? g : sky;
-        gl_FragColor = vec4(col, 1.0);
-      }`,
-  });
-}
-
-export function makeOceanMaterial(fogColor) {
+export function makeOceanMaterial(p) {
   return new THREE.ShaderMaterial({
     uniforms: {
-      uTime: { value: 0 }, uSun: { value: SKY.sunDir }, uSunColor: { value: SKY.sunColor },
-      uDeep: { value: new THREE.Color(0x0a2e4a) }, uShallow: { value: new THREE.Color(0x1d7a8c) },
-      uSky: { value: SKY.mid }, uHorizon: { value: fogColor }, uFogNear: { value: 120 }, uFogFar: { value: 1100 },
+      uTime: { value: 0 }, uSun: { value: new THREE.Vector3(...ENEMY_LOOK.sun.dir).normalize() }, uSunColor: { value: new THREE.Color(ENEMY_LOOK.sun.color) },
+      uDeep: { value: new THREE.Color(0x071a30) }, uShallow: { value: new THREE.Color(0x14586a) },
+      uSky: { value: new THREE.Color(0x3a4a8a) }, uHorizon: { value: new THREE.Color(ENEMY_LOOK.fog.color) }, uFogNear: { value: 120 }, uFogFar: { value: 1600 },
     },
     vertexShader: /* glsl */`
       varying vec3 vW; void main(){ vec4 wp = modelMatrix*vec4(position,1.0); vW = wp.xyz; gl_Position = projectionMatrix*viewMatrix*wp; }`,
@@ -83,7 +55,6 @@ export function makeOceanMaterial(fogColor) {
         float h  = fbm(p + vec2(t, t*0.6)) + 0.5*vnoise(p*3.1 - vec2(t*1.3, 0.0));
         vec2 dh = vec2(dFdx(h), dFdy(h));
         vec2 dpx = vec2(dFdx(p.x), dFdy(p.x)), dpz = vec2(dFdx(p.y), dFdy(p.y));
-        // chain rule: dh/dp via screen-space derivatives
         float det = dpx.x*dpz.y - dpx.y*dpz.x; det = abs(det) < 1e-7 ? 1e-7 : det;
         float hx = ( dh.x*dpz.y - dh.y*dpz.x) / det;
         float hz = (-dh.x*dpx.y + dh.y*dpx.x) / det;
@@ -91,12 +62,12 @@ export function makeOceanMaterial(fogColor) {
         vec3 v = normalize(cameraPosition - vW);
         float fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
         vec3 base = mix(uDeep, uShallow, smoothstep(0.3, 1.2, h));
-        vec3 col = mix(base, uSky, 0.35 + 0.55*fres);
+        vec3 col = mix(base, uSky, 0.2 + 0.6*fres);
         vec3 hv = normalize(uSun + v);
-        float spec = pow(max(dot(n, hv), 0.0), 220.0) * 2.5 + pow(max(dot(n,hv),0.0), 24.0) * 0.25;
+        // long sun glitter lane toward the sun
+        float spec = pow(max(dot(n, hv), 0.0), 180.0) * 3.0 + pow(max(dot(n,hv),0.0), 16.0) * 0.35;
         col += uSunColor * spec;
-        // foam-ish caps
-        col += vec3(0.6,0.75,0.8) * smoothstep(1.25, 1.5, h) * 0.5;
+        col += vec3(0.7,0.7,0.8) * smoothstep(1.25, 1.5, h) * 0.4;
         float dist = length(cameraPosition - vW);
         float f = smoothstep(uFogNear, uFogFar, dist);
         col = mix(col, uHorizon, f);
@@ -105,92 +76,112 @@ export function makeOceanMaterial(fogColor) {
   });
 }
 
-/** Grade + vignette pass inserted before the OutputPass. */
-export function makeGradePass() {
-  return new ShaderPass(new THREE.ShaderMaterial({
-    uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uFlash: { value: 0 } },
-    vertexShader: /* glsl */`varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-    fragmentShader: /* glsl */`
-      varying vec2 vUv; uniform sampler2D tDiffuse; uniform float uTime, uFlash;
-      void main(){
-        vec3 c = texture2D(tDiffuse, vUv).rgb;
-        // gentle saturation + warm/cool split toning (linear space, pre-ACES)
-        float l = dot(c, vec3(0.2126,0.7152,0.0722));
-        c = mix(vec3(l), c, 1.12);
-        c += (vec3(0.03,0.0,-0.02) * smoothstep(0.2,0.9,l) + vec3(-0.01,0.0,0.03)*(1.0-smoothstep(0.0,0.35,l))) * 0.6;
-        // vignette
-        vec2 q = vUv - 0.5; float v = 1.0 - dot(q,q) * 0.9;
-        c *= smoothstep(0.0, 1.0, v) * 0.35 + 0.65;
-        c += uFlash;
-        gl_FragColor = vec4(max(c, 0.0), 1.0);
-      }`,
-  }));
+let _cloudTex = null;
+function cloudTexture() {
+  if (_cloudTex) return _cloudTex;
+  const S = 256, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, S, S);
+  // puffy cluster of soft radial blobs
+  const R = (a, b) => a + Math.random() * (b - a);
+  for (let i = 0; i < 26; i++) {
+    const x = R(60, S - 60), y = R(90, S - 70), r = R(28, 62);
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, 'rgba(255,255,255,0.55)'); gr.addColorStop(0.6, 'rgba(255,255,255,0.18)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, S, S);
+  }
+  _cloudTex = new THREE.CanvasTexture(c); _cloudTex.colorSpace = THREE.SRGBColorSpace;
+  return _cloudTex;
+}
+
+/** Sprite cloud field: warm-lit on the sun side, cool violet in shadow. */
+function makeClouds(scene, rng, n = 34) {
+  const tex = cloudTexture();
+  const group = new THREE.Group();
+  const sunX = Math.sign(ENEMY_LOOK.sun.dir[0]);
+  for (let i = 0; i < n; i++) {
+    const z = -rng.range(350, 1900), x = rng.range(-1400, 1400), y = rng.range(40, 240) + (-z) * 0.06;
+    const near = 1 - THREE.MathUtils.clamp((-z - 350) / 1600, 0, 1);
+    const sunSide = THREE.MathUtils.clamp(0.5 + (x * sunX) / 2000, 0, 1);
+    const col = new THREE.Color(0x6a4a90).lerp(new THREE.Color(0xffc090), 0.35 + sunSide * 0.55);
+    const m = new THREE.SpriteMaterial({ map: tex, color: col, transparent: true, depthWrite: false, opacity: 0.5 + near * 0.3, fog: true });
+    const s = new THREE.Sprite(m);
+    s.position.set(x, y, z);
+    const w = rng.range(260, 520) * (0.6 + near * 0.6);
+    s.scale.set(w, w * rng.range(0.32, 0.5), 1);
+    s.material.rotation = rng.range(-0.1, 0.1);
+    s.userData.drift = rng.range(0.4, 1.2);
+    group.add(s);
+  }
+  scene.add(group);
+  return {
+    group,
+    update(dt) { for (const s of group.children) s.position.x += s.userData.drift * dt; },
+    dispose() { scene.remove(group); group.children.forEach((s) => s.material.dispose()); },
+  };
 }
 
 /**
- * Build the whole environment into ctx.scene. Returns { update(dt,t), dispose() , fogColor }.
+ * Build the whole environment into ctx.scene. Returns { update(dt,t), flash(v), dispose() }.
  */
 export function createEnvironment(ctx) {
-  const { scene, renderer, composer } = ctx;
-  const fogColor = new THREE.Color(0xd9bfae);
-  scene.fog = new THREE.FogExp2(fogColor, 0.0018);
-  scene.background = null;
-
-  // sky dome
-  const skyMat = makeSkyMaterial(true);
-  const sky = new THREE.Mesh(new THREE.SphereGeometry(2500, 48, 24), skyMat);
-  sky.frustumCulled = false;
-  scene.add(sky);
+  const { scene, camera, rng } = ctx;
+  const look = applyLook(ctx, ENEMY_LOOK, { shadowSize: 30, shadowMap: 512 });
+  look.sun.castShadow = false;
+  look.setFocus(new THREE.Vector3(0, 4, -60));
 
   // ocean
-  const oceanMat = makeOceanMaterial(fogColor);
-  const ocean = new THREE.Mesh(new THREE.PlaneGeometry(7000, 7000, 1, 1), oceanMat);
-  ocean.rotation.x = -Math.PI / 2; ocean.position.y = -42;
+  const oceanMat = makeOceanMaterial();
+  const ocean = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000, 1, 1), oceanMat);
+  ocean.rotation.x = -Math.PI / 2; ocean.position.y = -48;
   scene.add(ocean);
 
-  // distant moon
-  const moonMat = new THREE.MeshStandardMaterial({ color: 0xd8c8c0, roughness: 1, metalness: 0, fog: false });
-  const moon = new THREE.Mesh(new THREE.SphereGeometry(140, 32, 24), moonMat);
-  moon.position.set(-620, 380, -2100);
-  scene.add(moon);
-  const ringMat = new THREE.MeshBasicMaterial({ color: 0xf4e1d0, transparent: true, opacity: 0.45, side: THREE.DoubleSide, fog: false });
-  const ring = new THREE.Mesh(new THREE.RingGeometry(190, 300, 64), ringMat);
-  ring.position.copy(moon.position); ring.rotation.set(1.25, 0.2, 0.35);
-  scene.add(ring);
+  // planet rising on the left horizon (lookdev planet; own atmosphere)
+  const planet = makePlanet({ radius: 520, seed: 11, preset: look.preset });
+  planet.position.set(-1500, 110, -2600);
+  scene.add(planet);
 
-  // lights
-  const sun = new THREE.DirectionalLight(SKY.sunColor, 3.2);
-  sun.position.copy(SKY.sunDir).multiplyScalar(200);
-  scene.add(sun, sun.target);
-  const hemi = new THREE.HemisphereLight(0x8fb8ff, 0x24343c, 1.1);
-  scene.add(hemi);
-  const rim = new THREE.DirectionalLight(0xc070ff, 0.9); // violet rim from front-left to catch silhouettes
-  rim.position.set(-120, 30, -200);
-  scene.add(rim, rim.target);
+  // low haze bank: a wide additive gradient card just above the horizon, sells depth
+  const hazeMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, fog: false, blending: THREE.NormalBlending,
+    uniforms: { uColor: { value: new THREE.Color(0xffa060) }, uTime: { value: 0 } },
+    vertexShader: /* glsl */`varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: /* glsl */`
+      varying vec2 vUv; uniform vec3 uColor; uniform float uTime;
+      ${NOISE_GLSL}
+      void main(){
+        float band = smoothstep(0.0, 0.35, vUv.y) * (1.0 - smoothstep(0.45, 1.0, vUv.y));
+        float n = fbm(vec2(vUv.x*9.0 + uTime*0.01, vUv.y*3.0));
+        float a = band * (0.35 + 0.45*n) * 0.55;
+        gl_FragColor = vec4(uColor, a);
+      }`,
+  });
+  const haze = new THREE.Mesh(new THREE.PlaneGeometry(6000, 260), hazeMat);
+  haze.position.set(0, 40, -2400); scene.add(haze);
 
-  // environment map from the sky itself (real specular/fresnel on hulls)
-  const pm = new THREE.PMREMGenerator(renderer);
-  const envScene = new THREE.Scene();
-  envScene.add(new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), makeSkyMaterial(false)));
-  const envRT = pm.fromScene(envScene, 0.02);
-  scene.environment = envRT.texture;
-  pm.dispose();
+  const clouds = makeClouds(scene, rng);
 
-  // grade pass
-  const grade = makeGradePass();
-  const outIdx = composer.passes.length - 1;
-  composer.insertPass(grade, outIdx);
-  ctx.bloom.strength = 0.75; ctx.bloom.radius = 0.55; ctx.bloom.threshold = 0.82;
+  // Harness friendliness: in deterministic (fixed-step) mode keep the GL queue drained
+  // so stepping N frames doesn't build a backlog the screenshot has to wait out on software GL.
+  const gl = ctx.renderer.getContext();
+  const syncGL = !!ctx.engine?.fixedStep;
+  const syncPx = new Uint8Array(4);
 
   return {
-    fogColor, sun, grade,
-    update(dt, t) { skyMat.uniforms.uTime.value = t; oceanMat.uniforms.uTime.value = t; grade.uniforms.uTime.value = t; },
-    flash(v) { grade.uniforms.uFlash.value = v; },
+    look, sun: look.sun,
+    update(dt, t) {
+      if (syncGL) { ctx.renderer.setRenderTarget(null); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, syncPx); }
+      oceanMat.uniforms.uTime.value = t; hazeMat.uniforms.uTime.value = t;
+      look.update(dt, t);
+      planet.update(dt, t);
+      clouds.update(dt);
+    },
+    flash(v) { look.flash(v); },
     dispose() {
-      composer.removePass(grade); grade.dispose?.();
-      [sky, ocean, moon, ring].forEach((m) => { scene.remove(m); m.geometry.dispose(); m.material.dispose(); });
-      scene.remove(sun, sun.target, hemi, rim, rim.target);
-      envRT.dispose(); scene.environment = null; scene.fog = null;
+      [ocean, haze].forEach((m) => { scene.remove(m); m.geometry.dispose(); m.material.dispose(); });
+      scene.remove(planet); planet.disposePlanet?.();
+      clouds.dispose();
+      look.dispose();
     },
   };
 }
