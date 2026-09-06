@@ -20,21 +20,21 @@ export async function create(ctx) {
 
   // ---- render setup (restored on dispose)
   const prev = { bloomStrength: bloom.strength, bloomRadius: bloom.radius, bloomThreshold: bloom.threshold, exposure: renderer.toneMappingExposure, fov: camera.fov };
-  bloom.strength = 0.5; bloom.radius = 0.55; bloom.threshold = 0.8;
+  bloom.strength = 0.62; bloom.radius = 0.6; bloom.threshold = 0.76;
   renderer.toneMappingExposure = 0.94;
   camera.fov = 54; camera.near = 0.1; camera.far = 1200; camera.updateProjectionMatrix();
   const pmrem = new THREE.PMREMGenerator(renderer);
   const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.environment = env; scene.environmentIntensity = 0.4;
+  scene.environment = env; scene.environmentIntensity = 0.5;
   pmrem.dispose();
   // colour grade (shared lookdev pass): cool lifted shadows, warm highlights, soft vignette
   let grade = composer.passes.find((p) => p.isLookGrade);
   const ownGrade = !grade;
   if (!grade) { grade = makeGradePass(); composer.addPass(grade); }
   grade.enabled = true;
-  grade.uniforms.uContrast.value = 1.08; grade.uniforms.uSaturation.value = 1.12; grade.uniforms.uGamma.value = 1.0;
-  grade.uniforms.uLift.value.setRGB(0.012, 0.02, 0.045); grade.uniforms.uGain.value.setRGB(1.04, 1.0, 0.95);
-  grade.uniforms.uVignette.value = 0.38; grade.uniforms.uGrain.value = 0.018;
+  grade.uniforms.uContrast.value = 1.12; grade.uniforms.uSaturation.value = 1.16; grade.uniforms.uGamma.value = 1.0;
+  grade.uniforms.uLift.value.setRGB(0.008, 0.016, 0.04); grade.uniforms.uGain.value.setRGB(1.06, 1.0, 0.93);
+  grade.uniforms.uVignette.value = 0.42; grade.uniforms.uGrain.value = 0.014;
 
   // ---- world
   const hangar = buildHangar(ctx);

@@ -1,7 +1,8 @@
 // Great Fox hangar interior: floor, walls, catwalks, pillars, lights + god-rays,
 // docked Arwing, holo panels, blast door, bay opening onto space.
 import * as THREE from 'three';
-import { makeFloorTextures, makeWallTextures, makeHoloTexture, makeGrateTexture, makeWallDecal, makeGlowTexture } from './textures.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { makeFloorTextures, makeWallTextures, makeHoloTexture, makeGrateTexture, makeWallDecal, makeGlowTexture, makeCrateTextures } from './textures.js';
 import { buildDockedArwing } from './arwing.js';
 
 export const HANGAR = { hx: 14, hz: 30, h: 14 };
@@ -24,13 +25,13 @@ const godRayShader = {
     }`,
 };
 
-export function makeGodRay(THREE_, { color = 0xbfe4ff, radiusTop = 0.5, radiusBottom = 3.2, height = 12, intensity = 0.35 } = {}) {
-  const g = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 24, 1, true);
+export function makeGodRay(THREE_, { color = 0xbfe4ff, radiusTop = 0.5, radiusBottom = 3.2, height = 12, intensity = 0.35, side = THREE.FrontSide } = {}) {
+  const g = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 20, 1, true);
   // uv.y: 1 at top → we want vUv.y = 0 at top (light source) and 1 at bottom.
   const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setY(i, 1 - uv.getY(i));
   g.translate(0, -height / 2, 0);
   const m = new THREE.ShaderMaterial({
-    ...godRayShader, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    ...godRayShader, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side,
     uniforms: { color: { value: new THREE.Color(color) }, intensity: { value: intensity }, time: { value: 0 } },
   });
   const mesh = new THREE.Mesh(g, m);
@@ -206,6 +207,7 @@ export function buildHangar(ctx) {
   const housingMat = new THREE.MeshStandardMaterial({ color: 0x2a3140, roughness: 0.4, metalness: 0.9 });
   const lampPositions = [];
   for (let z = -21; z <= 21; z += 14) for (const x of [-4.5, 5.5]) lampPositions.push([x, z]);
+  lampPositions.push([-6, -2, true]); // hero work light over the docked Arwing
   const rays = [];
   const lampY = h - 2.6;
   {
@@ -219,29 +221,37 @@ export function buildHangar(ctx) {
     const rimGeo = new THREE.TorusGeometry(1.3, 0.06, 8, 24); rimGeo.rotateX(Math.PI / 2);
     const rims = new THREE.InstancedMesh(rimGeo, new THREE.MeshStandardMaterial({ color: 0xffb040, emissive: 0xff8a20, emissiveIntensity: 1.2, roughness: 0.4, metalness: 0.6 }), lampPositions.length);
     const o = new THREE.Object3D();
-    lampPositions.forEach(([x, z], i) => {
+    lampPositions.forEach(([x, z, hero], i) => {
       o.position.set(x, lampY, z); o.updateMatrix(); housings.setMatrixAt(i, o.matrix);
       o.position.set(x, lampY + 1.5, z); o.updateMatrix(); cables.setMatrixAt(i, o.matrix);
       o.position.set(x, lampY - 0.28, z); o.updateMatrix(); lamps.setMatrixAt(i, o.matrix);
       o.position.set(x, lampY - 0.27, z); o.updateMatrix(); rims.setMatrixAt(i, o.matrix);
-      const ray = makeGodRay(THREE, { radiusTop: 1.3, radiusBottom: 4.2, height: lampY - 0.4, intensity: 0.46, color: 0xffd9a8 });
+      const ray = makeGodRay(THREE, { radiusTop: 1.3, radiusBottom: hero ? 6.5 : 3.6, height: lampY - 0.4, intensity: hero ? 0.28 : 0.55, color: hero ? 0xfff0dc : 0xffd9a8 });
       ray.position.set(x, lampY - 0.3, z); group.add(ray); rays.push(ray);
+      // bloom halo sprite on the lamp face
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeGlowTexture(), color: 0xffe2b8, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+      halo.scale.setScalar(3.6); halo.position.set(x, lampY - 0.5, z); group.add(halo);
     });
     group.add(housings, cables, lamps, rims);
+  }
+  // big cool light shaft pouring in from the bay force-field (volumetric feel)
+  {
+    const shaft = makeGodRay(THREE, { radiusTop: 4.6, radiusBottom: 9, height: 20, intensity: 0.22, color: 0x5fb8ff });
+    shaft.rotation.z = -(Math.PI / 2 - 0.35); shaft.position.set(hx - 0.5, 6.2, 0); shaft.scale.set(1, 1, 2.4); group.add(shaft); rays.push(shaft);
   }
   animated.push((dt, t) => { for (const r of rays) r.material.uniforms.time.value = t; });
 
   // ---------- docked Arwing on cradle
-  const ship = buildDockedArwing();
-  ship.position.set(-6, 1.35, -2); ship.rotation.y = Math.PI * 0.5 + 0.15; group.add(ship);
+  const ship = buildDockedArwing(1.55, 1.6);
+  ship.position.set(-6, 1.6, -2); ship.rotation.y = -Math.PI * 0.5 + 0.25; group.add(ship);
+  animated.push((dt, t) => ship.userData.update(dt, t, ctx.camera));
   {
     const cradleMat = new THREE.MeshStandardMaterial({ color: 0x3e4a5e, roughness: 0.45, metalness: 0.85, envMapIntensity: 0.9 });
-    for (const [dx, dz] of [[-1.6, -1.2], [1.6, -1.2], [0, 2.6]]) {
-      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.3, 1.4, 12), cradleMat); leg.position.set(-6 + dx, 0.7, -2 + dz); leg.castShadow = true; group.add(leg);
+    // power umbilical + chocks around the pad
+    for (const [dx, dz] of [[-2.4, 3.6], [2.6, 3.4], [-3.2, -4.6]]) {
+      const chock = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.25, 0.3), cradleMat); chock.position.set(-6 + dx, 0.125, -2 + dz); chock.castShadow = true; group.add(chock);
     }
-    const cradleLight = makeGodRay(THREE, { radiusTop: 4.6, radiusBottom: 5.2, height: 4.5, intensity: 0.035, color: 0x7fd0ff });
-    cradleLight.rotation.x = Math.PI; cradleLight.position.set(-6, 0.05, -2); group.add(cradleLight); rays.push(cradleLight);
-    addCollider(-6, 1, -2, 7, 3, 7);
+    addCollider(-6, 1, -2, 9, 3, 11);
     // service cart + fuel hoses
     const cartMat = new THREE.MeshStandardMaterial({ color: 0xd8a02a, roughness: 0.5, metalness: 0.4 });
     const cart = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.9, 0.9), cartMat); cart.position.set(-1.2, 0.45, 2.5); cart.castShadow = true; cart.receiveShadow = true; group.add(cart);
@@ -251,15 +261,13 @@ export function buildHangar(ctx) {
   }
 
   // ---------- cargo crates (obstacles)
-  const crateTex = wt.map.clone(); crateTex.repeat.set(1 / 3, 1 / 2); crateTex.offset.set(0.1, 0.25); crateTex.needsUpdate = true;
-  const crateMat = new THREE.MeshStandardMaterial({ map: crateTex, color: 0x9fb0c8, roughness: 0.45, metalness: 0.7, envMapIntensity: 0.8 });
-  const crateTrim = new THREE.MeshStandardMaterial({ color: 0xffb02e, roughness: 0.5, metalness: 0.3 });
-  const crateSpots = [[9, 14, 1.4], [10.6, 14, 1.4], [9.8, 14, 1.4, 1.4], [-9, 16, 1.6], [8.5, -18, 1.2], [-9.5, -14, 1.5], [-10.8, -12.5, 1.1]];
-  for (const [x, z, s, y = 0] of crateSpots) {
-    const c = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateMat); c.position.set(x, y + s / 2, z); c.castShadow = true; c.receiveShadow = true; group.add(c);
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(s * 1.02, s * 0.12, s * 1.02), crateTrim); trim.position.set(x, y + s / 2, z); group.add(trim);
-    addCollider(x, y + s / 2, z, s, s, s);
-  }
+  const crateMats = [0, 1, 2].map((v) => { const t = makeCrateTextures(v); return new THREE.MeshStandardMaterial({ map: t.map, roughnessMap: t.roughnessMap, color: 0xffffff, roughness: 0.6, metalness: 0.55, envMapIntensity: 0.9 }); });
+  const crateGeo = new RoundedBoxGeometry(1, 1, 1, 3, 0.06);
+  const crateSpots = [[9, 14, 1.4, 0, 0.2], [10.6, 14, 1.4, 0, -0.1], [9.8, 14, 1.4, 1.4, 0.35], [-9, 16, 1.6, 0, 0.1], [8.5, -18, 1.2, 0, -0.3], [-9.5, -14, 1.5, 0, 0.15], [-10.8, -12.5, 1.1, 0, -0.2], [11.5, 18, 1.3, 0, 0.05]];
+  crateSpots.forEach(([x, z, s, y, ry], i) => {
+    const c = new THREE.Mesh(crateGeo, crateMats[i % 3]); c.scale.setScalar(s); c.position.set(x, y + s / 2, z); c.rotation.y = ry; c.castShadow = true; c.receiveShadow = true; group.add(c);
+    addCollider(x, y + s / 2, z, s * 1.15, s, s * 1.15);
+  });
 
   // ---------- holo panels (floating projected screens)
   const holoMat = (v) => new THREE.MeshBasicMaterial({ map: makeHoloTexture(v), transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
@@ -319,16 +327,17 @@ export function buildHangar(ctx) {
   // Kept deliberately small (software-GL friendly, and every point light taxes every fragment):
   // hemi ambient, one shadow-casting warm key that follows the player, a cool bay fill from the
   // force-field side, cyan pool under the Arwing, orange spill at the blast door.
-  const hemi = new THREE.HemisphereLight(0x6f8fc8, 0x3a2a1a, 0.95); group.add(hemi);
-  const key = new THREE.SpotLight(0xffe2bd, 210, 40, Math.PI / 3.4, 0.6, 1.4);
+  const hemi = new THREE.HemisphereLight(0x5f80bc, 0x2a1e14, 0.6); group.add(hemi);
+  const key = new THREE.SpotLight(0xffe2bd, 170, 40, Math.PI / 3.4, 0.6, 1.4);
   key.position.set(3, h - 1.5, 4); key.target.position.set(1, 0, 0); key.castShadow = true;
   key.shadow.mapSize.set(1024, 1024); key.shadow.bias = -0.0005; key.shadow.normalBias = 0.03; key.shadow.camera.near = 3; key.shadow.camera.far = 34; key.shadow.radius = 2;
   group.add(key, key.target);
-  const bayLight = new THREE.DirectionalLight(0x6fb0ff, 1.7); bayLight.position.set(hx + 10, 7, 2); bayLight.target.position.set(0, 0, 0); group.add(bayLight, bayLight.target);
-  const shipLight = new THREE.PointLight(0x4fc4ff, 30, 16, 1.8); shipLight.position.set(-6, 0.6, -2); group.add(shipLight);
-  const doorLight = new THREE.PointLight(0xff7a30, 60, 16, 1.8); doorLight.position.set(0, 4.5, -hz + 2.5); group.add(doorLight);
+  const bayLight = new THREE.DirectionalLight(0x5fa8ff, 1.9); bayLight.position.set(hx + 10, 7, 2); bayLight.target.position.set(0, 0, 0); group.add(bayLight, bayLight.target);
+  // hero pool: warm-white work light over the docked Arwing (the room's focal point)
+  const shipLight = new THREE.PointLight(0xffe9cc, 70, 22, 1.8); shipLight.position.set(-6, lampY - 1.5, -2); group.add(shipLight);
+  const doorLight = new THREE.PointLight(0xff7a30, 70, 16, 1.8); doorLight.position.set(0, 4.5, -hz + 2.5); group.add(doorLight);
 
-  scene.fog = new THREE.FogExp2(0x0e1a2e, 0.017);
+  scene.fog = new THREE.FogExp2(0x0b1626, 0.013);
   scene.background = new THREE.Color(0x05080f);
 
   // ---------- dust motes
@@ -342,6 +351,6 @@ export function buildHangar(ctx) {
   return {
     group, colliders, door, key,
     update(dt, t) { for (const f of animated) f(dt, t); door.update(dt); },
-    dispose() { group.traverse((o) => { o.geometry?.dispose?.(); if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { for (const k in m) if (m[k]?.isTexture) m[k].dispose(); m.dispose(); }); }); scene.remove(group); scene.fog = null; },
+    dispose() { ship.userData.dispose?.(); group.traverse((o) => { o.geometry?.dispose?.(); if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { for (const k in m) if (m[k]?.isTexture) m[k].dispose(); m.dispose(); }); }); scene.remove(group); scene.fog = null; },
   };
 }

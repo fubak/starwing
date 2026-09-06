@@ -170,6 +170,78 @@ export function makeWallDecal() {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
 }
 
+/** Short directional fur: base colour with darker strands + lighter tips. */
+export function makeFurTexture(base = '#d9782a', dark = '#a84e14') {
+  const S = 256;
+  const [c, g] = canvas(S, S);
+  g.fillStyle = base; g.fillRect(0, 0, S, S);
+  for (let i = 0; i < 2600; i++) {
+    const x = hash(i, 1, 21) * S, y = hash(i, 2, 22) * S, len = 6 + hash(i, 3, 23) * 14;
+    const a = hash(i, 4, 24);
+    g.strokeStyle = a > 0.55 ? dark : 'rgba(255,245,225,0.35)'; g.globalAlpha = 0.25 + hash(i, 5, 25) * 0.4; g.lineWidth = 1 + hash(i, 6, 26);
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + (hash(i, 7, 27) - 0.5) * 4, y + len); g.stroke();
+  }
+  g.globalAlpha = 1;
+  grain(g, S, S, 12, 31);
+  return tex(c, 1);
+}
+
+/** Woven flight-suit fabric with subtle quilting seams. */
+export function makeFabricTexture() {
+  const S = 256;
+  const [c, g] = canvas(S, S);
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, S, S);
+  g.fillStyle = 'rgba(0,0,0,0.12)';
+  for (let y = 0; y < S; y += 3) g.fillRect(0, y, S, 1);
+  for (let x = 0; x < S; x += 3) g.fillRect(x, 0, 1, S);
+  g.strokeStyle = 'rgba(0,0,0,0.28)'; g.lineWidth = 2;
+  for (let k = 0; k < S; k += 64) { g.beginPath(); g.moveTo(k, 0); g.lineTo(k, S); g.stroke(); g.beginPath(); g.moveTo(0, k); g.lineTo(S, k); g.stroke(); }
+  g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 1;
+  for (let k = 3; k < S; k += 64) { g.beginPath(); g.moveTo(k, 0); g.lineTo(k, S); g.stroke(); g.beginPath(); g.moveTo(0, k); g.lineTo(S, k); g.stroke(); }
+  grain(g, S, S, 16, 41);
+  const t = tex(c, 1); t.repeat.set(2, 2); return t;
+}
+
+/** Cargo crate face: recessed panel, rivets, hazard stripe, stencil + scuffs. Colour + roughness. */
+export function makeCrateTextures(variant = 0) {
+  const S = 512;
+  const [c, g] = canvas(S, S);
+  const [rc, rg] = canvas(S, S);
+  const base = ['#3d4a5e', '#4a5262', '#5a4a3a'][variant % 3];
+  g.fillStyle = base; g.fillRect(0, 0, S, S);
+  rg.fillStyle = '#8a8a8a'; rg.fillRect(0, 0, S, S);
+  // frame + recessed panel
+  g.fillStyle = 'rgba(0,0,0,0.35)'; g.fillRect(28, 28, S - 56, S - 56);
+  g.fillStyle = 'rgba(255,255,255,0.06)'; g.fillRect(36, 36, S - 72, S - 72);
+  g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(36, 36, S - 72, 6); g.fillRect(36, 36, 6, S - 72);
+  g.fillStyle = 'rgba(255,255,255,0.10)'; g.fillRect(36, S - 42, S - 72, 6); g.fillRect(S - 42, 36, 6, S - 72);
+  rg.fillStyle = '#b8b8b8'; rg.fillRect(36, 36, S - 72, S - 72);
+  // cross brace ribs
+  g.fillStyle = 'rgba(255,255,255,0.05)'; g.fillRect(36, S / 2 - 10, S - 72, 20); g.fillRect(S / 2 - 10, 36, 20, S - 72);
+  // rivets
+  for (const [x, y] of [[16, 16], [S - 16, 16], [16, S - 16], [S - 16, S - 16], [S / 2, 14], [S / 2, S - 14], [14, S / 2], [S - 14, S / 2]]) {
+    g.fillStyle = '#10141c'; g.beginPath(); g.arc(x + 1, y + 1, 7, 0, 7); g.fill();
+    g.fillStyle = '#aab6c8'; g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill();
+    g.fillStyle = '#e8f0ff'; g.beginPath(); g.arc(x - 2, y - 2, 2.5, 0, 7); g.fill();
+    rg.fillStyle = '#404040'; rg.beginPath(); rg.arc(x, y, 7, 0, 7); rg.fill();
+  }
+  // hazard stripe band + stencil
+  const bandY = variant % 2 ? 70 : S - 130;
+  g.save(); g.beginPath(); g.rect(60, bandY, S - 120, 26); g.clip();
+  for (let k = -48; k < S + 48; k += 48) { g.fillStyle = ((k / 48) & 1) ? '#e8a728' : '#1a1e26'; g.beginPath(); g.moveTo(k, bandY); g.lineTo(k + 48, bandY); g.lineTo(k + 24, bandY + 26); g.lineTo(k - 24, bandY + 26); g.closePath(); g.fill(); }
+  g.restore();
+  g.fillStyle = 'rgba(225,235,250,0.85)'; g.font = 'bold 44px system-ui, sans-serif'; g.textAlign = 'center';
+  g.fillText(['CDF-0' + (variant + 1), 'ARWING PARTS', 'G-DIFFUSER'][variant % 3], S / 2, S / 2 + 16 + (variant % 2 ? 30 : -20));
+  g.font = 'bold 18px monospace'; g.fillStyle = 'rgba(160,220,255,0.7)';
+  g.fillText('CORNERIA DEFENSE FORCE // HANGAR SUPPLY', S / 2, S / 2 + 46 + (variant % 2 ? 30 : -20));
+  // emblem ring
+  g.strokeStyle = 'rgba(225,235,250,0.55)'; g.lineWidth = 5; g.beginPath(); g.arc(S / 2, S / 2 - 70 + (variant % 2 ? 30 : -20), 34, 0, 7); g.stroke();
+  // scuffs / grime
+  for (let i = 0; i < 60; i++) { g.fillStyle = `rgba(${hash(i, 1, 51) > 0.5 ? '0,0,0' : '255,255,255'},${0.04 + hash(i, 2, 52) * 0.08})`; const w = 10 + hash(i, 3, 53) * 90; g.fillRect(hash(i, 4, 54) * S, hash(i, 5, 55) * S, w, 2 + hash(i, 6, 56) * 4); }
+  grain(g, S, S, 14, 61);
+  return { map: tex(c, 1), roughnessMap: tex(rc, 1, false) };
+}
+
 /** Soft radial sprite for particles/glow. */
 export function makeGlowTexture() {
   const [c, g] = canvas(128, 128);
