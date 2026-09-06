@@ -29,11 +29,13 @@ export async function create(ctx, opts = {}) {
   look.preset.sun.dir.set(0.80, 0.46, -0.24).normalize();
   SUN_DIR.copy(look.preset.sun.dir);
   // tweak the resolved preset (setFocus re-pushes it every frame)
-  Object.assign(look.preset.bloom, { strength: 0.55, radius: 0.45, threshold: 0.86 });
-  look.preset.exposure = 0.95; look.preset.envIntensity = 0.8;
+  Object.assign(look.preset.bloom, { strength: 0.42, radius: 0.4, threshold: 0.92 });
+  look.preset.exposure = 0.95; look.preset.envIntensity = 0.7;
   // crisp small sun disc (our own sprite draws the core + corona); low sky glow so it isn't a washed-out blob
   look.preset.sun.glow = 0.28; look.preset.sun.size = 0.012; look.preset.sun.intensity = 3.0;
-  look.preset.sky.nebula = 1.05;
+  // nebula: quieter and cooler (deep indigo -> dusty violet) so it's a backdrop, not a magenta smear
+  look.preset.sky.nebula = 0.72;
+  look.preset.sky.nebulaA.setRGB(0.07, 0.13, 0.42); look.preset.sky.nebulaB.setRGB(0.40, 0.14, 0.34);
   look.preset.hemi.intensity = 1.0; look.preset.fill.intensity = 1.3;
   look.preset.fill.dir.set(-0.6, 0.2, 0.75).normalize();
   look.preset.grade.vignette = 0.38; look.preset.grade.saturation = 1.15;
@@ -47,7 +49,7 @@ export async function create(ctx, opts = {}) {
   if (!dbg.has('noplanet')) scene.add(planet.group);
 
   // ---------------- asteroid belt
-  const belt = buildAsteroidBelt(rng, { count: dbg.has('nobelt') ? 6 : 780, extent: 560, thickness: 130, look });
+  const belt = buildAsteroidBelt(rng, { count: dbg.has('nobelt') ? 6 : 540, extent: 560, thickness: 140, look, heroes: dbg.has('nobelt') ? 0 : 5 });
   scene.add(belt.group);
 
   // ---------------- dust motes, haze sheets (god-ray forward scatter), sun disc
@@ -82,9 +84,21 @@ export async function create(ctx, opts = {}) {
   arwing.traverse((o) => {
     if (!o.isMesh || !o.material?.isShaderMaterial) return;
     const u = o.material.uniforms;
-    if (u?.uGain) { plumeMats.push(o.material); u.uGain.value *= 0.55; }
+    if (u?.uGain) { plumeMats.push(o.material); u.uGain.value *= 0.5; }
     if (u?.uIntensity && o.position.z > 3.5) engineDiscs.push(o.material);
   });
+  // Hull materials: the showcase's mirror-clearcoat wings blew out to pure white under our hard key when
+  // the camera swung sun-side on boost. Matte the coat a touch and cap the env reflection so the wings
+  // stay white-with-shading instead of bloom-white.
+  if (rig?.materials) {
+    for (const k of ['matHull', 'matWing', 'matBlue', 'matGrey', 'matRed']) {
+      const mm = rig.materials[k]; if (!mm) continue;
+      if ('clearcoatRoughness' in mm) mm.clearcoatRoughness = Math.max(mm.clearcoatRoughness, 0.3);
+      if ('clearcoat' in mm) mm.clearcoat = Math.min(mm.clearcoat, 0.6);
+      mm.envMapIntensity = Math.min(mm.envMapIntensity ?? 1, 0.6);
+      if (k === 'matWing' || k === 'matHull') mm.roughness = Math.max(mm.roughness, 0.5);
+    }
+  }
 
   const ship = {
     pos: new THREE.Vector3(0, 0, 0), quat: new THREE.Quaternion(), speed: 55,
@@ -94,6 +108,13 @@ export async function create(ctx, opts = {}) {
   belt.clearAround(ship.pos, 70);
   // clear the first stretch of the flight path so the opening isn't a face full of rock
   for (let i = 1; i <= 8; i++) belt.clearAround(_v.set(0, 0, -i * 40), 40);
+  // keep the colossal hero rocks off the opening lane but make sure one sits in the opening frame (up-right)
+  {
+    const heroRocks = belt.rocks.filter((r) => r.big);
+    for (const r of heroRocks) { const d = r.pos.distanceTo(ship.pos); if (d < r.scale + 520) r.pos.multiplyScalar((r.scale + 520) / Math.max(d, 1)); }
+    if (heroRocks[0]) heroRocks[0].pos.set(700, 220, -1100);
+    if (heroRocks[1]) heroRocks[1].pos.set(-760, -300, -1500);
+  }
 
   // ---------------- drones (targets)
   const drones = [];

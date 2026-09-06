@@ -46,7 +46,7 @@ export function buildDrone(envMap) {
     const trail2 = new THREE.Mesh(geoTrail, matTrail); trail2.rotation.z = Math.PI / 2; trail.add(trail2);
     const hit = new THREE.Mesh(geoHit, matHit.clone()); hit.name = 'hit';
     g.add(body, ring, eye, wingL, wingR, fin, thr, glow, trail, hit);
-    g.scale.setScalar(2.4);
+    g.scale.setScalar(3.0);
     return g;
   }
   function animate(g, t, hitAmt) {
