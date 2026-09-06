@@ -88,6 +88,10 @@ export const CSS = `
   background:linear-gradient(90deg,rgba(120,210,255,0),rgba(120,210,255,.9) 30%,#fff 50%,rgba(120,210,255,.9) 70%,rgba(120,210,255,0))}
 .sw-banner .sw-bl.b2{margin-top:-56px;height:1px;opacity:.6}
 .sw-banner .sw-bl.b3{margin-top:54px;height:1px;opacity:.6}
+.sw-banner.alert .sw-bg{background:linear-gradient(90deg,rgba(90,0,10,0),rgba(110,10,20,.6) 25%,rgba(110,10,20,.6) 75%,rgba(90,0,10,0))}
+.sw-banner.alert .sw-bl{background:linear-gradient(90deg,rgba(255,110,90,0),rgba(255,110,90,.9) 30%,#fff 50%,rgba(255,110,90,.9) 70%,rgba(255,110,90,0))}
+.sw-banner.gold .sw-bg{background:linear-gradient(90deg,rgba(90,60,0,0),rgba(100,70,10,.55) 25%,rgba(100,70,10,.55) 75%,rgba(90,60,0,0))}
+.sw-banner.gold .sw-bl{background:linear-gradient(90deg,rgba(255,215,94,0),rgba(255,215,94,.9) 30%,#fff 50%,rgba(255,215,94,.9) 70%,rgba(255,215,94,0))}
 .sw-dmg{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(255,60,40,0) 40%,rgba(255,60,40,.55) 100%);opacity:0;will-change:opacity}
 .sw-warn{position:absolute;left:0;right:0;top:150px;text-align:center;font-weight:700;font-style:italic;font-size:26px;letter-spacing:.5em;color:#ff6e5e;
   text-shadow:0 2px 0 rgba(80,0,0,.9);opacity:0}

@@ -22,9 +22,11 @@ function spring(s, target, dt, k = 120, d = 14) {
 /**
  * createHud(ctx) -> { setShield, setBoost, addScore, addHit, say, banner, setLock, setRadar, setLives, setBombs, damage, update, dispose, root }
  */
-export function createHud(ctx) {
+export function createHud(ctx, opts = {}) {
   injectStyles();
   const { ui, size } = ctx;
+  const THREE = ctx.THREE;
+  const _v = THREE ? new THREE.Vector3() : null;
   const dpr = Math.min(devicePixelRatio || 1, 2);
   const root = el('div', 'sw-hud', ui);
   el('div', 'sw-vig', root);
@@ -101,6 +103,7 @@ export function createHud(ctx) {
     say: null, // { text, name, i, timer, done, hold }
     dmg: 0, introT: -0.2, commAge: -1, commOut: -1, hitPop: -1,
     banner: null, // { age, dur, spans }
+    criticalThreshold: opts.criticalThreshold ?? 0.35, criticalShown: false,
   };
   portrait.setTalking(false);
 
@@ -123,14 +126,42 @@ export function createHud(ctx) {
       if (st.commAge < 0 || st.commOut >= 0) st.commAge = 0;
       st.commOut = -1;
     },
-    hideComm() { if (st.commAge >= 0 && st.commOut < 0) st.commOut = 0; st.say = null; portrait.setTalking(false); },
-    banner(text, sub = '', dur = 2.6) {
-      st.banner = { age: 0, dur, text: String(text).toUpperCase(), sub: String(sub).toUpperCase() };
+    hideComm() {
+      if (st.commAge < 0) return; // nothing shown: no-op
+      if (st.commOut < 0) st.commOut = 0;
+      st.say = null; portrait.setTalking(false);
+    },
+    /** true while the comm window is visible (or animating in/out) */
+    get commVisible() { return st.commAge >= 0; },
+    /** shield fraction below which the CRITICAL warning / red gauge state kicks in (default 0.35) */
+    get criticalThreshold() { return st.criticalThreshold; },
+    set criticalThreshold(v) { st.criticalThreshold = clamp(v, 0, 1); },
+    /** big centre banner. tone: 'ice' (default) | 'alert' (red) | 'gold' */
+    banner(text, sub = '', dur = 2.6, tone = 'ice') {
+      st.banner = { age: 0, dur, text: String(text).toUpperCase(), sub: String(sub).toUpperCase(), tone };
+      banner.className = 'sw-banner ' + tone;
     },
     /** aim in NDC-ish (-1..1) for the twin reticles */
     setAim(x, y) { st.aim.x = x; st.aim.y = y; },
     /** lock target in screen px, or null */
     setLock(pos) { if (pos && !st.lock) st.lockAge = 0; st.lock = pos ? { x: pos.x, y: pos.y, dist: pos.dist ?? 0 } : null; },
+    /**
+     * Lock onto a world-space position (THREE.Vector3 or Object3D) as seen by
+     * `camera`; projects to HUD space (1280x720). Off-screen / behind-camera
+     * targets are clamped to the frame edge. `distScale` converts world units
+     * to the displayed range (m). Pass null to clear.
+     */
+    lockFromWorld(target, camera, distScale = 1) {
+      if (!target || !camera || !_v) { api.setLock(null); return null; }
+      if (target.isObject3D) target.getWorldPosition(_v); else _v.copy(target);
+      const dist = _v.distanceTo(camera.position);
+      _v.project(camera);
+      const behind = _v.z > 1;
+      let x = (_v.x * 0.5 + 0.5) * W, y = (-_v.y * 0.5 + 0.5) * H;
+      if (behind) { x = W - x; y = H - y; }
+      const pos = { x: clamp(x, 60, W - 60), y: clamp(y, 60, H - 60), dist: dist * distScale, offscreen: behind || x !== clamp(x, 60, W - 60) || y !== clamp(y, 60, H - 60) };
+      api.setLock(pos); return pos;
+    },
     /** radar blips: [{x,y,kind:'enemy'|'ally'|'boss'}] with x,y in -1..1 */
     setRadar(blips) { st.radar = blips; },
     damage(amount = 0.1) { api.setShield(st.shieldTarget - amount); st.dmg = 1; },
@@ -178,7 +209,7 @@ export function createHud(ctx) {
     const g = sg, w = 340, h = 40; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
     const x0 = 8, y0 = 8, bw = w - 20, bh = 22, skew = 9;
     const shape = (pad = 0) => { g.beginPath(); g.moveTo(x0 + skew - pad * 0.4, y0 - pad); g.lineTo(x0 + bw + pad, y0 - pad); g.lineTo(x0 + bw - skew + pad * 0.4, y0 + bh + pad); g.lineTo(x0 - pad, y0 + bh + pad); g.closePath(); };
-    const low = s < 0.3;
+    const low = s < st.criticalThreshold;
     housing(g, shape, low ? 0.5 + 0.5 * Math.sin(st.t * 14) : 0, low ? '255,120,90' : '150,220,255');
     g.save(); shape(-1.5); g.clip();
     const inner = bw - skew - 3;
@@ -215,6 +246,10 @@ export function createHud(ctx) {
     // half-way index mark on the lip
     g.fillStyle = '#e8f7ff'; g.beginPath(); g.moveTo(x0 + skew + inner * 0.5 + 2, y0 - 6); g.lineTo(x0 + skew + inner * 0.5 + 5, y0 - 3); g.lineTo(x0 + skew + inner * 0.5 - 1, y0 - 3); g.closePath(); g.fill();
     warn.style.opacity = low ? String(0.6 + 0.4 * Math.sin(st.t * 10)) : '0';
+    warn.style.transform = low ? `translateY(${Math.sin(st.t * 20) * 1.5}px) scale(${1 + 0.03 * Math.sin(st.t * 10)})` : 'none';
+    if (low && !st.criticalShown) { st.criticalShown = true; if (!st.banner) api.banner('WARNING', 'SHIELD CRITICAL', 1.1, 'alert'); }
+    if (st.banner) warn.style.opacity = '0';
+    if (!low) st.criticalShown = false;
 
     // lives & bombs
     const lg = livesCv.getContext('2d'); lg.setTransform(dpr, 0, 0, dpr, 0, 0); lg.clearRect(0, 0, 120, 18);
@@ -330,13 +365,20 @@ export function createHud(ctx) {
       const acquired = st.lockAge > 0.55;
       const rad = lerp(150, 34, Math.min(1, st.lockAge / 0.55) ** 0.6) * (acquired ? 1 + Math.sin(st.t * 12) * 0.04 : 1);
       const rot = acquired ? st.t * 1.6 : st.t * 7;
+      // acquisition flash ring (expands & fades right after lock)
+      if (acquired && st.lockAge < 0.95) { const p = (st.lockAge - 0.55) / 0.4; g.save(); g.globalAlpha = la * (1 - p); g.strokeStyle = '#ffd75e'; g.lineWidth = 6 * (1 - p) + 1; g.beginPath(); g.arc(lx, ly, rad * (1 + p * 1.6), 0, Math.PI * 2); g.stroke(); g.restore(); }
       g.save(); g.translate(lx, ly); g.rotate(rot); g.globalAlpha = la;
-      g.shadowColor = 'rgba(255,60,40,.9)'; g.shadowBlur = 10;
-      g.strokeStyle = acquired ? '#ff4a3a' : '#ffd75e'; g.lineWidth = 3;
-      for (let i = 0; i < 4; i++) { g.rotate(Math.PI / 2); g.beginPath(); g.moveTo(rad, rad - 14); g.lineTo(rad, rad); g.lineTo(rad - 14, rad); g.stroke(); }
+      // chunky chevron brackets: dark keyline under a thick hot stroke
+      const arm = 16;
+      for (const [w, col, blur] of [[9, 'rgba(60,0,0,.85)', 0], [5, acquired ? '#ff4a3a' : '#ffd75e', 14], [1.6, acquired ? '#fff1d0' : '#fffbe6', 0]]) {
+        g.shadowColor = 'rgba(255,60,40,.9)'; g.shadowBlur = blur; g.strokeStyle = col; g.lineWidth = w;
+        for (let i = 0; i < 4; i++) { g.rotate(Math.PI / 2); g.beginPath(); g.moveTo(rad, rad - arm); g.lineTo(rad, rad); g.lineTo(rad - arm, rad); g.stroke(); }
+      }
       g.restore();
       if (acquired) {
-        g.save(); g.globalAlpha = la; g.translate(lx, ly); g.rotate(-st.t * 2.4); g.strokeStyle = 'rgba(255,120,90,.8)'; g.lineWidth = 2; g.setLineDash([10, 8]); g.beginPath(); g.arc(0, 0, rad * 1.35, 0, Math.PI * 2); g.stroke(); g.setLineDash([]); g.restore();
+        g.save(); g.globalAlpha = la; g.translate(lx, ly); g.rotate(-st.t * 2.4); g.strokeStyle = 'rgba(255,120,90,.9)'; g.lineWidth = 3; g.setLineDash([12, 9]); g.beginPath(); g.arc(0, 0, rad * 1.35, 0, Math.PI * 2); g.stroke(); g.setLineDash([]); g.restore();
+        // centre diamond pip
+        g.save(); g.globalAlpha = la; g.translate(lx, ly); g.rotate(Math.PI / 4); g.fillStyle = '#ff4a3a'; g.shadowColor = 'rgba(255,60,40,.9)'; g.shadowBlur = 8; g.fillRect(-4, -4, 8, 8); g.restore();
         // tag plate: leader line from the bracket corner to a dark plate that
         // carries LOCK + range, kept clear of the rotating bracket & ring
         const tagIn = clamp((st.lockAge - 0.55) / 0.25, 0, 1), te = easeOutBack(tagIn, 1.5);
@@ -359,6 +401,11 @@ export function createHud(ctx) {
     }
   }
 
+  const TONES = {
+    ice:   { deep: '#03122c', ext: '#0c2c5c', key: '#5aa8ff', hi: '#f4fbff', mid: '#a9d8ff', lo: '#5fb0ff', sub: '#ffd75e' },
+    alert: { deep: '#2a0408', ext: '#6a0c14', key: '#ff7a60', hi: '#fff0e8', mid: '#ffb09a', lo: '#ff5a3c', sub: '#ffb09a' },
+    gold:  { deep: '#2a1a00', ext: '#6a4400', key: '#ffd75e', hi: '#fffbe8', mid: '#ffe08a', lo: '#f0a020', sub: '#dff6ff' },
+  };
   function drawBanner(b, tin, tout, pout) {
     const g = bnG; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, 240);
     const cy = 120;
@@ -376,23 +423,26 @@ export function createHud(ctx) {
       const a = Math.min(easeOutCubic(p * 3), 1 - po); if (a <= 0) return;
       g.save(); g.globalAlpha = a;
       g.translate(cx + 60 * easeInCubic(po), cy + 40 * (1 - e));
-      const sc = 1.6 - 0.6 * e; g.transform(sc, 0, -Math.tan(0.44 * easeInCubic(po)) * sc, sc, 0, 0);
-      g.fillStyle = 'rgba(0,30,70,.95)'; g.fillText(ch, 0, 6);
-      g.fillStyle = 'rgba(255,70,60,.6)'; g.fillText(ch, 3, 0);
-      g.fillStyle = 'rgba(60,200,255,.65)'; g.fillText(ch, -3, 0);
-      const grad = g.createLinearGradient(0, -size / 2, 0, size / 2); grad.addColorStop(0, '#ffffff'); grad.addColorStop(0.55, '#f4fbff'); grad.addColorStop(0.56, '#cfe9ff'); grad.addColorStop(1, '#9fd3ff');
+      const sc = 1.6 - 0.6 * e; g.transform(sc * 1.08, 0, -Math.tan(0.44 * easeInCubic(po)) * sc, sc, 0, 0);
+      // chunky extruded face: deep navy extrusion stack, ink keyline, bevelled white/ice fill, top gloss
+      const T = TONES[b.tone] ?? TONES.ice;
+      for (let d = 7; d >= 1; d--) { g.fillStyle = d > 4 ? T.deep : T.ext; g.fillText(ch, d * 0.6, d); }
+      g.lineJoin = 'round'; g.lineWidth = 9; g.strokeStyle = T.deep; g.strokeText(ch, 0, 0);
+      g.lineWidth = 4.5; g.strokeStyle = T.key; g.strokeText(ch, 0, 0);
+      const grad = g.createLinearGradient(0, -size / 2, 0, size / 2); grad.addColorStop(0, '#ffffff'); grad.addColorStop(0.5, T.hi); grad.addColorStop(0.52, T.mid); grad.addColorStop(1, T.lo);
       g.fillStyle = grad; g.fillText(ch, 0, 0);
+      g.save(); g.beginPath(); g.rect(-size, -size / 2, size * 2, size * 0.16); g.clip(); g.fillStyle = 'rgba(255,255,255,.55)'; g.fillText(ch, 0, 0); g.restore();
       g.restore();
     });
     // subtitle
     const ps = clamp((tin - 0.5) / 0.3, 0, 1); const sa = Math.min(ps, 1 - pout);
     if (sa > 0 && b.sub) {
-      g.save(); g.globalAlpha = sa; g.font = `italic 700 18px ${FONT}`; g.textAlign = 'center';
+      g.save(); g.globalAlpha = sa; g.font = `italic 700 19px ${FONT}`; g.textAlign = 'center';
       const sub = b.sub;
-      const y = cy + 62 + 10 * (1 - easeOutCubic(ps));
+      const y = cy + 64 + 10 * (1 - easeOutCubic(ps));
       g.letterSpacing = '0.5em';
-      g.fillStyle = 'rgba(60,30,0,.9)'; g.fillText(sub, W / 2 + 4, y + 2);
-      g.fillStyle = '#ffd75e'; g.fillText(sub, W / 2 + 4, y);
+      g.lineWidth = 5; g.lineJoin = 'round'; g.strokeStyle = 'rgba(20,10,0,.95)'; g.strokeText(sub, W / 2 + 4, y);
+      g.fillStyle = (TONES[b.tone] ?? TONES.ice).sub; g.fillText(sub, W / 2 + 4, y);
       g.restore();
     }
   }

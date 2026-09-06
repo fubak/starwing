@@ -55,6 +55,7 @@ export function createBackdrop(ctx) {
     const glow = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), eGlow); glow.position.z = 1.35; e.add(glow);
     const light = new THREE.PointLight(0xff6a30, 6, 12, 2); light.position.z = 1.6; e.add(light);
     e.userData = { phase: i * 1.7, rad: 6 + i * 2.5 };
+    e.scale.setScalar(1.9);
     e.traverse((o) => { if (o.isMesh) o.castShadow = false; });
     group.add(e); enemies.push(e);
   }
@@ -137,7 +138,7 @@ export function createBackdrop(ctx) {
     // enemies weave far ahead
     enemies.forEach((e, i) => {
       const p = e.userData.phase + t * 0.5;
-      e.position.set(Math.sin(p) * e.userData.rad, Math.cos(p * 1.3) * 3 + 1.0, -40 - Math.sin(p * 0.7 + i) * 10);
+      e.position.set(Math.sin(p) * e.userData.rad, Math.cos(p * 1.3) * 3 + 1.0, -34 - Math.sin(p * 0.7 + i) * 9);
       e.lookAt(e.position.x + Math.cos(p) * 2, e.position.y, e.position.z - 4);
       e.rotation.z += Math.sin(p) * 0.5;
     });
