@@ -146,7 +146,7 @@ export class Explosions {
           float heat = clamp(n * 1.6 - uAge * 1.1 + ndv * 0.5, 0.0, 1.0);
           vec3 col = mix(vec3(0.6, 0.05, 0.0), vec3(1.0, 0.45, 0.08), heat); col = mix(col, vec3(1.0, 0.95, 0.75), smoothstep(0.7, 1.0, heat));
           float a = smoothstep(0.0, 0.25, ndv) * (1.0 - uAge) * (0.6 + heat);
-          gl_FragColor = vec4(col * uTint * (1.5 + 2.0 * (1.0 - uAge)), a); }`,
+          gl_FragColor = vec4(col * uTint * (0.9 + 1.2 * (1.0 - uAge)), a * 0.85); }`,
     });
     this.ringGeo = new THREE.RingGeometry(0.7, 1, 48);
     this.ringMat = new THREE.MeshBasicMaterial({ color: 0xffc080, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
@@ -165,10 +165,10 @@ export class Explosions {
     e.fire.visible = true; e.fire.position.copy(p); e.fire.material.uniforms.uSeed.value = Math.random() * 40;
     e.fire.material.uniforms.uTint.value.set(...(tint || [1, 1, 1]));
     e.ring.visible = true; e.ring.position.copy(p); e.ring.quaternion.random();
-    this.light.position.copy(p); this.light.intensity = Math.max(this.light.intensity, size * 250); this.flash = Math.max(this.flash, Math.min(1, size / 22));
+    this.light.position.copy(p); this.light.intensity = Math.min(1400, Math.max(this.light.intensity, size * 160)); this.flash = Math.max(this.flash, Math.min(1, size / 22));
     return e;
   }
-  update(dt, camera) {
+  update(dt, camera, real = dt) {
     for (const e of this.pool) {
       if (!e.active) continue;
       e.age += dt; const u = e.age / e.dur;
@@ -178,7 +178,7 @@ export class Explosions {
       const ru = Math.min(1, u * 1.4); e.ring.scale.setScalar(e.size * 0.6 + e.size * 3.2 * (1 - Math.pow(1 - ru, 2.5)));
       e.ring.material.opacity = 0.9 * (1 - ru) * (1 - ru); e.ring.lookAt(camera.position);
     }
-    this.light.intensity *= Math.exp(-dt * 5); this.flash *= Math.exp(-dt * 6);
+    this.light.intensity *= Math.exp(-real * 5); this.flash *= Math.exp(-real * 6);
   }
   dispose() { for (const e of this.pool) { e.fire.material.dispose(); e.ring.material.dispose(); this.scene.remove(e.fire, e.ring); } this.ringGeo.dispose(); this.fireMat.dispose(); this.scene.remove(this.light); }
 }
@@ -334,9 +334,9 @@ export class Bolts {
 
 // ---------------------------------------------------------------- shield
 export function makeShield(THREE, radius = [118, 46, 96]) {
-  const geo = new THREE.SphereGeometry(1, 96, 48);
+  const geo = new THREE.SphereGeometry(1, 64, 32);
   const mat = new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.FrontSide,
     uniforms: {
       uTime: { value: 0 }, uDissolve: { value: 0 }, uPower: { value: 1 }, uColor: { value: new THREE.Color(0x46b8ff) },
       uHits: { value: [new THREE.Vector4(0, 0, 0, -10), new THREE.Vector4(0, 0, 0, -10), new THREE.Vector4(0, 0, 0, -10), new THREE.Vector4(0, 0, 0, -10)] },
@@ -359,9 +359,10 @@ export function makeShield(THREE, radius = [118, 46, 96]) {
         float cellPulse = 0.5 + 0.5 * sin(uTime * 2.0 + id * 6.283);
         float fres = pow(1.0 - ndv, 3.0);
         float ripple = 0.0;
-        for (int i = 0; i < 4; i++) { float age = uTime - uHits[i].w; if (age < 0.0 || age > 1.6) continue; float d = distance(vW, uHits[i].xyz); float r = age * 60.0; ripple += smoothstep(14.0, 0.0, abs(d - r)) * (1.0 - age / 1.6) * 1.5 + smoothstep(30.0, 0.0, d) * (1.0 - age / 1.6) * 0.8; }
-        float dis = smoothstep(uDissolve - 0.08, uDissolve, id) * step(0.001, uDissolve) * 2.5; // cells about to fall flare up
-        float a = (fres * 0.9 + edge * (0.10 + 0.08 * cellPulse) + ripple * (0.35 + edge) + dis * (0.3 + edge)) * uPower;
+        for (int i = 0; i < 4; i++) { float age = uTime - uHits[i].w; if (age < 0.0 || age > 1.2) continue; float k = 1.0 - age / 1.2; float d = distance(vW, uHits[i].xyz); float r = age * 55.0; ripple += smoothstep(10.0, 0.0, abs(d - r)) * k * 0.9 + smoothstep(22.0, 0.0, d) * k * k * 0.6; }
+        ripple = min(ripple, 1.6);
+        float dis = smoothstep(uDissolve - 0.08, uDissolve, id) * step(0.001, uDissolve) * 1.2; // cells about to fall flare up
+        float a = min(0.9, (fres * 0.9 + edge * (0.10 + 0.08 * cellPulse) + ripple * (0.35 + edge) + dis * (0.3 + edge)) * uPower);
         vec3 col = mix(uColor, vec3(0.85, 0.95, 1.0), ripple * 0.5 + dis * 0.4);
         gl_FragColor = vec4(col * a * 1.6, a);
       }`,

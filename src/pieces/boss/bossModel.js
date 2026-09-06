@@ -181,23 +181,29 @@ export function buildBoss(THREE, rng) {
   const armL = mk('armL'), armR = mk('armR');
 
   // ---- main hull (rear + front halves share a profile; split at z=0)
-  const prof = chamferRect(16, 9, 4.5);
+  const HW = 22, HH = 12; // hull half-width / half-height
+  const prof = chamferRect(HW, HH, 5.5);
   hullRear.add(new THREE.Mesh(loft(THREE, prof, [
     { z: -62, sx: 0.7, sy: 0.7, oy: 1 }, { z: -52, sx: 0.95, sy: 0.95 }, { z: -20, sx: 1.0, sy: 1.0 }, { z: 0.5, sx: 1.0, sy: 1.0 },
   ]), hullMat));
   hullFront.add(new THREE.Mesh(loft(THREE, prof, [
-    { z: -0.5, sx: 1.0, sy: 1.0 }, { z: 22, sx: 1.0, sy: 1.0 }, { z: 44, sx: 0.86, sy: 0.8, oy: 1.2 }, { z: 60, sx: 0.55, sy: 0.5, oy: 1.5 }, { z: 70, sx: 0.28, sy: 0.3, oy: 2 },
+    { z: -0.5, sx: 1.0, sy: 1.0 }, { z: 22, sx: 1.0, sy: 1.0 }, { z: 44, sx: 0.86, sy: 0.8, oy: 1.2 }, { z: 60, sx: 0.55, sy: 0.5, oy: 1.5 }, { z: 72, sx: 0.26, sy: 0.28, oy: 2 },
   ]), hullMat));
+  // armoured prow wedge (chunky nose block with a slot vent)
+  const prow = new THREE.Mesh(loft(THREE, chamferRect(12, 5, 2), [{ z: 40, sx: 1, sy: 1, oy: -2 }, { z: 62, sx: 0.8, sy: 0.7, oy: -1.5 }, { z: 78, sx: 0.35, sy: 0.3, oy: -1 }]), darkMat);
+  hullFront.add(prow);
   // dorsal spine
-  const spineProf = chamferRect(6, 4, 1.8);
-  hullRear.add(new THREE.Mesh(loft(THREE, spineProf, [{ z: -58, sx: 0.5, sy: 0.6, oy: 9 }, { z: -40, sx: 1, sy: 1, oy: 10.5 }, { z: 0.5, sx: 1, sy: 1, oy: 10.5 }]), darkMat));
+  const spineProf = chamferRect(7, 4.5, 2);
+  hullRear.add(new THREE.Mesh(loft(THREE, spineProf, [{ z: -58, sx: 0.5, sy: 0.6, oy: HH - 0.5 }, { z: -40, sx: 1, sy: 1, oy: HH + 1.5 }, { z: 0.5, sx: 1, sy: 1, oy: HH + 1.5 }]), darkMat));
   // ventral keel
-  const keel = new THREE.Mesh(loft(THREE, chamferRect(5, 3.5, 1.5), [{ z: -50, sx: 0.6, sy: 0.6, oy: -9 }, { z: -30, sx: 1, sy: 1, oy: -10.5 }, { z: 30, sx: 1, sy: 1, oy: -10.5 }, { z: 48, sx: 0.5, sy: 0.5, oy: -9 }]), accentMat);
+  const keel = new THREE.Mesh(loft(THREE, chamferRect(6, 4, 1.5), [{ z: -50, sx: 0.6, sy: 0.6, oy: -HH + 0.5 }, { z: -30, sx: 1, sy: 1, oy: -HH - 1.5 }, { z: 30, sx: 1, sy: 1, oy: -HH - 1.5 }, { z: 48, sx: 0.5, sy: 0.5, oy: -HH + 0.5 }]), accentMat);
   hullFront.add(keel);
   // side accent stripes (thin red panels)
   for (const s of [-1, 1]) {
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.6, 60), accentMat); stripe.position.set(s * 16.2, 2.5, -20); hullRear.add(stripe);
-    const stripe2 = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.6, 34), accentMat); stripe2.position.set(s * 16.0, 2.5, 20); hullFront.add(stripe2);
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.8, 60), accentMat); stripe.position.set(s * (HW + 0.2), 3, -20); hullRear.add(stripe);
+    const stripe2 = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.8, 34), accentMat); stripe2.position.set(s * (HW + 0.0), 3, 20); hullFront.add(stripe2);
+    // side armour cheeks
+    const cheek = new THREE.Mesh(loft(THREE, chamferRect(3, 7, 1.2), [{ z: -48, sx: 0.5, sy: 0.6 }, { z: -30, sx: 1, sy: 1 }, { z: 20, sx: 1, sy: 1 }, { z: 36, sx: 0.5, sy: 0.6 }]), hullMat); cheek.position.set(s * (HW + 1.5), -2, 0); hullRear.add(cheek);
   }
 
   // ---- wings (lofted along local z then rotated to span ±x)
@@ -213,7 +219,7 @@ export function buildBoss(THREE, rng) {
     const wm = new THREE.Mesh(wingGeo, hullMat);
     wm.rotation.y = Math.PI / 2; // local +z -> world +x, local -x -> world +z (leading edge forward)
     wm.scale.z = side; // mirror span for the left wing
-    wm.position.set(side * 12, 2, 4);
+    wm.position.set(side * 14, 2, 4);
     wg.add(wm);
     // wing tip fin (vertical) w/ red light
     const fin = new THREE.Mesh(new THREE.BoxGeometry(1.2, 14, 10), darkMat); fin.position.set(side * 96, 6, -14); wg.add(fin);
@@ -223,8 +229,8 @@ export function buildBoss(THREE, rng) {
     const wEng = new THREE.Mesh(new THREE.CylinderGeometry(4.2, 4.8, 22, 20), darkMat); wEng.rotation.x = Math.PI / 2; wEng.position.set(side * 62, -1.5, -14); wg.add(wEng);
     const wEngRim = new THREE.Mesh(new THREE.TorusGeometry(4.6, 0.5, 8, 24), engineRimMat); wEngRim.position.set(side * 62, -1.5, -25.2); wg.add(wEngRim);
     // shield generator nodes (phase 1)
-    for (const [wx, wz] of [[40, -2], [76, -8]]) {
-      const base = new THREE.Group(); base.position.set(side * wx, 4.5 + (wx > 60 ? -0.8 : 0), wz); wg.add(base);
+    for (const [wx, wz] of [[60, -4], [84, -8]]) {
+      const base = new THREE.Group(); base.position.set(side * wx, 4.5 + (wx > 70 ? -0.8 : 0), wz); wg.add(base);
       const ped = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 4.4, 2.6, 12), trimMat); ped.position.y = 0.6; base.add(ped);
       const ring = new THREE.Mesh(new THREE.TorusGeometry(4.3, 0.42, 8, 32), trimMat); ring.rotation.x = Math.PI / 2; ring.position.y = 4.6; base.add(ring);
       for (let k = 0; k < 4; k++) {
@@ -268,16 +274,17 @@ export function buildBoss(THREE, rng) {
   const emitters = [];
   for (const side of [-1, 1]) {
     const ag = side < 0 ? armL : armR;
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 4.2, 64, 16), hullMat); barrel.rotation.x = Math.PI / 2; barrel.position.set(side * 20, -6, 36); ag.add(barrel);
-    const pylon = new THREE.Mesh(new THREE.BoxGeometry(6, 8, 26), darkMat); pylon.position.set(side * 17, -3, 14); ag.add(pylon);
-    const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(4.8, 4.0, 9, 16, 1, true), trimMat); muzzle.rotation.x = Math.PI / 2; muzzle.position.set(side * 20, -6, 70); ag.add(muzzle);
-    for (let k = 0; k < 3; k++) { const ring = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.35, 8, 28), accentMat); ring.position.set(side * 20, -6, 54 + k * 5); ag.add(ring); }
-    const emitter = new THREE.Mesh(new THREE.SphereGeometry(2.1, 16, 12), new THREE.MeshBasicMaterial({ color: 0xff5030 })); emitter.position.set(side * 20, -6, 72.5); emitter.scale.z = 0.5; ag.add(emitter);
+    const AX = 31; // arm centreline
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(3.6, 4.4, 64, 16), hullMat); barrel.rotation.x = Math.PI / 2; barrel.position.set(side * AX, -6, 36); ag.add(barrel);
+    const pylon = new THREE.Mesh(new THREE.BoxGeometry(10, 9, 28), darkMat); pylon.position.set(side * (AX - 4), -3, 14); ag.add(pylon);
+    const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(5.0, 4.2, 9, 16, 1, true), trimMat); muzzle.rotation.x = Math.PI / 2; muzzle.position.set(side * AX, -6, 70); ag.add(muzzle);
+    for (let k = 0; k < 3; k++) { const ring = new THREE.Mesh(new THREE.TorusGeometry(4.4, 0.35, 8, 28), accentMat); ring.position.set(side * AX, -6, 54 + k * 5); ag.add(ring); }
+    const emitter = new THREE.Mesh(new THREE.SphereGeometry(2.2, 16, 12), new THREE.MeshBasicMaterial({ color: 0xff5030 })); emitter.position.set(side * AX, -6, 72.5); emitter.scale.z = 0.5; ag.add(emitter);
     emitters.push({ mesh: emitter, side });
     // power cell (weak point) on the outside of the arm
-    const housing = new THREE.Mesh(new THREE.CylinderGeometry(3.6, 3.6, 5, 8), trimMat); housing.rotation.z = Math.PI / 2; housing.position.set(side * 26, -6, 30); ag.add(housing);
+    const housing = new THREE.Mesh(new THREE.CylinderGeometry(3.6, 4.2, 4, 8), trimMat); housing.position.set(side * AX, -1.2, 30); ag.add(housing);
     const cellMat = makeWeakPointMaterial(THREE, PALETTE.weak);
-    const cell = new THREE.Mesh(new THREE.SphereGeometry(2.7, 20, 16), cellMat); cell.position.set(side * 28.6, -6, 30); ag.add(cell);
+    const cell = new THREE.Mesh(new THREE.SphereGeometry(2.7, 20, 16), cellMat); cell.position.set(side * AX, 1.6, 30); ag.add(cell);
     weakPoints.push({ name: 'cannon power cell', phase: 2, mesh: cell, group: ag, hp: 130, maxHp: 130, alive: true, radius: 3.8, mat: cellMat, flash: 0 });
   }
 
@@ -299,7 +306,7 @@ export function buildBoss(THREE, rng) {
   const hatches = [];
   for (let i = 0; i < 6; i++) {
     const side = i % 2 ? 1 : -1, row = Math.floor(i / 2);
-    const g = new THREE.Group(); g.position.set(side * 9.5, 9.4, -18 - row * 9); hullRear.add(g);
+    const g = new THREE.Group(); g.position.set(side * 13.5, HH + 0.4, -18 - row * 9); hullRear.add(g);
     const frame = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.8, 6.4), trimMat); g.add(frame);
     const glowPlane = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 5.2), new THREE.MeshBasicMaterial({ color: 0xff3a1a, transparent: true, opacity: 0, depthWrite: false })); glowPlane.rotation.x = -Math.PI / 2; glowPlane.position.y = 0.42; g.add(glowPlane);
     const lid = new THREE.Group(); lid.position.set(side * -2.6, 0.5, 0); g.add(lid);
@@ -310,7 +317,7 @@ export function buildBoss(THREE, rng) {
   // ---- turrets (decorative, track the player)
   const turrets = [];
   const turretBase = new THREE.CylinderGeometry(1.6, 1.9, 1.2, 10), turretHead = new THREE.SphereGeometry(1.3, 12, 8), barrelGeo = new THREE.CylinderGeometry(0.22, 0.22, 4.2, 6);
-  for (const [tx, ty, tz, parent] of [[-12, 10.5, 10, hullFront], [12, 10.5, 10, hullFront], [-15, -9.5, -20, hullRear], [15, -9.5, -20, hullRear], [-50, 5.8, -16, wingL], [50, 5.8, -16, wingR], [0, 11, -50, hullRear]]) {
+  for (const [tx, ty, tz, parent] of [[-15, HH + 1.5, 10, hullFront], [15, HH + 1.5, 10, hullFront], [-18, -HH - 0.5, -20, hullRear], [18, -HH - 0.5, -20, hullRear], [-56, 5.8, -16, wingL], [56, 5.8, -16, wingR], [0, HH + 2, -50, hullRear]]) {
     const g = new THREE.Group(); g.position.set(tx, ty, tz); parent.add(g);
     g.add(new THREE.Mesh(turretBase, trimMat));
     const head = new THREE.Group(); head.position.y = 0.9; g.add(head);
@@ -326,9 +333,9 @@ export function buildBoss(THREE, rng) {
   for (let i = 0; i < 220; i++) {
     const onTop = rng.next() < 0.55;
     const z = rng.range(-58, 40);
-    const w = 16 * (z > 22 ? 0.9 : 1);
-    if (onTop) v.set(rng.range(-w + 2, w - 2), 9.6 + (Math.abs(v.x) < 6 ? 0 : 0), z); else v.set(rng.sign() * (w + 0.4), rng.range(-6, 6), z);
-    if (onTop && Math.abs(v.x) < 7 && z < 2) v.x = rng.sign() * rng.range(7, w - 2); // keep off the spine
+    const w = HW * (z > 22 ? 0.9 : 1);
+    if (onTop) v.set(rng.range(-w + 2, w - 2), HH + 0.6, z); else v.set(rng.sign() * (w + 0.4), rng.range(-8, 8), z);
+    if (onTop && Math.abs(v.x) < 8 && z < 2) v.x = rng.sign() * rng.range(8, w - 2); // keep off the spine
     sc.set(rng.range(0.8, 3.5), rng.range(0.4, 1.6), rng.range(1, 5));
     if (!onTop) { const t = sc.x; sc.x = sc.y; sc.y = t; }
     q.identity();
@@ -341,7 +348,7 @@ export function buildBoss(THREE, rng) {
   const lights = new THREE.InstancedMesh(lightGeo, redLightMat, 40);
   for (let i = 0; i < 40; i++) {
     const side = i % 2 ? 1 : -1; const z = -58 + (i >> 1) * 6;
-    v.set(side * (z > 44 ? 12 : 16.3), z > 44 ? 8 : 9.2, z); m4.compose(v, q, sc.set(1, 1, 1)); lights.setMatrixAt(i, m4);
+    v.set(side * (z > 44 ? HW * 0.8 : HW + 0.3), z > 44 ? HH * 0.8 : HH + 0.2, z); m4.compose(v, q, sc.set(1, 1, 1)); lights.setMatrixAt(i, m4);
   }
   lights.instanceMatrix.needsUpdate = true; hullRear.add(lights);
 
@@ -349,13 +356,13 @@ export function buildBoss(THREE, rng) {
 
   // damage anchor points (where fires/smoke spawn as HP drops), in root-local space
   const damageAnchors = [
-    new THREE.Vector3(-14, 9, -30), new THREE.Vector3(15, 6, 10), new THREE.Vector3(-8, -9, 20), new THREE.Vector3(10, 10, -50),
-    new THREE.Vector3(-45, 5, -4), new THREE.Vector3(48, 4, -6), new THREE.Vector3(-20, -8, 50), new THREE.Vector3(22, -4, 44),
-    new THREE.Vector3(0, 22, 30), new THREE.Vector3(-16, 3, -10), new THREE.Vector3(70, 2, -10), new THREE.Vector3(-70, 2, -10),
+    new THREE.Vector3(-16, 12, -30), new THREE.Vector3(18, 9, 10), new THREE.Vector3(-10, -12, 20), new THREE.Vector3(12, 13, -50),
+    new THREE.Vector3(-50, 5, -4), new THREE.Vector3(52, 4, -6), new THREE.Vector3(-31, -8, 50), new THREE.Vector3(33, -4, 44),
+    new THREE.Vector3(0, 22, 30), new THREE.Vector3(-22, 3, -10), new THREE.Vector3(74, 2, -10), new THREE.Vector3(-74, 2, -10),
   ];
 
   return {
-    root, parts, weakPoints, emitters, hatches, engines, engineGlowMat, turrets, petals, runningLights, redLightMat, damageAnchors,
+    root, parts, weakPoints, emitters, hatches, engines, engineGlowMat, turrets, petals, runningLights, redLightMat, damageAnchors, HW, HH,
     materials: [hullMat, darkMat, trimMat, accentMat, redLightMat, engineRimMat, engineGlowMat],
     textures: Object.values(tex),
   };

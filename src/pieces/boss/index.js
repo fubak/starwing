@@ -9,12 +9,32 @@ import { buildBoss } from './bossModel.js';
 import { Particles, Shards, Explosions, Beam, Missiles, Bolts, makeShield, makeTextures } from './fx.js';
 import { buildHud } from './hud.js';
 
-const BOSS_BASE_Z = -150;
+const BOSS_BASE_Z = -135;
+// hull shield: covers the central hull + cannon arms only; the wing-mounted
+// generators sit OUTSIDE it so phase 1 has something to shoot.
+const SHIELD_R = [40, 30, 100], SHIELD_C = [0, 0, 0];
+
+// approximate solid hull in boss-local space (for player bolts that miss weak points)
+function hullSolid(p) {
+  const ax = Math.abs(p.x), ay = Math.abs(p.y);
+  // main hull loft: tapers toward the prow
+  if (p.z > -62 && p.z < 72) {
+    const s = p.z < 22 ? 1 : p.z < 44 ? 1 - 0.2 * (p.z - 22) / 22 : p.z < 60 ? 0.8 - 0.3 * (p.z - 44) / 16 : 0.5 - 0.24 * (p.z - 60) / 12;
+    if (ax < 22 * s + 1.5 && Math.abs(p.y - (p.z > 44 ? 1.5 : 0)) < 12 * s + 1.5) return true;
+  }
+  // dorsal spine + tower block
+  if (ax < 8 && p.y > 10 && p.y < 17 && p.z > -58 && p.z < 1) return true;
+  if (ax < 10 && p.y > 8 && p.y < 23 && p.z > 6 && p.z < 46) return true;
+  // wings (thin slab, swept)
+  if (ax < 98 && ay < 4 && p.z > -18 + ax * 0.12 && p.z < 8 - ax * 0.1) return true;
+  // cannon arms
+  if (Math.abs(ax - 31) < 5 && Math.abs(p.y + 6) < 5 && p.z > 0 && p.z < 74) return true;
+  return false;
+}
 const PLAYER_X = 34, PLAYER_Y_MIN = -16, PLAYER_Y_MAX = 18;
 
 export async function create(ctx) {
   const { THREE, scene, camera, renderer, bloom, input, ui, audio, rng, size } = ctx;
-  scene.background = new THREE.Color(0x05060f);
   bloom.strength = 0.85; bloom.radius = 0.55; bloom.threshold = 0.72;
   renderer.toneMappingExposure = 1.05;
   camera.fov = 58; camera.near = 0.5; camera.far = 9000; camera.updateProjectionMatrix();
@@ -31,16 +51,16 @@ export async function create(ctx) {
   const boss = buildBoss(THREE, rng);
   boss.root.position.set(0, 0, BOSS_BASE_Z);
   scene.add(boss.root);
-  const shield = makeShield(THREE); boss.root.add(shield); shield.position.set(0, 2, -4);
-  const ship = await loadArwing(THREE);
+  const shield = makeShield(THREE, SHIELD_R); boss.root.add(shield); shield.position.set(...SHIELD_C);
+  const arwing = await loadArwing(THREE);
+  const ship = arwing.group;
   scene.add(ship);
-  const shipInner = ship.children[0];
+  arwing.setHover(0); arwing.setThrust(0.85);
 
-  // weak-point lights (one per active phase-point, max 4)
-  const wpLights = Array.from({ length: 4 }, () => { const l = new THREE.PointLight(0xffb347, 0, 90, 1.8); scene.add(l); return l; });
+  // weak-point lights (one per active phase-point, max 2 — point lights are per-fragment cost)
+  const wpLights = Array.from({ length: 2 }, () => { const l = new THREE.PointLight(0xffb347, 0, 90, 1.8); scene.add(l); return l; });
   const coreLight = new THREE.PointLight(0xff3020, 0, 160, 1.6); scene.add(coreLight);
   const engineLight = new THREE.PointLight(0x4fa8ff, 400, 220, 1.5); boss.root.add(engineLight); engineLight.position.set(0, 0, -90);
-  const shipLight = new THREE.PointLight(0x66c8ff, 60, 30, 1.6); ship.add(shipLight); shipLight.position.set(0, 0, 4);
 
   // ---------- fx
   const tex = makeTextures(THREE, rng);
@@ -193,8 +213,17 @@ export async function create(ctx) {
   setCam('intro', true);
   hud.setPhase(1);
 
+  // Harness friendliness: in deterministic (fixed-step) mode keep the GL command
+  // queue drained so stepping N frames doesn't build a backlog that the
+  // screenshot then has to wait out on software GL.
+  const gl = renderer.getContext();
+  const syncGL = !!ctx.engine?.fixedStep;
+  const syncPx = new Uint8Array(4);
+  const drainGL = () => { renderer.setRenderTarget(null); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, syncPx); };
+
   // ======================================================================
   function update(dt, t) {
+    if (syncGL) drainGL();
     const real = Math.min(dt, 0.05);
     // slow-mo
     const ts = S.destruct ? (S.destruct.real < 3.4 ? 0.12 : 1) : 1;
@@ -223,8 +252,11 @@ export async function create(ctx) {
     let rollAngle = 0;
     if (P.roll > 0) { P.roll -= dtS; const u = 1 - Math.max(0, P.roll) / 0.62; rollAngle = P.rollDir * Math.PI * 2 * (u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2); }
     ship.position.copy(P.pos);
-    ship.rotation.set(P.pitch, P.vel.x * -0.004, P.bank + rollAngle);
-    shipInner.position.y = Math.sin(S.ft * 2.3) * 0.15;
+    ship.rotation.set(P.pitch, P.vel.x * -0.004, P.bank * 0.35 + rollAngle);
+    arwing.setBank(THREE.MathUtils.clamp(ax * 0.9 + P.vel.x * 0.006, -1, 1));
+    arwing.flap(P.roll > 0 ? 1 : Math.abs(ay) * 0.5);
+    arwing.setThrust(S.destruct ? 1 : 0.7 + Math.abs(ay) * 0.3);
+    arwing.update(dtS, S.ft, camera);
     // fire
     P.fireCd -= dtS;
     if (input.isHeld('fire') && P.fireCd <= 0 && !S.destruct) {
@@ -258,17 +290,17 @@ export async function create(ctx) {
     for (const w of boss.weakPoints) {
       w.flash = Math.max(0, w.flash - real * 6);
       w.mat.uniforms.uTime.value = S.ft; w.mat.uniforms.uFlash.value = w.flash * 0.8; w.mat.uniforms.uHeat.value = 1 - w.hp / w.maxHp;
-      if (w.alive && w.phase === S.phase && w.phase !== 3 && li < 4) { const l = wpLights[li++]; worldPos(w.mesh, l.position); l.intensity = 350 * (0.8 + 0.2 * Math.sin(S.ft * 5)) * (1 + w.flash * 3); }
+      if (w.alive && w.phase === S.phase && w.phase !== 3 && li < wpLights.length) { const l = wpLights[li++]; worldPos(w.mesh, l.position); l.intensity = 350 * (0.8 + 0.2 * Math.sin(S.ft * 5)) * (1 + w.flash * 3); }
     }
-    for (; li < 4; li++) wpLights[li].intensity = 0;
+    for (; li < wpLights.length; li++) wpLights[li].intensity = 0;
     const core = boss.weakPoints.find((w) => w.phase === 3);
     worldPos(core.mesh, coreLight.position); coreLight.position.z += 6;
-    coreLight.intensity = core.alive ? 900 * irisEase * (0.85 + 0.15 * Math.sin(S.ft * 7)) : 0;
+    coreLight.intensity = core.alive ? 450 * irisEase * (0.85 + 0.15 * Math.sin(S.ft * 7)) : 0;
 
     // ---- shield
     const sh = shield.material.uniforms;
     sh.uTime.value = S.ft;
-    if (S.transition?.kind === 'shieldDown') { const u = S.transition.t / 1.6; sh.uDissolve.value = Math.min(1, u); sh.uPower.value = 1 + (1 - u) * 1.5; }
+    if (S.transition?.kind === 'shieldDown') { const u = S.transition.t / 1.6; sh.uDissolve.value = Math.min(1, u); sh.uPower.value = 1 + Math.max(0, 1 - u) * 0.5; }
     if (S.phase >= 2 && !S.transition) shield.visible = false;
 
     // ---- transitions
@@ -343,10 +375,10 @@ export async function create(ctx) {
       }
       const lp = V.a.copy(pos).applyMatrix4(bossLocal);
       if (shield.visible && S.phase === 1) {
-        const e = Math.hypot(lp.x / 118, (lp.y - 2) / 46, (lp.z + 4) / 96);
+        const e = Math.hypot((lp.x - SHIELD_C[0]) / SHIELD_R[0], (lp.y - SHIELD_C[1]) / SHIELD_R[1], (lp.z - SHIELD_C[2]) / SHIELD_R[2]);
         if (e < 1) { const hits = sh.uHits.value; const slot = hits.reduce((bi, h, i, arr) => (h.w < arr[bi].w ? i : bi), 0); hits[slot].set(pos.x, pos.y, pos.z, S.ft); for (let i = 0; i < 5; i++) sparks.emit(pos, V.b.set((Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, 20 + Math.random() * 30), { life: 0.4, size: 1.5, drag: 2, c0: [0.8, 1.8, 2.6], c1: [0.2, 0.6, 1.2] }); return true; }
       }
-      if (Math.abs(lp.x) < 100 && Math.abs(lp.y) < 26 && lp.z > -70 && lp.z < 74 && (Math.abs(lp.x) < 18 || Math.abs(lp.y) < 8)) {
+      if (hullSolid(lp)) {
         for (let i = 0; i < 6; i++) sparks.emit(pos, V.b.set((Math.random() - 0.5) * 50, (Math.random() - 0.5) * 50, 20 + Math.random() * 40), { life: 0.35, size: 1.4, drag: 2, c0: [2.4, 2.0, 1.2], c1: [1.0, 0.4, 0.1] });
         return true;
       }
@@ -378,7 +410,7 @@ export async function create(ctx) {
         D.nextChain = D.real + 0.16;
         const a = boss.damageAnchors[D.chainIdx++ % boss.damageAnchors.length];
         const wp = a.clone().applyMatrix4(B.matrixWorld).add(new THREE.Vector3((Math.random() - 0.5) * 20, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 20));
-        explosions.spawn(wp, 12 + Math.random() * 12, 2.4); shards.burst(wp, 14, 25, 1.6, { life: 4 }); sfx.boom(0.25); S.shake = Math.max(S.shake, 0.4);
+        explosions.spawn(wp, 9 + Math.random() * 9, 1.6); shards.burst(wp, 14, 25, 1.6, { life: 4 }); sfx.boom(0.25); S.shake = Math.max(S.shake, 0.4);
         for (let i = 0; i < 20; i++) smoke.emit(wp, V.b.set((Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30), { life: 5, size: 7, grow: 2.5, drag: 0.8, c0: [0.5, 0.4, 0.35], c1: [0.05, 0.05, 0.06] });
       }
       if (D.real >= 3.4 && !D.final) {
@@ -404,7 +436,7 @@ export async function create(ctx) {
     }
 
     // ---- fx systems
-    smoke.update(dtS); fire.update(dtS); sparks.update(dtS); shards.update(dtS); explosions.update(dtS, camera); missiles.update(dtS, S.ft);
+    smoke.update(dtS); fire.update(dtS); sparks.update(dtS); shards.update(dtS); explosions.update(dtS, camera, real); missiles.update(dtS, S.ft);
     for (const e of boss.engines) e.scale.setScalar(1 + Math.sin(S.ft * 30 + e.position.x) * 0.04);
 
     // ---- camera
@@ -412,7 +444,7 @@ export async function create(ctx) {
 
     // ---- HUD
     hud.setHealth(bossHealth()); hud.shield(P.shield); hud.hits(S.hits);
-    hud.flash(Math.min(1, S.flash * 0.9 + explosions.flash * 0.35 + P.hurt * 0.12)); S.flash *= Math.exp(-real * 4);
+    hud.flash(Math.min(0.85, S.flash * 0.8 + explosions.flash * 0.2 + P.hurt * 0.12)); S.flash *= Math.exp(-real * 4);
     hud.slowmo(S.timeScale < 0.6 ? 1 - S.timeScale : 0);
     {
       const pts = activePoints();
@@ -435,7 +467,7 @@ export async function create(ctx) {
       const u = Math.min(1, C.t / 4.2); const e = 1 - Math.pow(1 - u, 3);
       wantPos.set(-150 + 150 * e, -30 + 42 * e, -60 + 90 * e); wantLook.set(-60 + 60 * e, 4, BOSS_BASE_Z + 20); wantFov = 50 + 8 * e; stiff = 40;
     } else if (C.mode === 'chase') {
-      wantPos.set(P.pos.x * 0.55, P.pos.y * 0.55 + 5.5, 18 + P.vel.length() * 0.02); wantLook.set(P.pos.x * 0.6, P.pos.y * 0.6 + 1, -60); wantFov = 58 + (P.roll > 0 ? 3 : 0); stiff = 5.5;
+      wantPos.set(P.pos.x * 0.55, P.pos.y * 0.55 + 5.0, 15 + P.vel.length() * 0.02); wantLook.set(P.pos.x * 0.6, P.pos.y * 0.6 + 1, -60); wantFov = 58 + (P.roll > 0 ? 3 : 0); stiff = 5.5;
     } else if (C.mode === 'orbitFront') {
       const a = -0.9 + C.t * 0.45; wantPos.set(Math.sin(a) * 120, 30 + C.t * 4, B.position.z + Math.cos(a) * 130); wantLook.copy(B.position).add(new THREE.Vector3(0, 6, 20)); wantFov = 52; stiff = 30;
     } else if (C.mode === 'orbitCore') {
@@ -460,11 +492,13 @@ export async function create(ctx) {
 
   return {
     update,
+    debug: { S, boss, bolts, ship, worldPos },
     dispose() {
       input.script = null;
-      hud.dispose(); sky.dispose();
+      hud.dispose(); sky.dispose(); arwing.dispose();
       smoke.dispose(); fire.dispose(); sparks.dispose(); shards.dispose(); explosions.dispose(); for (const b of beams) b.dispose(); missiles.dispose(); bolts.dispose();
       scene.remove(boss.root, ship, smoke.points, fire.points, sparks.points, shards.mesh, sun, rim, fill, planetBounce, ...wpLights, coreLight);
+      renderer.toneMappingExposure = 1;
       boss.root.traverse((o) => o.geometry?.dispose?.()); for (const m of boss.materials) m.dispose(); for (const t of boss.textures) t.dispose();
       for (const w of boss.weakPoints) w.mat.dispose(); shield.geometry.dispose(); shield.material.dispose();
       for (const t of Object.values(tex)) t.dispose();
