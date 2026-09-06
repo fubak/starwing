@@ -1,6 +1,7 @@
 // Feel VFX: laser bolts, speed lines, barrel-roll sparkle, reticle, grade pass.
 import * as THREE from 'three';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 /* ---------------- laser bolts ---------------- */
 export class Lasers {
@@ -85,14 +86,14 @@ export class Sparkle {
     const pos = new Float32Array(count * 3);
     this.geo = new THREE.BufferGeometry();
     this.geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    this.mat = new THREE.PointsMaterial({ color: 0x9ff2ff, size: 0.55, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, toneMapped: false });
+    this.mat = new THREE.PointsMaterial({ color: 0x9ff2ff, size: 0.42, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, toneMapped: false });
     this.pts = new THREE.Points(this.geo, this.mat);
     this.pts.frustumCulled = false;
     parent.add(this.pts);
     this.parts = [];
-    for (let i = 0; i < count; i++) this.parts.push({ a: rng.range(0, Math.PI * 2), r: rng.range(3.5, 5.5), z: rng.range(-3, 3), w: rng.range(4, 9), off: rng.range(0, 1) });
+    for (let i = 0; i < count; i++) this.parts.push({ a: rng.range(0, Math.PI * 2), r: rng.range(3.2, 5.0), z: rng.range(-3, 3), w: rng.range(4, 9), off: rng.range(0, 1) });
     this.t = 0;
-    this.ring = new THREE.Mesh(new THREE.TorusGeometry(5.2, 0.08, 8, 64), new THREE.MeshBasicMaterial({ color: 0x8fe0ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    this.ring = new THREE.Mesh(new THREE.TorusGeometry(4.8, 0.09, 8, 64), new THREE.MeshBasicMaterial({ color: 0x8fe0ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
     parent.add(this.ring);
   }
   /** amount: 0..1 roll progress, active bool */
@@ -117,27 +118,22 @@ export class Sparkle {
 /* ---------------- reticle: near ring + far crosshair ---------------- */
 export class Reticle {
   constructor(scene) {
-    this.group = new THREE.Group();
-    const mat = (c, o = 0.95) => new THREE.LineBasicMaterial({ color: c, transparent: true, opacity: o, depthTest: false, depthWrite: false, toneMapped: false });
-    // near: bracket square (rotated 45deg diamond) with gaps
-    const near = new THREE.BufferGeometry();
-    const nv = [];
-    const seg = (x0, y0, x1, y1) => nv.push(x0, y0, 0, x1, y1, 0);
-    const s = 2.2, g = 0.9;
-    seg(-s, s, -g, s); seg(g, s, s, s); seg(s, s, s, g); seg(s, -g, s, -s);
-    seg(s, -s, g, -s); seg(-g, -s, -s, -s); seg(-s, -s, -s, -g); seg(-s, g, -s, s);
-    near.setAttribute('position', new THREE.Float32BufferAttribute(nv, 3));
-    this.near = new THREE.LineSegments(near, mat(0x7ef9ff));
-    // far: crosshair + circle
-    const far = new THREE.BufferGeometry();
-    const fv = [];
-    const seg2 = (x0, y0, x1, y1) => fv.push(x0, y0, 0, x1, y1, 0);
-    seg2(-1.8, 0, -0.6, 0); seg2(0.6, 0, 1.8, 0); seg2(0, -1.8, 0, -0.6); seg2(0, 0.6, 0, 1.8);
-    const N = 32; for (let i = 0; i < N; i++) { const a0 = (i / N) * 6.283, a1 = ((i + 1) / N) * 6.283; seg2(Math.cos(a0) * 1.15, Math.sin(a0) * 1.15, Math.cos(a1) * 1.15, Math.sin(a1) * 1.15); }
-    far.setAttribute('position', new THREE.Float32BufferAttribute(fv, 3));
-    this.far = new THREE.LineSegments(far, mat(0x6cff8a));
-    // center dot
-    this.dot = new THREE.Mesh(new THREE.CircleGeometry(0.22, 12), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, toneMapped: false }));
+    const mat = (c, o = 0.95) => new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: o, depthTest: false, depthWrite: false, toneMapped: false, side: THREE.DoubleSide });
+    const geos = [];
+    const bar = (w, h, x, y, rz = 0) => { const g = new THREE.PlaneGeometry(w, h); g.rotateZ(rz); g.translate(x, y, 0); geos.push(g); return g; };
+    // near: four chunky corner brackets (a rotated diamond)
+    const s = 2.4, L = 1.1, T = 0.22;
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+      bar(L, T, sx * (s - L / 2), sy * s); bar(T, L, sx * s, sy * (s - L / 2));
+    }
+    this.near = new THREE.Mesh(mergeGeometries(geos), mat(0x7ef9ff));
+    geos.length = 0;
+    // far: crosshair ticks + thin ring
+    const tk = 1.0, tt = 0.16;
+    bar(tk, tt, -1.7, 0); bar(tk, tt, 1.7, 0); bar(tt, tk, 0, -1.7); bar(tt, tk, 0, 1.7);
+    geos.push(new THREE.RingGeometry(1.05, 1.22, 40));
+    this.far = new THREE.Mesh(mergeGeometries(geos), mat(0x6cff8a));
+    this.dot = new THREE.Mesh(new THREE.CircleGeometry(0.2, 12), mat(0xffffff, 1));
     this.near.renderOrder = this.far.renderOrder = this.dot.renderOrder = 60;
     this.near.frustumCulled = this.far.frustumCulled = this.dot.frustumCulled = false;
     scene.add(this.near, this.far, this.dot);
@@ -146,15 +142,16 @@ export class Reticle {
   update(shipPos, aimDir, camera, dt, firing) {
     this.pulse = Math.max(0, this.pulse - dt * 6);
     if (firing) this.pulse = 1;
-    const n = shipPos.clone().addScaledVector(aimDir, 34);
-    const f = shipPos.clone().addScaledVector(aimDir, 110);
+    const n = shipPos.clone().addScaledVector(aimDir, 30);
+    const f = shipPos.clone().addScaledVector(aimDir, 95);
     this.near.position.copy(n); this.far.position.copy(f); this.dot.position.copy(f);
     this.near.quaternion.copy(camera.quaternion); this.far.quaternion.copy(camera.quaternion); this.dot.quaternion.copy(camera.quaternion);
-    this.near.rotation.z += Math.PI / 4;
-    // keep apparent size roughly constant with distance
-    const dn = camera.position.distanceTo(n) / 40, df = camera.position.distanceTo(f) / 40;
-    this.near.scale.setScalar(dn * (1 + this.pulse * 0.15));
-    this.far.scale.setScalar(df * 1.3); this.dot.scale.setScalar(df * 1.3);
+    this.near.rotateZ(Math.PI / 4);
+    // keep apparent size constant on screen regardless of distance / FOV
+    const k = Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5) / Math.tan(THREE.MathUtils.degToRad(31));
+    const dn = camera.position.distanceTo(n) / 30 * k, df = camera.position.distanceTo(f) / 30 * k;
+    this.near.scale.setScalar(dn * (1 + this.pulse * 0.12));
+    this.far.scale.setScalar(df * 1.25); this.dot.scale.setScalar(df * 1.25);
   }
   dispose() { for (const o of [this.near, this.far, this.dot]) { o.geometry.dispose(); o.material.dispose(); o.removeFromParent(); } }
 }
@@ -162,15 +159,15 @@ export class Reticle {
 /* ---------------- grade / vignette / chroma pass ---------------- */
 export function makeGradePass() {
   return new ShaderPass({
-    uniforms: { tDiffuse: { value: null }, vignette: { value: 0.32 }, boost: { value: 0 }, flash: { value: 0 }, time: { value: 0 } },
+    uniforms: { tDiffuse: { value: null }, vignette: { value: 0.32 }, boost: { value: 0 }, flash: { value: 0 }, time: { value: 0 }, grade: { value: 1 } },
     vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
     fragmentShader: `
-      uniform sampler2D tDiffuse; uniform float vignette, boost, flash, time; varying vec2 vUv;
+      uniform sampler2D tDiffuse; uniform float vignette, boost, flash, time, grade; varying vec2 vUv;
       void main(){
         vec2 uv = vUv; vec2 c = uv - 0.5;
         float r2 = dot(c, c);
         // radial chromatic aberration scales with boost
-        float ca = (0.0015 + boost * 0.006) * r2 * 8.0;
+        float ca = (0.001 + boost * 0.0035) * r2 * 8.0;
         vec3 col;
         col.r = texture2D(tDiffuse, uv + c * ca).r;
         col.g = texture2D(tDiffuse, uv).g;
@@ -178,15 +175,19 @@ export function makeGradePass() {
         // gentle radial blur when boosting (4 taps)
         if (boost > 0.01) {
           vec3 acc = col; float w = 1.0;
-          for (int i = 1; i <= 4; i++) { float k = float(i) * 0.012 * boost; acc += texture2D(tDiffuse, uv - c * k).rgb; w += 1.0; }
+          for (int i = 1; i <= 4; i++) { float k = float(i) * 0.0055 * boost * smoothstep(0.05, 0.4, r2); acc += texture2D(tDiffuse, uv - c * k).rgb; w += 1.0; }
           col = acc / w;
         }
         // warm/cool grade: lift shadows toward teal, highlights toward warm
-        float lum = dot(col, vec3(0.299, 0.587, 0.114));
-        col = mix(col, col * vec3(0.92, 1.0, 1.08) + vec3(0.0, 0.01, 0.025), 1.0 - smoothstep(0.0, 0.5, lum));
-        col = mix(col, col * vec3(1.06, 1.0, 0.94), smoothstep(0.5, 1.0, lum));
-        col = (col - 0.5) * 1.06 + 0.5;
-        col *= 1.0 - vignette * smoothstep(0.15, 0.85, r2 * 2.0);
+        if (grade > 0.5) {
+          float lum = dot(col, vec3(0.299, 0.587, 0.114));
+          col = mix(col, col * vec3(0.92, 1.0, 1.08) + vec3(0.0, 0.01, 0.025), 1.0 - smoothstep(0.0, 0.5, lum));
+          col = mix(col, col * vec3(1.06, 1.0, 0.94), smoothstep(0.5, 1.0, lum));
+          col = (col - 0.5) * 1.06 + 0.5;
+          col *= 1.0 - vignette * smoothstep(0.15, 0.85, r2 * 2.0);
+        }
+        // boost: darken edges a touch more so the centre pops
+        col *= 1.0 - boost * 0.25 * smoothstep(0.2, 0.9, r2 * 2.0);
         col += flash * vec3(0.9, 0.95, 1.0);
         gl_FragColor = vec4(col, 1.0);
       }`,
