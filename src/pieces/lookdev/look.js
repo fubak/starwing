@@ -50,7 +50,11 @@ export function applyLook(ctx, preset = 'space', opts = {}) {
   hemi.name = 'look-hemi';
   const fill = new THREE.DirectionalLight(0xffffff, 0.4);
   fill.name = 'look-fill';
-  scene.add(hemi, fill, fill.target);
+  // planet-bounce / rim: cool light from below-behind so hulls get a second
+  // specular edge that separates them from the sky (Star Fox Zero ocean bounce)
+  const rim = new THREE.DirectionalLight(0xffffff, 0.6);
+  rim.name = 'look-rim';
+  scene.add(hemi, fill, fill.target, rim, rim.target);
 
   // ---- sky
   let sky = null;
@@ -103,6 +107,9 @@ export function applyLook(ctx, preset = 'space', opts = {}) {
     hemi.color.copy(p.hemi.sky); hemi.groundColor.copy(p.hemi.ground); hemi.intensity = p.hemi.intensity;
     fill.color.copy(p.fill.color); fill.intensity = p.fill.intensity;
     fill.position.copy(fill.target.position).addScaledVector(_dir.copy(p.fill.dir).normalize(), 40);
+    const r = p.rim ?? p.fill;
+    rim.color.copy(r.color); rim.intensity = p.rim ? r.intensity : 0;
+    rim.position.copy(rim.target.position).addScaledVector(_dir.copy(r.dir).normalize(), 40);
     if (p.fog.density > 0.00001) { fog.color.copy(p.fog.color); fog.density = p.fog.density; scene.fog = fog; }
     else scene.fog = null;
     if (sky) sky.setPreset(p);
@@ -112,7 +119,7 @@ export function applyLook(ctx, preset = 'space', opts = {}) {
 
   let flashAmt = 0;
   const look = {
-    sun, hemi, fill, sky, grade, envScene,
+    sun, hemi, fill, rim, sky, grade, envScene,
     get preset() { return cur; },
     get target() { return target; },
     name: typeof preset === 'string' ? preset : preset.name ?? 'custom',
@@ -129,7 +136,7 @@ export function applyLook(ctx, preset = 'space', opts = {}) {
     /** Kick a white flash (decays automatically). */
     flash(a = 0.5) { flashAmt = Math.max(flashAmt, a); },
     /** Where the shadow frustum + lights are centred (e.g. follow the player). */
-    setFocus(v) { sun.target.position.copy(v); fill.target.position.copy(v); push(cur); },
+    setFocus(v) { sun.target.position.copy(v); fill.target.position.copy(v); rim.target.position.copy(v); push(cur); },
     update(dt, t) {
       if (blend < 1) {
         blend = Math.min(1, blend + dt / FADE);
@@ -144,11 +151,13 @@ export function applyLook(ctx, preset = 'space', opts = {}) {
       sky?.update(t, ctx.engine?.piece?.camera ?? camera);
     },
     dispose() {
-      scene.remove(sun, sun.target, hemi, fill, fill.target);
+      scene.remove(sun, sun.target, hemi, fill, fill.target, rim, rim.target);
       if (sky) { scene.remove(sky); sky.disposeSky?.(); }
       envRT?.dispose(); envMat.dispose(); envMesh.geometry.dispose(); pmrem.dispose();
       scene.environment = null; scene.fog = null;
-      grade.enabled = false;
+      // remove (not just disable) so the composer pass list is stable across stage switches
+      if (composer.passes.includes(grade)) composer.removePass(grade);
+      grade.dispose?.();
       if (scene.userData.look === look) delete scene.userData.look;
     },
   };

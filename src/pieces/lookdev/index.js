@@ -30,17 +30,20 @@ export async function create(ctx) {
 
   // ---- planet: we skim its upper atmosphere, limb depression ~15 degrees
   const PR = 1500;
-  const planet = makePlanet({ radius: PR, seed: 7, haloScale: 1.035, gpu: true });
+  const planet = makePlanet({ radius: PR, seed: 7, haloScale: 1.04, gpu: true, renderer: ctx.renderer });
   planet.position.set(120, -PR - 62, -420);
   // spin about the pole (Y, applied first in XYZ order) to put a coastline
   // under the flight, then tilt so the equator faces us, not the ice cap
-  const lon = Number(new URLSearchParams(location.search).get('ld_lon') ?? 2.9);
+  const qs = new URLSearchParams(location.search);
+  const lon = Number(qs.get('ld_lon') ?? 1.6);
   planet.rotation.set(Math.PI / 2, lon, 0);
+  if (qs.has('ld_haze')) planet.children[0].material.uniforms.uHazeK.value = Number(qs.get('ld_haze'));
   // Art-direction cheat: the visible cap is lit from up-right-ahead so the
   // terminator (city lights) sits on the far left while the sky's sun stays
   // low on the right for the rim/flare.
   planet.lightDir = new THREE.Vector3(0.66, 0.42, -0.62).normalize();
   planet.setPreset(look.preset);
+  planet.update(0, 0, camera);
   scene.add(planet);
 
   // ---- hero: Arwing flight + orbital gate
@@ -144,7 +147,7 @@ export async function create(ctx) {
       look.update(dt, t);
       // planet follows the blended preset so its atmosphere fades with the sky
       planet.setPreset(look.preset);
-      planet.update(dt, t);
+      planet.update(dt, t, camera);
     },
     dispose() {
       look.dispose();

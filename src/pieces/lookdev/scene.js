@@ -20,54 +20,89 @@ function makeGate(M) {
   const g = new THREE.Group();
   g.name = 'corneria-gate';
   const R = 38;
-  // main hull ring: low-poly tube so the facets catch the key light as panels
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(R, 3.4, 8, 12), M.hull);
-  ring.rotation.z = Math.PI / 12;
-  g.add(ring);
-  // inner cobalt rail + blue emitter rim (the gate's "energy lip")
-  const rail = new THREE.Mesh(new THREE.TorusGeometry(R - 3.2, 0.9, 6, 48), M.cobalt);
-  g.add(rail);
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(R - 3.9, 0.28, 6, 64), M.emitBlue);
-  g.add(rim);
-  // 6 pylons: wedge boxes bolted onto the ring, alternating with beacon masts
-  const pylonGeo = new THREE.BoxGeometry(5.2, 9, 6.5);
-  const pylons = new THREE.InstancedMesh(pylonGeo, M.cobalt, 6);
-  const capGeo = new THREE.BoxGeometry(5.6, 1.2, 7);
-  const caps = new THREE.InstancedMesh(capGeo, M.dark, 6);
+  const SEG = 12;
   const tmp = new THREE.Object3D();
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+  // hull: 12 chunky armour segments (chords, not a smooth tube) with visible
+  // gaps so the silhouette reads as built hardware. Bevelled by a slightly
+  // smaller dark inner block so every segment has a dark seam.
+  const chord = 2 * R * Math.sin(Math.PI / SEG);
+  const segGeo = new THREE.BoxGeometry(chord - 1.6, 4.6, 5.4);
+  const segs = new THREE.InstancedMesh(segGeo, M.hull, SEG);
+  const innerGeo = new THREE.BoxGeometry(chord - 0.4, 3.2, 3.2);
+  const inners = new THREE.InstancedMesh(innerGeo, M.dark, SEG);
+  for (let i = 0; i < SEG; i++) {
+    const a = (i / SEG) * Math.PI * 2 + Math.PI / SEG;
     tmp.position.set(Math.cos(a) * R, Math.sin(a) * R, 0);
+    tmp.rotation.set(0, 0, a + Math.PI / 2);
+    tmp.updateMatrix(); segs.setMatrixAt(i, tmp.matrix);
+    tmp.position.set(Math.cos(a) * (R - 0.6), Math.sin(a) * (R - 0.6), 0);
+    tmp.updateMatrix(); inners.setMatrixAt(i, tmp.matrix);
+  }
+  g.add(segs, inners);
+  // inner cobalt rail + blue emitter lips on both faces (the gate's energy channel)
+  const rail = new THREE.Mesh(new THREE.TorusGeometry(R - 3.4, 1.1, 8, 72), M.cobalt);
+  g.add(rail);
+  for (const z of [-1.5, 1.5]) {
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(R - 3.9, 0.32, 6, 96), M.emitBlue);
+    rim.position.z = z; g.add(rim);
+  }
+  const rimIn = new THREE.Mesh(new THREE.TorusGeometry(R - 4.6, 0.22, 6, 96), M.emitBlue);
+  g.add(rimIn);
+  // 4 major pylons (cardinal) : cobalt wedge + white cowl + gold clamp; 4 minor
+  // strut blocks between them
+  const pylonGeo = new THREE.BoxGeometry(6.4, 10, 7.6);
+  const pylons = new THREE.InstancedMesh(pylonGeo, M.cobalt, 4);
+  const cowlGeo = new THREE.BoxGeometry(7.2, 3.2, 8.4);
+  const cowls = new THREE.InstancedMesh(cowlGeo, M.hull, 4);
+  const clampGeo = new THREE.BoxGeometry(7.6, 0.8, 8.8);
+  const clamps = new THREE.InstancedMesh(clampGeo, M.gold, 4);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
     tmp.rotation.set(0, 0, a - Math.PI / 2);
+    tmp.position.set(Math.cos(a) * (R + 1.5), Math.sin(a) * (R + 1.5), 0);
     tmp.updateMatrix(); pylons.setMatrixAt(i, tmp.matrix);
-    tmp.position.set(Math.cos(a) * (R + 5.0), Math.sin(a) * (R + 5.0), 0);
+    tmp.position.set(Math.cos(a) * (R + 7.2), Math.sin(a) * (R + 7.2), 0);
+    tmp.updateMatrix(); cowls.setMatrixAt(i, tmp.matrix);
+    tmp.position.set(Math.cos(a) * (R + 5.3), Math.sin(a) * (R + 5.3), 0);
+    tmp.updateMatrix(); clamps.setMatrixAt(i, tmp.matrix);
+  }
+  const capGeo = new THREE.BoxGeometry(3.4, 2.2, 6.6);
+  const caps = new THREE.InstancedMesh(capGeo, M.dark, 4);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2;
+    tmp.rotation.set(0, 0, a - Math.PI / 2);
+    tmp.position.set(Math.cos(a) * (R + 3.0), Math.sin(a) * (R + 3.0), 0);
     tmp.updateMatrix(); caps.setMatrixAt(i, tmp.matrix);
   }
-  g.add(pylons, caps);
+  g.add(pylons, cowls, clamps, caps);
   // beacon lamps (red, pulsing) on every pylon cap, both faces
-  const lampGeo = new THREE.SphereGeometry(0.55, 10, 8);
-  const lamps = new THREE.InstancedMesh(lampGeo, M.emitRed, 12);
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+  const lampGeo = new THREE.SphereGeometry(0.6, 10, 8);
+  const lamps = new THREE.InstancedMesh(lampGeo, M.emitRed, 8);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
     for (let s = 0; s < 2; s++) {
-      tmp.position.set(Math.cos(a) * (R + 5.6), Math.sin(a) * (R + 5.6), s ? 3.6 : -3.6);
+      tmp.position.set(Math.cos(a) * (R + 8.9), Math.sin(a) * (R + 8.9), s ? 3.2 : -3.2);
       tmp.rotation.set(0, 0, 0); tmp.updateMatrix();
       lamps.setMatrixAt(i * 2 + s, tmp.matrix);
     }
   }
   g.add(lamps);
   // antenna masts on the top pylon, gold caps
-  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.4, 14, 8), M.dark);
-  mast.position.set(0, R + 12, 0); g.add(mast);
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.45, 14, 8), M.dark);
+  mast.position.set(0, R + 11, 0); g.add(mast);
   const mastCap = new THREE.Mesh(new THREE.SphereGeometry(0.9, 16, 12), M.gold);
-  mastCap.position.set(0, R + 19.2, 0); g.add(mastCap);
-  const dish = new THREE.Mesh(new THREE.SphereGeometry(3.2, 24, 12, 0, Math.PI * 2, 0, Math.PI / 3), M.hull);
-  dish.position.set(0, R + 9, 4.5); dish.rotation.x = -Math.PI / 2 + 0.5; g.add(dish);
-  // ventral docking spar: long hull beam below the ring with hazard stripe cubes
+  mastCap.position.set(0, R + 18.2, 0); g.add(mastCap);
+  const dish = new THREE.Mesh(new THREE.SphereGeometry(3.4, 24, 12, 0, Math.PI * 2, 0, Math.PI / 3), M.hull);
+  dish.position.set(0, R + 8, 5.5); dish.rotation.x = -Math.PI / 2 + 0.5; g.add(dish);
+  // ventral docking spar: long hull beam below the ring with a hex dock
   const spar = new THREE.Mesh(new THREE.BoxGeometry(3, 22, 3), M.hull);
   spar.position.set(0, -R - 14, 0); g.add(spar);
+  const sparRib = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.2, 4.2), M.cobalt);
+  sparRib.position.set(0, -R - 10, 0); g.add(sparRib);
   const dock = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 5.5, 4, 6), M.gold);
   dock.position.set(0, -R - 26, 0); g.add(dock);
+  const dockGlow = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.2, 0.6, 6), M.emitBlue);
+  dockGlow.position.set(0, -R - 28.3, 0); g.add(dockGlow);
   g.traverse((o) => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
   g.userData.lamps = lamps;
   return g;
@@ -76,39 +111,59 @@ function makeGate(M) {
 // ---------------------------------------------------------------------------
 // Speed streaks: thin additive lines streaming past the camera along +z.
 // ---------------------------------------------------------------------------
-function makeStreaks(n = 110) {
-  const pos = new Float32Array(n * 2 * 3);
-  const col = new Float32Array(n * 2 * 3);
+// Instanced soft quads (not GL lines): tapered along their length and feathered
+// across their width, so boost reads as glowing air streaks, not film scratches.
+function makeStreaks(n = 48) {
+  const geo = new THREE.PlaneGeometry(1, 1);
+  geo.translate(0, 0.5, 0); // origin at the head, extends along +y (we rotate y->z)
+  const mat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    uniforms: { uOpacity: { value: 0 }, uCol: { value: new THREE.Color(0.55, 0.75, 1.0) } },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv; varying float vB;
+      void main() { vUv = uv; vB = instanceColor.r; gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
+    fragmentShader: /* glsl */ `
+      varying vec2 vUv; varying float vB; uniform float uOpacity; uniform vec3 uCol;
+      void main() {
+        float across = 1.0 - abs(vUv.x - 0.5) * 2.0; across *= across;
+        float along = smoothstep(0.0, 0.12, vUv.y) * (1.0 - smoothstep(0.35, 1.0, vUv.y));
+        float a = across * along * uOpacity * vB;
+        gl_FragColor = vec4(uCol * (0.6 + 0.8 * (1.0 - vUv.y)) * a, a);
+      }`,
+  });
+  mat.toneMapped = false;
+  const mesh = new THREE.InstancedMesh(geo, mat, n);
+  mesh.frustumCulled = false;
   const seeds = [];
+  const tmp = new THREE.Object3D();
   for (let i = 0; i < n; i++) {
-    const x = (Math.random() - 0.5) * 60, y = (Math.random() - 0.5) * 34 + 2, z = -Math.random() * 120;
-    const len = 1.5 + Math.random() * 4;
-    seeds.push({ x, y, z, len, sp: 60 + Math.random() * 40 });
-    pos.set([x, y, z, x, y, z + len], i * 6);
-    const b = 0.35 + Math.random() * 0.4;
-    col.set([b * 0.7, b * 0.85, b, 0, 0, 0], i * 6);
+    seeds.push({ x: (Math.random() - 0.5) * 70, y: (Math.random() - 0.5) * 40 + 2, z: -Math.random() * 140, len: 3 + Math.random() * 5, sp: 90 + Math.random() * 60, w: 0.22 + Math.random() * 0.3 });
+    mesh.setColorAt(i, new THREE.Color(0.4 + Math.random() * 0.6, 0, 0));
   }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const mat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false });
-  const lines = new THREE.LineSegments(geo, mat);
-  lines.frustumCulled = false;
-  lines.update = (dt, boost) => {
-    const p = geo.attributes.position.array;
+  const camLocal = new THREE.Vector3();
+  mesh.update = (dt, boost, camera) => {
+    mat.uniforms.uOpacity.value = Math.max(0, boost - 0.08) * 0.9;
+    mesh.visible = boost > 0.09;
+    if (!mesh.visible) return;
+    if (camera) camLocal.copy(camera.position); else camLocal.set(0, 3, 19);
     for (let i = 0; i < n; i++) {
       const s = seeds[i];
-      s.z += s.sp * dt * (0.8 + boost * 1.4);
-      if (s.z > 20) { s.z = -120 - Math.random() * 30; s.x = (Math.random() - 0.5) * 60; s.y = (Math.random() - 0.5) * 34 + 2; }
-      const L = s.len * (0.6 + boost * 2.0);
-      mat.opacity = 0.03 + boost * 0.3;
-      p[i * 6] = s.x; p[i * 6 + 1] = s.y; p[i * 6 + 2] = s.z;
-      p[i * 6 + 3] = s.x; p[i * 6 + 4] = s.y; p[i * 6 + 5] = s.z + L;
+      s.z += s.sp * dt * (0.6 + boost * 1.6);
+      if (s.z > 24) { s.z = -140 - Math.random() * 40; s.x = (Math.random() - 0.5) * 70; s.y = (Math.random() - 0.5) * 40 + 2; }
+      const L = s.len * (0.5 + boost * 1.6);
+      // width axis: perpendicular to z and to the camera->streak offset, so the
+      // quad always faces the camera about the travel axis
+      const dx = s.x - camLocal.x, dy = s.y - camLocal.y;
+      const ang = Math.atan2(dy, dx) + Math.PI / 2;
+      tmp.position.set(s.x, s.y, s.z);
+      tmp.rotation.set(-Math.PI / 2, 0, ang, 'ZXY'); // plane's +y -> +z (tail behind head), roll about z toward camera
+      tmp.scale.set(s.w, L, 1);
+      tmp.updateMatrix(); mesh.setMatrixAt(i, tmp.matrix);
     }
-    geo.attributes.position.needsUpdate = true;
+    mesh.instanceMatrix.needsUpdate = true;
   };
-  lines.disposeStreaks = () => { geo.dispose(); mat.dispose(); };
-  return lines;
+  mesh.disposeStreaks = () => { geo.dispose(); mat.dispose(); };
+  return mesh;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,12 +171,26 @@ function makeStreaks(n = 110) {
 // ---------------------------------------------------------------------------
 function makeBolts(max = 24) {
   const grp = new THREE.Group();
-  const coreGeo = new THREE.CapsuleGeometry(0.07, 1.9, 4, 10);
+  // long hot core + fat soft sheath: reads as a crisp Star Fox bolt from behind
+  const coreGeo = new THREE.CapsuleGeometry(0.13, 3.4, 4, 12);
   coreGeo.rotateX(Math.PI / 2);
-  const glowGeo = new THREE.CapsuleGeometry(0.2, 2.1, 4, 10);
+  const glowGeo = new THREE.CapsuleGeometry(0.42, 3.6, 4, 12);
   glowGeo.rotateX(Math.PI / 2);
-  const coreMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 3.2, 1.8), toneMapped: false });
-  const glowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.25, 1.6, 0.45), transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false });
+  const coreMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 4.5, 2.4), toneMapped: false });
+  const glowMat = new THREE.ShaderMaterial({
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    uniforms: { uCol: { value: new THREE.Color(0.2, 1.4, 0.35) } },
+    vertexShader: /* glsl */ `
+      varying float vF;
+      void main() {
+        vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+        vec3 n = normalize(mat3(modelViewMatrix * instanceMatrix) * normal);
+        vF = pow(max(dot(n, normalize(-mv.xyz)), 0.0), 1.6);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */ `varying float vF; uniform vec3 uCol; void main() { gl_FragColor = vec4(uCol * vF * 1.6, vF); }`,
+  });
+  glowMat.toneMapped = false;
   const core = new THREE.InstancedMesh(coreGeo, coreMat, max);
   const glow = new THREE.InstancedMesh(glowGeo, glowMat, max);
   core.frustumCulled = glow.frustumCulled = false;
@@ -140,8 +209,10 @@ function makeBolts(max = 24) {
     for (let k = live.length - 1; k >= 0; k--) {
       const b = live[k];
       b.age += dt;
-      tmp.position.copy(b.p).addScaledVector(_fwd.set(0, 0, -1).applyQuaternion(b.q), b.age * 180);
-      tmp.quaternion.copy(b.q); tmp.scale.setScalar(1); tmp.updateMatrix();
+      tmp.position.copy(b.p).addScaledVector(_fwd.set(0, 0, -1).applyQuaternion(b.q), b.age * 220 + 1.5);
+      // stretch as it accelerates away (anticipation: short at the muzzle, long in flight)
+      const st = 0.6 + Math.min(1, b.age * 6) * 0.4;
+      tmp.quaternion.copy(b.q); tmp.scale.set(1, 1, st); tmp.updateMatrix();
       if (b.age > 1.4) { live.splice(k, 1); core.setMatrixAt(b.i, hide); glow.setMatrixAt(b.i, hide); continue; }
       core.setMatrixAt(b.i, tmp.matrix); glow.setMatrixAt(b.i, tmp.matrix);
     }
@@ -251,7 +322,7 @@ export function makeHeroScene() {
     // lasers: twin bolts every 0.12 s while fire held
     st.fireCd -= dt;
     if (firing && st.fireCd <= 0) {
-      st.fireCd = 0.12;
+      st.fireCd = 0.11;
       lead.group.getWorldQuaternion(mq);
       for (const m of lead.muzzles) {
         mz.copy(m).applyQuaternion(lead.rig.quaternion);
@@ -264,7 +335,7 @@ export function makeHeroScene() {
     flashLight.intensity = st.flash * 6;
     flashLight.position.set(0, -0.3, -1.6);
     bolts.update(dt);
-    streaks.update(dt, st.boost);
+    streaks.update(dt, st.boost, camera);
   };
   root.pop = () => { st.popT = 0; };
   root.lead = lead;
