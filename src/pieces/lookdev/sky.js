@@ -124,7 +124,13 @@ const FRAG = /* glsl */ `
     // in) + tight corona, strongest near the horizon
     float m = max(mu, 0.0);
     float horizonBoost = 0.5 + 0.5 * h;
-    float glow = pow(m, 6.0) * 0.22 * (1.0 - atmoMask * 0.85) + pow(m, 40.0) * 0.22 + pow(m, 300.0) * 0.7;
+    float glow = pow(m, 8.0) * 0.12 * (1.0 - atmoMask * 0.85) + pow(m, 90.0) * 0.1 + pow(m, 600.0) * 0.6;
+    // anamorphic streak: thin horizontal flare line through the sun
+    vec3 sunRight = normalize(cross(vec3(0.0, 1.0, 0.0), uSunDir));
+    vec3 sunUp = cross(uSunDir, sunRight);
+    float sx = dot(d - uSunDir, sunRight), sy = dot(d - uSunDir, sunUp);
+    float streak = exp(-abs(sy) * 260.0) * exp(-abs(sx) * 9.0) * step(0.0, mu) * 0.5;
+    glow += streak * (0.6 + 0.4 * atmoMask);
     col += uSunColor * glow * uSunGlow * horizonBoost * (1.0 - below * 0.8);
 
     // nebula: two-colour fbm with a tilted milky-way band
@@ -152,7 +158,7 @@ const FRAG = /* glsl */ `
     float ang = sqrt(max(0.0, 2.0 - 2.0 * mu)); // chord length ~ angle for small angles
     float disc = 1.0 - smoothstep(uSunSize * 0.85, uSunSize * 1.05, ang);
     float limb = 1.0 - 0.35 * smoothstep(0.0, uSunSize, ang);
-    col += uSunColor * disc * limb * uSunIntensity * 3.0 * (1.0 - below);
+    col += uSunColor * disc * limb * uSunIntensity * 2.2 * (1.0 - below);
 
     gl_FragColor = vec4(col, 1.0);
   }

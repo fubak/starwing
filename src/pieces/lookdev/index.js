@@ -5,41 +5,46 @@ import * as THREE from 'three';
 import { applyLook } from './look.js';
 import { makeSky } from './sky.js';
 import { makePlanet } from './planet.js';
-import { makeHero } from './hero.js';
+import { makeHeroScene } from './scene.js';
 import { PRESETS, PRESET_NAMES, resolvePreset, lerpPreset } from './presets.js';
 
 export { applyLook, makeSky, makePlanet, PRESETS, PRESET_NAMES, resolvePreset, lerpPreset };
-export { makeHeroMaterials } from './hero.js';
+export { makeHeroMaterials, makeHero } from './hero.js';
+export { makeHeroScene } from './scene.js';
 
 const ORDER = ['space', 'corneria', 'sunset', 'venom'];
 
 export async function create(ctx) {
   const { scene, camera, input, ui } = ctx;
 
-  // ---- camera: 3/4 hero framing, planet limb in the lower third
-  camera.fov = 42;
+  // ---- camera: low chase cam, planet limb arcing through the lower third
+  camera.fov = 40;
   camera.near = 0.1;
-  camera.far = 6000;
+  camera.far = 9000;
   camera.updateProjectionMatrix();
 
   // ---- look rig (sky + lights + env + grade)
   let idx = 0;
-  const look = applyLook(ctx, ORDER[idx], { shadowSize: 9, shadowMap: 1024 });
-  look.setFocus(new THREE.Vector3(0, 0.8, 0));
+  const look = applyLook(ctx, ORDER[idx], { shadowSize: 7, shadowMap: 1024 });
+  look.setFocus(new THREE.Vector3(0, 0, 0));
 
-  // ---- planet below the dock
-  const planet = makePlanet({ radius: 640, seed: 7 });
-  planet.position.set(60, -668, -220);
-  planet.rotation.x = Math.PI / 2; // equator (oceans/continents) faces us, not the ice cap
-  // Art-direction cheat: the visible cap of the planet is lit from up-right so
-  // the terminator sits just past the sun side of the limb (dawn), while the
-  // sky's sun stays low for the rim/flare.
-  planet.lightDir = new THREE.Vector3(0.55, 0.62, -0.55).normalize();
+  // ---- planet: we skim its upper atmosphere, limb depression ~15 degrees
+  const PR = 1500;
+  const planet = makePlanet({ radius: PR, seed: 7, haloScale: 1.035, gpu: true });
+  planet.position.set(120, -PR - 62, -420);
+  // spin about the pole (Y, applied first in XYZ order) to put a coastline
+  // under the flight, then tilt so the equator faces us, not the ice cap
+  const lon = Number(new URLSearchParams(location.search).get('ld_lon') ?? 2.9);
+  planet.rotation.set(Math.PI / 2, lon, 0);
+  // Art-direction cheat: the visible cap is lit from up-right-ahead so the
+  // terminator (city lights) sits on the far left while the sky's sun stays
+  // low on the right for the rim/flare.
+  planet.lightDir = new THREE.Vector3(0.66, 0.42, -0.62).normalize();
   planet.setPreset(look.preset);
   scene.add(planet);
 
-  // ---- hero material chart
-  const hero = makeHero();
+  // ---- hero: Arwing flight + orbital gate
+  const hero = makeHeroScene();
   scene.add(hero);
 
   // ---- UI: preset title card
@@ -64,27 +69,27 @@ export async function create(ctx) {
 
   const hint = document.createElement('div');
   hint.style.cssText = `position:absolute;right:48px;bottom:48px;color:#fff;opacity:.55;font:600 11px/1.6 sans-serif;letter-spacing:.3em;text-align:right;text-shadow:0 2px 8px rgba(0,0,0,.6)`;
-  hint.innerHTML = 'FIRE &nbsp;NEXT LOOK<br>STICK &nbsp;ORBIT';
+  hint.innerHTML = 'BOMB &nbsp;NEXT LOOK<br>FIRE &nbsp;LASERS &nbsp;·&nbsp; BOOST<br>STICK &nbsp;FLY';
   ui.appendChild(hint);
 
-  // ---- autoplay script: slow orbit sweep, look change every ~3.6s
+  // ---- autoplay script: banking S-turns, laser bursts, a boost, look change every 4 s
   input.script = (t) => {
-    const x = Math.sin(t * 0.55) * 0.9;
-    const y = Math.sin(t * 0.37 + 1.2) * 0.6;
-    const cycle = t % 3.6;
-    return { x, y, buttons: cycle > 3.3 && cycle < 3.42 ? ['fire'] : [] };
+    const x = Math.sin(t * 0.6) * 0.9 + Math.sin(t * 1.7) * 0.15;
+    const y = Math.sin(t * 0.43 + 1.2) * 0.5;
+    const cycle = t % 4.0;
+    const buttons = [];
+    if (cycle > 3.8 && cycle < 3.92) buttons.push('bomb');
+    if ((cycle > 0.8 && cycle < 1.5) || (cycle > 2.4 && cycle < 2.9)) buttons.push('fire');
+    if (cycle > 1.6 && cycle < 2.3) buttons.push('boost');
+    return { x, y, buttons };
   };
 
-  // ---- camera rig: spring-damped orbit with overshoot on input
-  const AZ0 = -0.42, EL0 = 0.15;
-  const rig = {
-    az: AZ0, el: EL0, dist: 14.5,
-    tAz: AZ0, tEl: EL0, tDist: 14.5,
-    vAz: 0, vEl: 0, vDist: 0,
-    kick: 0,
-  };
-  const lookAt = new THREE.Vector3(0, 0.9, 0);
-  const lookAtCur = new THREE.Vector3(0, 0.9, 0);
+  // ---- chase camera: spring-lagged behind the lead, dutch roll with the bank
+  const rig = { kick: 0, roll: 0, vRoll: 0, dist: 19, vDist: 0 };
+  const camPos = new THREE.Vector3(0, 3.4, 19);
+  const camGoal = new THREE.Vector3();
+  const lookAtCur = new THREE.Vector3(0, 0.5, -20);
+  const lookAt = new THREE.Vector3();
   const spring = (x, v, target, dt, k = 26, c = 5.5) => {
     const a = (target - x) * k - v * c;
     v += a * dt; x += v * dt;
@@ -112,40 +117,39 @@ export async function create(ctx) {
   return {
     update(dt, t) {
       if (syncGL) drainGL();
-      // input -> orbit targets (with anticipation: kick pulls back before the settle)
-      const ax = input.axes.x, ay = input.axes.y;
-      rig.tAz = AZ0 + ax * 0.5;
-      rig.tEl = EL0 + ay * 0.12;
-      rig.kick = Math.max(0, rig.kick - dt * 2.2);
-      rig.tDist = 14.5 - Math.abs(ax) * 1.2 + Math.sin(rig.kick * Math.PI) * 1.6;
-      [rig.az, rig.vAz] = spring(rig.az, rig.vAz, rig.tAz, dt, 18, 4.2);
-      [rig.el, rig.vEl] = spring(rig.el, rig.vEl, rig.tEl, dt, 18, 4.6);
-      [rig.dist, rig.vDist] = spring(rig.dist, rig.vDist, rig.tDist, dt, 30, 7);
-      const el = THREE.MathUtils.clamp(rig.el, 0.03, 0.6);
-      camera.position.set(
-        Math.sin(rig.az) * Math.cos(el) * rig.dist,
-        Math.sin(el) * rig.dist + 0.6,
-        Math.cos(rig.az) * Math.cos(el) * rig.dist,
-      );
-      lookAt.set(ax * 0.6, 0.9 - ay * 0.4, 0);
-      lookAtCur.lerp(lookAt, 1 - Math.exp(-dt * 4));
-      camera.lookAt(lookAtCur);
-      // subtle dutch roll following orbit velocity for momentum
-      camera.rotateZ(-rig.vAz * 0.06);
+      if (input.wasPressed('bomb') || input.wasPressed('confirm')) switchLook(1);
 
-      if (input.wasPressed('fire') || input.wasPressed('confirm')) switchLook(1);
-      if (input.wasPressed('bomb')) switchLook(-1);
+      hero.update(dt, t, camera, input);
+
+      // camera: sits low and behind, lags the ship's lateral motion (~45%) so
+      // the Arwing slides across frame on turns; boost pulls the camera back
+      // with a kick (anticipation) before it settles in.
+      const ax = input.axes.x;
+      const s = hero.state;
+      rig.kick = Math.max(0, rig.kick - dt * 2.2);
+      const tDist = 19 + s.boost * 3.5 + Math.sin(rig.kick * Math.PI) * 1.6 - Math.abs(ax) * 0.8;
+      [rig.dist, rig.vDist] = spring(rig.dist, rig.vDist, tDist, dt, 24, 6.5);
+      camGoal.set(s.x * 0.45 - ax * 1.4 + 2.5, 3.6 + s.y * 0.4, rig.dist);
+      camPos.lerp(camGoal, 1 - Math.exp(-dt * 5));
+      camera.position.copy(camPos);
+      // aim a little right of and above the ship so it sits in the lower-left third
+      lookAt.set(s.x * 0.75 + ax * 1.8 + 5.5, s.y * 0.7 + 1.4, -30);
+      lookAtCur.lerp(lookAt, 1 - Math.exp(-dt * 4.5));
+      camera.lookAt(lookAtCur);
+      // dutch roll: the camera leans into the bank with a soft spring
+      [rig.roll, rig.vRoll] = spring(rig.roll, rig.vRoll, -hero.lead.state.bank * 0.16, dt, 20, 6);
+      camera.rotateZ(rig.roll);
+      look.setFocus(hero.lead.group.position);
 
       look.update(dt, t);
       // planet follows the blended preset so its atmosphere fades with the sky
       planet.setPreset(look.preset);
       planet.update(dt, t);
-      hero.update(dt, t);
     },
     dispose() {
       look.dispose();
       scene.remove(planet); planet.disposePlanet();
-      scene.remove(hero); hero.disposeHero();
+      scene.remove(hero); hero.disposeScene();
       card.remove(); hint.remove();
       input.script = null;
     },
