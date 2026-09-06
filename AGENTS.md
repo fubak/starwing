@@ -15,7 +15,7 @@ at Nintendo first-party (Star Fox) visual and feel quality.
 ## Running
 - Dev server is already running at http://localhost:5173 (Vite HMR). Do NOT restart it. If it's down: `source ~/.nvm/nvm.sh && npx vite`.
 - Standalone piece: http://localhost:5173/?piece=<name>  (`&fixed` deterministic step, `&seed=N`, `&autoplay` uses `input.script`, `&mute`).
-- Render it: `source ~/.nvm/nvm.sh && node tools/shoot.mjs <name> --times 1,3,6,10 --video 8` → `shots/<name>/t*.png`, `video.webm`, `errors.txt`.
+- Render it (tools/shoot.mjs auto-uses the HMR-free render server on :5174 so other agents’ edits can’t reload your page mid-capture; if you write your own playwright probes, ALSO use http://localhost:5174): `source ~/.nvm/nvm.sh && node tools/shoot.mjs <name> --times 1,3,6,10 --video 8` → `shots/<name>/t*.png`, `video.webm`, `errors.txt`.
   Then `bash tools/frames.sh shots/<name>/video.webm` for a motion contact sheet. LOOK at the PNGs (read the image files) — never trust a summary.
 - Headless rendering uses SwiftShader (software GL): slow FPS is expected there; judge visuals, not fps. Keep real-GPU perf sane anyway (instancing, merged geometry, <= ~300 draw calls).
 

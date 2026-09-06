@@ -9,7 +9,9 @@
  * The video is a real-time recording (autoplay input script if the piece
  * supports it) so motion/feel can be judged.
  *
- * Requires the dev server: `npm run dev` (port 5173) — or set BASE_URL.
+ * Uses the HMR-free render server on port 5174 (`NO_HMR=1 npx vite`), falling
+ * back to 5173 — or set BASE_URL. (HMR reloads from other agents' edits would
+ * otherwise wipe window.__engine mid-capture.)
  */
 import { chromium } from 'playwright';
 import fs from 'node:fs';
@@ -23,7 +25,12 @@ const times = opt('times', '1,3,6,10').split(',').map(Number);
 const videoSecs = Number(opt('video', '8'));
 const seed = opt('seed', '1');
 const out = opt('out', path.join('shots', name));
-const base = process.env.BASE_URL ?? 'http://localhost:5173';
+async function pickBase() {
+  if (process.env.BASE_URL) return process.env.BASE_URL;
+  try { const r = await fetch('http://localhost:5174/'); if (r.ok) return 'http://localhost:5174'; } catch {}
+  return 'http://localhost:5173';
+}
+const base = await pickBase();
 const W = 1280, H = 720;
 
 fs.mkdirSync(out, { recursive: true });
