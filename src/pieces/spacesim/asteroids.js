@@ -40,11 +40,28 @@ function rockGeometry(seed, detail = 3) {
     pos.setXYZ(i, v.x, v.y, v.z);
   }
   g.computeVertexNormals();
+  smoothNormalsByPosition(g);
   return g;
 }
 
+/** PolyhedronGeometry is non-indexed (faceted). Average normals across coincident positions (ignoring uv seams). */
+function smoothNormalsByPosition(g) {
+  const pos = g.attributes.position, nor = g.attributes.normal;
+  const acc = new Map();
+  const key = (i) => `${pos.getX(i).toFixed(4)},${pos.getY(i).toFixed(4)},${pos.getZ(i).toFixed(4)}`;
+  for (let i = 0; i < pos.count; i++) {
+    const k = key(i); let a = acc.get(k); if (!a) { a = [0, 0, 0]; acc.set(k, a); }
+    a[0] += nor.getX(i); a[1] += nor.getY(i); a[2] += nor.getZ(i);
+  }
+  for (let i = 0; i < pos.count; i++) {
+    const a = acc.get(key(i)); const l = Math.hypot(a[0], a[1], a[2]) || 1;
+    nor.setXYZ(i, a[0] / l, a[1] / l, a[2] / l);
+  }
+  nor.needsUpdate = true;
+}
+
 function rockTextures() {
-  const S = 512;
+  const S = 256;
   const cv = document.createElement('canvas'); cv.width = cv.height = S;
   const g = cv.getContext('2d');
   const img = g.createImageData(S, S);
@@ -94,7 +111,7 @@ function rockTextures() {
 export function buildAsteroidBelt(rng, { count = 900, extent = 520, thickness = 170, envMap = null } = {}) {
   const { map, normalMap } = rockTextures();
   const mat = new THREE.MeshStandardMaterial({
-    map, normalMap, normalScale: new THREE.Vector2(0.9, 0.9), roughness: 0.82, metalness: 0.08, envMap, envMapIntensity: 0.6,
+    map, normalMap, normalScale: new THREE.Vector2(0.9, 0.9), roughness: 0.72, metalness: 0.1, envMap, envMapIntensity: 1.0,
   });
   const variants = 4;
   const per = Math.ceil(count / variants);
@@ -112,12 +129,14 @@ export function buildAsteroidBelt(rng, { count = 900, extent = 520, thickness = 
       // belt: a wide slab in the y direction (thin), spread on x/z
       const pos = new THREE.Vector3(rng.range(-extent, extent), rng.range(-thickness, thickness) * Math.pow(rng.next(), 0.6), rng.range(-extent, extent));
       const sizeRoll = rng.next();
-      const scale = v < 2 ? (sizeRoll < 0.12 ? rng.range(28, 60) : rng.range(9, 22)) : rng.range(2.5, 8);
+      const scale = v < 2 ? (sizeRoll < 0.08 ? rng.range(26, 48) : rng.range(8, 20)) : rng.range(2.0, 7);
       const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(rng.range(0, 6.28), rng.range(0, 6.28), rng.range(0, 6.28)));
       const axis = new THREE.Vector3(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).normalize();
       const rotSpeed = rng.range(0.05, 0.5) * (scale > 20 ? 0.25 : 1);
       const tint = rng.next();
-      color.setHSL(0.06 + tint * 0.05, 0.25 + rng.next() * 0.25, 0.5 + rng.next() * 0.3);
+      // warm ochre rocks with the occasional cool slate one so the belt reads as varied
+      if (tint < 0.2) color.setHSL(0.58, 0.12, 0.45 + rng.next() * 0.2);
+      else color.setHSL(0.05 + tint * 0.05, 0.3 + rng.next() * 0.25, 0.45 + rng.next() * 0.3);
       im.setColorAt(i, color);
       rocks.push({ pos, quat, axis, rotSpeed, scale, mesh: im, index: i });
     }
@@ -125,6 +144,26 @@ export function buildAsteroidBelt(rng, { count = 900, extent = 520, thickness = 
   }
   const group = new THREE.Group();
   for (const m of meshes) group.add(m);
+
+  /** Remove rocks from a sphere (used to clear the spawn point / opening path). */
+  function clearAround(p, radius) {
+    for (const r of rocks) {
+      const d = r.pos.distanceTo(p);
+      if (d < radius + r.scale) {
+        // teleport it to the far side of the wrap box instead of deleting it
+        _p.copy(r.pos).sub(p).normalize(); if (_p.lengthSq() < 0.5) _p.set(0, 0, 1);
+        r.pos.copy(p).addScaledVector(_p, extent * 0.9);
+      }
+    }
+  }
+  /** Returns the rock a point is inside of (approx sphere test), or null. */
+  function hitTest(p) {
+    for (const r of rocks) {
+      if (r.scale < 3) continue;
+      if (r.pos.distanceToSquared(p) < (r.scale * 0.85) ** 2) return r;
+    }
+    return null;
+  }
 
   function update(dt, center) {
     for (const r of rocks) {
@@ -135,6 +174,9 @@ export function buildAsteroidBelt(rng, { count = 900, extent = 520, thickness = 
       }
       const dy = r.pos.y - center.y;
       if (dy > thickness * 1.6) r.pos.y -= thickness * 3.2; else if (dy < -thickness * 1.6) r.pos.y += thickness * 3.2;
+      // soft collision: never let a rock swallow the player, nudge it aside instead
+      const dd = r.pos.distanceTo(center), minD = r.scale + 6;
+      if (dd < minD) { _p.copy(r.pos).sub(center); if (_p.lengthSq() < 1e-4) _p.set(1, 0, 0); _p.normalize(); r.pos.addScaledVector(_p, (minD - dd) * Math.min(1, dt * 6)); }
       _q.setFromAxisAngle(r.axis, r.rotSpeed * dt);
       r.quat.premultiply(_q);
       _s.setScalar(r.scale);
@@ -147,5 +189,5 @@ export function buildAsteroidBelt(rng, { count = 900, extent = 520, thickness = 
     for (const m of meshes) m.geometry.dispose();
     mat.dispose(); map.dispose(); normalMap.dispose();
   }
-  return { group, rocks, update, dispose, material: mat };
+  return { group, rocks, update, dispose, clearAround, hitTest, material: mat };
 }

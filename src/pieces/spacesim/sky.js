@@ -1,121 +1,9 @@
-// Nebula backdrop, starfield, sun disc, planet with atmosphere + moon.
+// Planet with atmosphere rim + moon (surface detail GPU-baked once). Sky/nebula come from lookdev.
 import * as THREE from 'three';
 import { NOISE_GLSL } from './glsl.js';
 import { bakeTexture } from './bake.js';
 
-export const SUN_DIR = new THREE.Vector3(-0.55, 0.42, -0.72).normalize();
-
-export function buildNebula() {
-  const geo = new THREE.SphereGeometry(4200, 48, 32);
-  const mat = new THREE.ShaderMaterial({
-    side: THREE.BackSide,
-    depthWrite: false,
-    uniforms: { uSun: { value: SUN_DIR } },
-    vertexShader: /* glsl */ `
-      varying vec3 vDir;
-      void main() {
-        vDir = normalize(position);
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        gl_Position = projectionMatrix * mv;
-      }`,
-    fragmentShader: /* glsl */ `
-      ${NOISE_GLSL}
-      varying vec3 vDir;
-      uniform vec3 uSun;
-      void main() {
-        vec3 d = vDir;
-        // deep space base: cold navy with a faint violet tilt
-        vec3 col = vec3(0.012, 0.016, 0.040);
-        // primary nebula lobe: magenta/teal cloud swirl along a tilted band
-        vec3 band = d + 0.25 * vec3(snoise(d * 1.6), snoise(d * 1.6 + 7.0), 0.0);
-        float lane = exp(-4.5 * pow(abs(band.y * 0.85 + band.x * 0.35 + 0.15), 1.4));
-        float n1 = fbm(d * 2.4 + vec3(1.0, 3.0, 2.0));
-        float n2 = fbm(d * 5.5 + vec3(9.0, 1.0, 4.0));
-        float cloud = smoothstep(-0.15, 0.55, n1 + 0.5 * n2) * lane;
-        vec3 teal = vec3(0.10, 0.45, 0.62);
-        vec3 magenta = vec3(0.62, 0.18, 0.55);
-        vec3 amber = vec3(0.95, 0.55, 0.30);
-        float mixT = smoothstep(-0.3, 0.4, snoise(d * 1.3 + 4.0));
-        vec3 neb = mix(teal, magenta, mixT);
-        col += neb * cloud * 0.55;
-        // bright filaments
-        float fil = pow(ridged(d * 6.0 + 2.0), 3.0) * lane;
-        col += amber * fil * 0.35 * smoothstep(0.1, 0.6, cloud + 0.2);
-        // dust lane darkening
-        float dust = smoothstep(0.2, 0.8, fbm4(d * 3.3 + 11.0)) * lane;
-        col *= 1.0 - 0.45 * dust;
-        // sun glow halo
-        float s = max(dot(d, uSun), 0.0);
-        col += vec3(1.0, 0.85, 0.65) * (pow(s, 40.0) * 0.6 + pow(s, 400.0) * 3.0);
-        // fine star dust speckle
-        float sp = smoothstep(0.86, 1.0, snoise(d * 220.0)) * 0.12;
-        col += vec3(sp);
-        gl_FragColor = vec4(col, 1.0);
-      }`,
-  });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.frustumCulled = false;
-  mesh.renderOrder = -10;
-  return mesh;
-}
-
-export function buildStars(rng, count = 2600) {
-  const pos = new Float32Array(count * 3);
-  const col = new Float32Array(count * 3);
-  const size = new Float32Array(count);
-  const c = new THREE.Color();
-  for (let i = 0; i < count; i++) {
-    const u = rng.next() * 2 - 1, th = rng.next() * Math.PI * 2;
-    const r = Math.sqrt(1 - u * u);
-    pos[i * 3] = r * Math.cos(th) * 4000;
-    pos[i * 3 + 1] = u * 4000;
-    pos[i * 3 + 2] = r * Math.sin(th) * 4000;
-    const temp = rng.next();
-    if (temp < 0.15) c.setHSL(0.6, 0.6, 0.85); // blue-white
-    else if (temp < 0.3) c.setHSL(0.08, 0.7, 0.75); // amber
-    else c.setHSL(0.12, 0.1, 0.92);
-    const br = 0.35 + Math.pow(rng.next(), 3) * 1.4;
-    col[i * 3] = c.r * br; col[i * 3 + 1] = c.g * br; col[i * 3 + 2] = c.b * br;
-    size[i] = 1.2 + Math.pow(rng.next(), 4) * 3.2;
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
-  const mat = new THREE.ShaderMaterial({
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    uniforms: { uPR: { value: 1 } },
-    vertexShader: /* glsl */ `
-      attribute float aSize; attribute vec3 color; varying vec3 vC; uniform float uPR;
-      void main() { vC = color; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_PointSize = aSize * uPR; }`,
-    fragmentShader: /* glsl */ `
-      varying vec3 vC;
-      void main() { vec2 q = gl_PointCoord - 0.5; float d = length(q); float a = smoothstep(0.5, 0.05, d); gl_FragColor = vec4(vC * a, a); }`,
-  });
-  const pts = new THREE.Points(geo, mat);
-  pts.frustumCulled = false;
-  pts.renderOrder = -9;
-  return pts;
-}
-
-export function buildSun() {
-  const tex = radialTexture(256, [[0, 'rgba(255,250,235,1)'], [0.18, 'rgba(255,235,190,1)'], [0.3, 'rgba(255,190,110,0.5)'], [1, 'rgba(255,150,80,0)']]);
-  const mat = new THREE.SpriteMaterial({ map: tex, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, transparent: true, toneMapped: false });
-  const s = new THREE.Sprite(mat);
-  s.position.copy(SUN_DIR).multiplyScalar(3900);
-  s.scale.setScalar(520);
-  s.renderOrder = -8;
-  return s;
-}
-
-function radialTexture(size, stops) {
-  const cv = document.createElement('canvas'); cv.width = cv.height = size;
-  const g = cv.getContext('2d');
-  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  for (const [o, c] of stops) grad.addColorStop(o, c);
-  g.fillStyle = grad; g.fillRect(0, 0, size, size);
-  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
-}
+export const SUN_DIR = new THREE.Vector3(0.62, 0.3, -0.72).normalize(); // overwritten from the look preset
 
 /** Corneria-like planet. Surface detail is baked once to equirect textures (GPU), shaded cheaply per frame. */
 export function buildPlanet(renderer, { radius = 1050, position = new THREE.Vector3(1500, -700, -2600) } = {}) {
@@ -249,15 +137,16 @@ export function buildPlanet(renderer, { radius = 1050, position = new THREE.Vect
         void main() {
           vec3 n = normalize(vN); vec3 alb = texture2D(tAlbedo, vUv).rgb;
           float ndl = max(dot(n, uSun), 0.0);
-          gl_FragColor = vec4(alb * (ndl * vec3(1.0, 0.95, 0.88) + vec3(0.015, 0.02, 0.04)), 1.0);
+          gl_FragColor = vec4(alb * (ndl * vec3(1.0, 0.95, 0.88) + vec3(0.03, 0.04, 0.08)), 1.0);
         }`,
     }),
   );
-  moon.position.set(-radius * 1.9, radius * 0.75, radius * 0.6);
-  group.add(moon);
+  const moonOrbit = new THREE.Group(); moonOrbit.rotation.x = 0.25; moonOrbit.add(moon);
+  moon.position.set(radius * 2.0, radius * 0.35, radius * 0.4);
+  group.add(moonOrbit);
   return {
     group, surf, atmo, moon,
-    update(t) { surf.material.uniforms.uTime.value = t; surf.rotation.y = t * 0.002; },
+    update(t) { surf.material.uniforms.uTime.value = t; surf.rotation.y = t * 0.002; moonOrbit.rotation.y = t * 0.006; moon.rotation.y = t * 0.01; },
     dispose() { albedoRT.dispose(); dataRT.dispose(); moonRT.dispose(); },
   };
 }
