@@ -7,7 +7,7 @@ function puffTexture() {
   const g = c.getContext('2d');
   g.clearRect(0, 0, S, S);
   // several overlapping soft blobs -> lumpy cumulus silhouette
-  const blobs = [[128, 140, 90], [80, 150, 62], [180, 150, 66], [110, 100, 58], [160, 105, 52], [128, 170, 70]];
+  const blobs = [[128, 150, 88], [76, 158, 58], [184, 156, 62], [104, 104, 52], [156, 100, 46], [128, 176, 66], [60, 176, 40], [200, 180, 42], [132, 76, 34]];
   for (const [x, y, r] of blobs) {
     const rg = g.createRadialGradient(x, y, 0, x, y, r);
     rg.addColorStop(0, 'rgba(255,255,255,0.85)');
@@ -20,7 +20,7 @@ function puffTexture() {
 }
 
 /** Camera-facing volumetric-ish cumulus billboards with sun shading + distance fade. */
-export function createClouds(rng, count = 64) {
+export function createClouds(rng, count = 40) {
   const uniforms = {
     uMap: { value: puffTexture() },
     uSunDir: { value: SUN_DIR.clone() },
@@ -57,11 +57,11 @@ export function createClouds(rng, count = 64) {
         vec3 V = normalize(uCamPos - vWorld);
         float sunFacing = 0.5 + 0.5 * dot(-V, uSunDir);
         float topLight = smoothstep(0.15, 0.85, vUv.y);
-        vec3 lit = vec3(1.08, 1.02, 0.96);
-        vec3 shade = vec3(0.62, 0.70, 0.86);
-        vec3 col = mix(shade, lit, topLight * 0.7 + 0.3 * sunFacing);
-        col *= mix(1.0, 0.86, smoothstep(0.5, 0.9, a)); // denser core slightly darker
-        col += vec3(0.5, 0.35, 0.15) * pow(sunFacing, 6.0) * (1.0 - a) * 0.6; // rim glow
+        vec3 lit = vec3(1.12, 1.06, 0.98);
+        vec3 shade = vec3(0.56, 0.66, 0.88);
+        vec3 col = mix(shade, lit, clamp(topLight * 0.75 + 0.35 * sunFacing, 0.0, 1.0));
+        col *= mix(1.0, 0.82, smoothstep(0.45, 0.9, a) * (1.0 - topLight * 0.5)); // dense underside darker
+        col += vec3(0.6, 0.42, 0.18) * pow(sunFacing, 5.0) * (1.0 - a) * 0.7; // silver-lining rim glow
         col = mix(col, uFogColor, vFog);
         gl_FragColor = vec4(col, a * (1.0 - vFog * 0.85) * 0.92);
       }`,
@@ -74,8 +74,8 @@ export function createClouds(rng, count = 64) {
   const RANGE = 3400;
   for (let i = 0; i < count; i++) {
     const it = {
-      x: rng.range(-2600, 2600), y: rng.range(260, 520), z: -rng.range(0, RANGE),
-      sx: rng.range(180, 420), drift: rng.range(-3, 3),
+      x: rng.range(-2800, 2800), y: rng.range(240, 560), z: -rng.range(0, RANGE),
+      sx: rng.range(160, 460), drift: rng.range(-3, 3),
     };
     it.sy = it.sx * rng.range(0.42, 0.6);
     items.push(it);

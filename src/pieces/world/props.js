@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { vnoise } from './noise.js';
 import { CHUNK, heightAt, riverX } from './terrain.js';
+import { patchAtmosphere, skyUniforms } from './sky.js';
 
 const _m = new THREE.Matrix4(), _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _e = new THREE.Euler();
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
@@ -76,19 +77,34 @@ function towerGeometry() {
   return g;
 }
 function spireGeometry(rng) {
-  const g = new THREE.ConeGeometry(1, 1, 9, 6, false);
+  // tapered, twisted rock needle with strata vertex colours (flat-shaded)
+  const g = new THREE.ConeGeometry(1, 1, 14, 12, false);
   g.translate(0, 0.5, 0);
   const pos = g.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
     const a = Math.atan2(z, x);
     const r = Math.hypot(x, z);
-    const n = 1 + 0.35 * vnoise(a * 1.7 + 3, y * 4.0) + 0.18 * vnoise(a * 4.0, y * 9.0 + 7);
-    const twist = 0.15 * vnoise(y * 3.0, 1.3);
-    pos.setXYZ(i, Math.cos(a + twist) * r * n, y * (1 + 0.1 * vnoise(a, 2)), Math.sin(a + twist) * r * n);
+    const n = 1 + 0.32 * vnoise(a * 1.7 + 3, y * 4.0) + 0.16 * vnoise(a * 4.0, y * 9.0 + 7) + 0.10 * vnoise(a * 9.0, y * 20.0);
+    const twist = 0.2 * vnoise(y * 3.0, 1.3) + y * 0.12;
+    // step the silhouette into strata ledges
+    const ledge = 1 + 0.05 * (Math.floor(y * 9) % 2);
+    pos.setXYZ(i, Math.cos(a + twist) * r * n * ledge, y * (1 + 0.1 * vnoise(a, 2)), Math.sin(a + twist) * r * n * ledge);
   }
-  g.computeVertexNormals();
-  return g;
+  const nonIndexed = g.toNonIndexed();
+  nonIndexed.computeVertexNormals();
+  const p2 = nonIndexed.attributes.position, cnt = p2.count;
+  const col = new Float32Array(cnt * 3);
+  const A = new THREE.Color(0xdea274).convertSRGBToLinear(), B = new THREE.Color(0xa56a48).convertSRGBToLinear(), T = new THREE.Color(0xf0d2ac).convertSRGBToLinear();
+  const c = new THREE.Color();
+  for (let i = 0; i < cnt; i++) {
+    const y = p2.getY(i);
+    const band = 0.5 + 0.5 * Math.sin(y * 34 + 1.5 * vnoise(y * 5, 0.3));
+    c.copy(A).lerp(B, band * 0.75).lerp(T, Math.max(0, (y - 0.7) / 0.3) * 0.5);
+    col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+  }
+  nonIndexed.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return nonIndexed;
 }
 function treeGeometry() {
   const trunk = new THREE.CylinderGeometry(0.08, 0.14, 0.5, 5); trunk.translate(0, 0.25, 0);
@@ -126,15 +142,18 @@ export class Props {
     this.rng = rng;
     const win = windowTexture(), fac = facadeTexture();
     this.towerMat = new THREE.MeshStandardMaterial({
-      map: fac, emissiveMap: win, emissive: new THREE.Color(0xffc98a), emissiveIntensity: 0.35,
-      roughness: 0.35, metalness: 0.55, color: 0xdfe8f2,
+      map: fac, emissiveMap: win, emissive: new THREE.Color(0xffc98a), emissiveIntensity: 0.55,
+      roughness: 0.28, metalness: 0.6, color: 0xe6eef8, envMapIntensity: 1.2,
     });
     // window texture repeats by tower height: handled via per-instance uv is complex — use a mid repeat
     fac.repeat.set(2, 6); win.repeat.set(2, 6);
-    this.blockMat = new THREE.MeshStandardMaterial({ map: fac, roughness: 0.55, metalness: 0.35, color: 0xb9c6d6 });
-    this.spireMat = new THREE.MeshStandardMaterial({ color: 0xb37a58, roughness: 0.92, metalness: 0.0, flatShading: true });
-    this.treeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
-    this.archMat = new THREE.MeshStandardMaterial({ color: 0xe6ecf4, roughness: 0.28, metalness: 0.75, emissive: 0x2a5ea8, emissiveIntensity: 0.25 });
+    this.blockMat = new THREE.MeshStandardMaterial({ map: fac, roughness: 0.5, metalness: 0.4, color: 0xc4d0de });
+    this.spireMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, metalness: 0.0, flatShading: true });
+    this.treeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
+    this.archMat = new THREE.MeshStandardMaterial({ color: 0xeef3f8, roughness: 0.22, metalness: 0.85, emissive: 0x2a6ed8, emissiveIntensity: 0.35 });
+    this.beaconMat = new THREE.MeshStandardMaterial({ color: 0xff6a3a, emissive: 0xff3a1a, emissiveIntensity: 5.0, roughness: 0.4 });
+    const shared = skyUniforms();
+    for (const m of [this.towerMat, this.blockMat, this.spireMat, this.treeMat, this.archMat]) patchAtmosphere(m, shared);
 
     this.towers = new Pool(towerGeometry(), this.towerMat, 220);
     this.blocks = new Pool(blockGeometry(), this.blockMat, 400);
@@ -142,7 +161,8 @@ export class Props {
     this.trees = new Pool(treeGeometry(), this.treeMat, 900, { shadow: true });
     this.trees.mesh.receiveShadow = false;
     this.arches = new Pool(archGeometry(), this.archMat, 24);
-    this.pools = [this.towers, this.blocks, this.spires, this.trees, this.arches];
+    this.beacons = new Pool(new THREE.SphereGeometry(1, 8, 6), this.beaconMat, 220, { shadow: false });
+    this.pools = [this.towers, this.blocks, this.spires, this.trees, this.arches, this.beacons];
     this.group = new THREE.Group();
     for (const p of this.pools) this.group.add(p.mesh);
     this.chunkClaims = new Map(); // chunkIndex -> [{pool, id}]
@@ -185,7 +205,7 @@ export class Props {
       const h = H(x, d);
       if (h < 2) continue;
       const r = rng.range(12, 34), hh = rng.range(50, 170) * (p.ridged > 0.5 ? 1.3 : 1);
-      this.tint.setHSL(0.07 + rng.range(-0.02, 0.02), 0.45, rng.range(0.42, 0.6));
+      this.tint.setHSL(0.07 + rng.range(-0.02, 0.02), 0.2, rng.range(0.8, 0.96));
       claim(this.spires, x, h - 6, -d, rng.range(0, 6.28), r, hh, r * rng.range(0.7, 1.2), this.tint, rng.range(-0.06, 0.06), rng.range(-0.06, 0.06));
     }
     // city: towers on a grid with jitter, low blocks between
@@ -200,8 +220,12 @@ export class Props {
         const near = Math.abs(x) < 380 ? 1 : 0.55; // taller downtown core
         if (rng.next() < 0.45) {
           const w = rng.range(18, 30), ht = rng.range(60, 230) * near;
-          this.tint.setHSL(0.58 + rng.range(-0.05, 0.05), 0.25, rng.range(0.75, 0.95));
+          const pick = rng.next();
+          if (pick < 0.6) this.tint.setHSL(0.58 + rng.range(-0.04, 0.04), 0.18, rng.range(0.8, 0.97));
+          else if (pick < 0.85) this.tint.setHSL(0.52, 0.45, rng.range(0.55, 0.7)); // teal glass
+          else this.tint.setHSL(0.08, 0.35, 0.72); // warm sandstone
           claim(this.towers, x, h - 1, -d, Math.round(rng.range(0, 3)) * Math.PI / 2, w, ht, w, this.tint);
+          if (ht > 120) claim(this.beacons, x, h - 1 + ht * 1.63, -d, 0, 2.2, 2.2, 2.2, null);
         } else {
           const w = rng.range(22, 42), ht = rng.range(10, 40);
           this.tint.setHSL(0.6, 0.15, rng.range(0.6, 0.85));
@@ -210,7 +234,7 @@ export class Props {
       }
     }
     // arches over the river
-    if (rng.next() < p.arches) {
+    if (i % 2 === 0 && rng.next() < p.arches) {
       const d = d0 + CHUNK / 2;
       const xr = riverX(d);
       const dir = Math.atan2(riverX(d + 10) - riverX(d - 10), 20);
