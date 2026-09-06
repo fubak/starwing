@@ -7,16 +7,13 @@ import * as THREE from 'three';
 import { buildFallbackArwing } from './arwing.js';
 import { PALETTE, SUN_DIR, buildSky, buildOcean, buildIslands, Pillars, Clouds, Gates } from './environment.js';
 import { Lasers, MuzzleFlash, SpeedLines, Sparkle, Reticle, BoostFlame, makeGradePass } from './effects.js';
+import { createRailController, damp } from './controller.js';
+import { createChaseCamera } from './camera.js';
+import { dressArwing } from './livery.js';
+
+export { createRailController, createChaseCamera, dressArwing };
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const damp = (cur, target, lambda, dt) => cur + (target - cur) * (1 - Math.exp(-lambda * dt));
-// barrel roll curve: slight anticipation, fast middle, settles with overshoot
-const rollCurve = (t) => {
-  const c1 = 0.9, c2 = c1 * 1.525;
-  return t < 0.5
-    ? (Math.pow(2 * t, 2) * ((c2 + 1) * 2 * t - c2)) / 2
-    : (Math.pow(2 * t - 2, 2) * ((c2 + 1) * (t * 2 - 2) + c2) + 2) / 2;
-};
 
 // Golden-hour Corneria sea. Shaped like a lookdev preset so the shared rig can drive it.
 const LOOK = {
@@ -85,9 +82,9 @@ export async function create(ctx) {
   // and a strong cool rim from ahead/below carve the silhouette like Star Fox
   // Zero's Corneria. World surfaces use lean custom shaders, so these lights
   // only touch the ship and the gates.
-  const keyLight = new THREE.DirectionalLight(0xffe2bc, 2.5);
-  const rimLight = new THREE.DirectionalLight(0x6fb4ff, 2.6);
-  const underLight = new THREE.DirectionalLight(0x3aa7b8, 0.9); // sea bounce onto the belly
+  const keyLight = new THREE.DirectionalLight(0xffe2bc, 1.6);
+  const rimLight = new THREE.DirectionalLight(0x6fb4ff, 3.2);
+  const underLight = new THREE.DirectionalLight(0x3aa7b8, 1.1); // sea bounce onto the belly
   scene.add(keyLight, keyLight.target, rimLight, rimLight.target, underLight, underLight.target);
   // boost FX pass (chromatic aberration, radial blur, flash) in linear space before OutputPass
   const fx = makeGradePass();
@@ -109,11 +106,7 @@ export async function create(ctx) {
   const { obj: arwing, api: shipApi } = await loadArwing();
   if (shipApi) {
     arwing.scale.setScalar(1.0); // ship piece model is ~7 units nose->tail already
-    // Hull: a touch of blue-grey in the paint so the sun can't bleach it to paper white,
-    // and stronger clearcoat/env so it picks up a proper specular streak.
-    const M = shipApi.materials || {};
-    for (const m of [M.matHull, M.matWing]) if (m) { m.color.set(0xdfe6ee); m.roughness = 0.42; m.clearcoatRoughness = 0.22; m.envMapIntensity = 1.1; }
-    if (M.matBlue) { M.matBlue.color.set(0x1a4ee8); M.matBlue.envMapIntensity = 1.3; }
+    dressArwing(shipApi); // blue / grey / red livery split, cooler hull, real clearcoat
   } else {
     // normalise scale so the fallback is ~6.5 units long
     const bb = new THREE.Box3().setFromObject(arwing);
@@ -169,28 +162,13 @@ export async function create(ctx) {
   let msgT = 0;
   const say = (s) => { elMsg.textContent = s; msgT = 1.0; };
 
-  // ---------- state ----------
-  const S = {
-    x: 0, y: 14, z: 0,           // rail-relative position (z is travel)
-    vx: 0, vy: 0,
-    pitch: 0, yaw: 0, bank: 0,
-    speed: 110, baseSpeed: 110,
-    boost: 0, brake: 0, gauge: 1,
-    roll: { active: false, t: 0, dir: 1, cool: 0 },
-    tapL: -10, tapR: -10, prevX: 0,
-    fireCool: 0, side: 1, recoil: 0,
-    fov: 60, shake: 0, flash: 0,
-    invuln: 0,
-  };
-  const BOX = { x: 24, yMin: 4, yMax: 32 };
-  // camera is tracked as an offset from the ship in rail space so the forward
-  // lag never lets the ship drift into the distance at speed.
-  const camOff = new THREE.Vector3(0, 3.2, 11.5);
-  const camPos = new THREE.Vector3(0, 17, 12);
-  const camLook = new THREE.Vector3(0, 14, -60);
-  const camVel = new THREE.Vector3();
+  // ---------- state: reusable controller + chase camera ----------
+  const rail = createRailController({ box: { x: 24, yMin: 4, yMax: 32 }, startY: 14 });
+  const S = rail.state;
+  const chase = createChaseCamera(camera);
+  const FX = { flash: 0 };
   const tmp = new THREE.Vector3(), aimDir = new THREE.Vector3(0, 0, -1), shipWorld = new THREE.Vector3();
-  const lead = new THREE.Vector3(), focus = new THREE.Vector3();
+  const focus = new THREE.Vector3();
   camera.near = 0.5; camera.far = 6000; camera.fov = 60; camera.updateProjectionMatrix();
 
   // ---------- autoplay script (16 s loop: weave, boost+roll, brake, hard turns) ----------
@@ -215,52 +193,12 @@ export async function create(ctx) {
     time += dt;
     const ax = input.axes.x, ay = input.axes.y;
 
-    // --- boost / brake with gauge
-    const wantBoost = input.isHeld('boost') && S.gauge > 0.02;
-    const wantBrake = input.isHeld('brake') && S.gauge > 0.02;
-    S.boost = damp(S.boost, wantBoost ? 1 : 0, wantBoost ? 6 : 3.5, dt);
-    S.brake = damp(S.brake, wantBrake ? 1 : 0, wantBrake ? 7 : 4, dt);
-    if (wantBoost || wantBrake) S.gauge = Math.max(0, S.gauge - dt * 0.45); else S.gauge = Math.min(1, S.gauge + dt * 0.25);
-    S.speed = S.baseSpeed * (1 + S.boost * 0.95 - S.brake * 0.55);
-
-    // --- barrel roll: Q/E or double-tap the stick
+    rail.update(dt, input);
     const R = S.roll;
-    R.cool = Math.max(0, R.cool - dt);
-    let rollReq = 0;
-    if (input.wasPressed('rollL')) rollReq = -1;
-    if (input.wasPressed('rollR')) rollReq = 1;
-    if (ax > 0.6 && S.prevX <= 0.6) { if (time - S.tapR < 0.3) rollReq = 1; S.tapR = time; }
-    if (ax < -0.6 && S.prevX >= -0.6) { if (time - S.tapL < 0.3) rollReq = -1; S.tapL = time; }
-    S.prevX = ax;
-    if (rollReq && !R.active && R.cool <= 0) { R.active = true; R.t = 0; R.dir = rollReq; S.invuln = 0.7; }
-    if (R.active) {
-      R.t += dt / 0.62;
-      if (R.t >= 1) { R.active = false; R.t = 0; R.cool = 0.15; }
-    }
-    S.invuln = Math.max(0, S.invuln - dt);
-    const rollAngle = R.active ? -R.dir * rollCurve(R.t) * Math.PI * 2 : 0;
-
-    // --- steering in the soft box: acceleration + drag, soft walls
-    const agil = 1 - S.boost * 0.25 + S.brake * 0.3;
-    const targetVx = ax * 46 * agil, targetVy = ay * 34 * agil;
-    S.vx = damp(S.vx, targetVx, 5.5, dt);
-    S.vy = damp(S.vy, targetVy, 5.5, dt);
-    S.x += S.vx * dt; S.y += S.vy * dt;
-    if (S.x > BOX.x) { S.x = damp(S.x, BOX.x, 12, dt); S.vx *= 0.6; }
-    if (S.x < -BOX.x) { S.x = damp(S.x, -BOX.x, 12, dt); S.vx *= 0.6; }
-    if (S.y > BOX.yMax) { S.y = damp(S.y, BOX.yMax, 12, dt); S.vy *= 0.6; }
-    if (S.y < BOX.yMin) { S.y = damp(S.y, BOX.yMin, 12, dt); S.vy *= 0.6; }
-    S.z -= S.speed * dt;
-
-    // attitude: yaw/pitch toward velocity, bank into turns (input adds anticipation)
-    S.yaw = damp(S.yaw, -S.vx * 0.012 - ax * 0.09, 8, dt);
-    S.pitch = damp(S.pitch, S.vy * 0.014 + ay * 0.11, 8, dt);
-    S.bank = damp(S.bank, -ax * 0.72 - S.vx * 0.005, 6.5, dt);
-    S.recoil = Math.max(0, S.recoil - dt * 9);
 
     shipRoot.position.set(S.x, S.y, S.z);
     shipAttitude.rotation.set(S.pitch, S.yaw, S.bank, 'YXZ');
-    shipRoll.rotation.z = rollAngle;
+    shipRoll.rotation.z = S.rollAngle;
     shipRoll.position.z = S.recoil * 0.6 + S.brake * 1.2 - S.boost * 1.5;
     if (shipApi) {
       shipApi.setBank?.(ax * 0.35);
@@ -272,11 +210,8 @@ export async function create(ctx) {
     // --- aim + lasers
     shipRoot.getWorldPosition(shipWorld);
     aimDir.set(0, 0, -1).applyEuler(shipAttitude.rotation).normalize();
-    S.fireCool -= dt;
-    let fired = false;
-    if (input.isHeld('fire') && S.fireCool <= 0) {
-      S.fireCool = 0.13;
-      S.side = -S.side;
+    const fired = rail.events.fired;
+    if (fired) {
       muzzleParent.updateWorldMatrix(true, false);
       const target = shipWorld.clone().addScaledVector(aimDir, 95);
       for (const mp of muzzlePts) {
@@ -284,8 +219,7 @@ export async function create(ctx) {
         lasers.fire(muzzle, target.clone().sub(muzzle).normalize());
       }
       muzzleFlash.kick();
-      S.recoil = 1; S.shake = Math.max(S.shake, 0.22);
-      fired = true;
+      chase.kick(0.22);
     }
     lasers.update(dt, camera);
     muzzleFlash.update(dt, camera);
@@ -293,7 +227,7 @@ export async function create(ctx) {
     boostLight.intensity = S.boost * 40;
 
     // --- world
-    if (gates.update(S, dt, time)) { say('NICE!'); S.flash = 0.35; S.gauge = Math.min(1, S.gauge + 0.3); look?.flash?.(0.25); }
+    if (gates.update(S, dt, time)) { say('NICE!'); FX.flash = 0.35; S.gauge = Math.min(1, S.gauge + 0.3); look?.flash?.(0.25); }
     pillars.update(S.z, time);
     clouds.update(S.z);
     ocean.position.set(0, 0, S.z);
@@ -320,34 +254,14 @@ export async function create(ctx) {
 
     sparkle.update(dt, R.active, R.t);
 
-    // --- camera: chase, lags laterally, leads look-at into the turn, FOV kick
-    const lagX = 0.84, lagY = 0.8;
-    // forward offset: pulls in on boost (ship looms), backs off on brake (ship drops toward camera visually via y)
-    camOff.z = damp(camOff.z, 11.5 + S.brake * 2.2 - S.boost * 2.4, 5, dt);
-    camOff.y = damp(camOff.y, 3.2 + S.brake * 1.6 - S.boost * 0.4, 5, dt);
-    const desired = tmp.set(S.x * lagX, 14 * (1 - lagY) + S.y * lagY + camOff.y, S.z + camOff.z);
-    camPos.x = damp(camPos.x, desired.x, 6, dt);
-    camPos.y = damp(camPos.y, desired.y, 6, dt);
-    camPos.z = desired.z;
-    lead.set(S.x * 0.92 + S.vx * 0.16 + ax * 2.0, S.y * 0.94 + 14 * 0.06 + S.vy * 0.14 + ay * 1.2 - 1.6, S.z - 60);
-    camLook.x = damp(camLook.x, lead.x, 7, dt);
-    camLook.y = damp(camLook.y, lead.y, 7, dt);
-    camLook.z = lead.z;
-    S.shake = Math.max(0, S.shake - dt * 3);
-    const shk = S.shake * 0.1 + S.boost * 0.08;
-    camera.position.set(camPos.x + Math.sin(time * 61) * shk, camPos.y + Math.cos(time * 47) * shk, camPos.z);
-    camera.up.set(0, 1, 0);
-    camera.lookAt(camLook);
-    camera.rotateZ(S.bank * 0.16); // camera rolls a touch with the ship
-    S.fov = damp(S.fov, 60 + S.boost * 17 - S.brake * 9, 5, dt);
-    if (Math.abs(camera.fov - S.fov) > 0.01) { camera.fov = S.fov; camera.updateProjectionMatrix(); }
-    camera.updateMatrixWorld();
+    // --- camera: chase rig with screen-space anchor (ship locked centre-low, world swings)
+    chase.update(dt, S, { x: ax, y: ay });
 
     // --- post & fx
     speedLines.update(dt, clamp(S.boost * 1.0 + Math.max(0, (S.speed - 110) / 110), 0, 1), S.speed);
-    S.flash = Math.max(0, S.flash - dt * 2);
+    FX.flash = Math.max(0, FX.flash - dt * 2);
     fx.uniforms.boost.value = S.boost;
-    fx.uniforms.flash.value = S.flash * 0.25 + (S.invuln > 0.55 ? 0.08 : 0);
+    fx.uniforms.flash.value = FX.flash * 0.25 + (S.invuln > 0.55 ? 0.08 : 0);
     fx.uniforms.time.value = time;
     fx.uniforms.aspect.value = camera.aspect;
     reticle.update(shipWorld, aimDir, camera, dt, fired);
@@ -377,7 +291,7 @@ export async function create(ctx) {
     pillars.dispose(); clouds.dispose();
     camera.remove(speedLines.lines);
     scene.remove(keyLight, keyLight.target, rimLight, rimLight.target, underLight, underLight.target);
-    camera.up.set(0, 1, 0); camera.fov = 60; camera.updateProjectionMatrix();
+    chase.reset();
     hud.remove();
     shipApi?.dispose?.();
     scene.traverse((o) => { if (o.isMesh || o.isLine || o.isPoints || o.isSprite) { o.geometry?.dispose?.(); if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose()); else o.material?.dispose?.(); } });

@@ -14,16 +14,16 @@ const NOISE_GLSL = /* glsl */ `
 export class Lasers {
   constructor(scene, count = 32) {
     this.pool = [];
-    const core = new THREE.CapsuleGeometry(0.19, 5.2, 4, 10);
+    const core = new THREE.CapsuleGeometry(0.28, 7.4, 4, 10);
     core.rotateX(Math.PI / 2);
-    const sheath = new THREE.CapsuleGeometry(0.6, 5.6, 4, 12);
+    const sheath = new THREE.CapsuleGeometry(0.85, 7.8, 4, 12);
     sheath.rotateX(Math.PI / 2);
     // white-hot core, slightly green (HDR values so bloom picks it up cleanly)
-    this.coreMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 3.4, 1.9), toneMapped: false });
+    this.coreMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 4.2, 2.2), toneMapped: false });
     // sheath: soft edge via view-facing falloff so the bolt reads as a glowing rod, not a tube
     this.sheathMat = new THREE.ShaderMaterial({
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.FrontSide,
-      uniforms: { uCol: { value: new THREE.Color(0.25, 1.6, 0.45) } },
+      uniforms: { uCol: { value: new THREE.Color(0.3, 2.0, 0.55) } },
       vertexShader: `varying float vF; varying float vZ;
         void main(){ vec3 n = normalize(normalMatrix * normal); vec4 mv = modelViewMatrix * vec4(position,1.0);
           vF = pow(max(dot(n, normalize(-mv.xyz)), 0.0), 1.6); vZ = position.z; gl_Position = projectionMatrix * mv; }`,
@@ -32,12 +32,12 @@ export class Lasers {
     });
     // head flare billboard
     this.flareMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.4, 3.0, 1.2), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false, map: softDiscTexture() });
-    const flareGeo = new THREE.PlaneGeometry(1.8, 1.8);
+    const flareGeo = new THREE.PlaneGeometry(2.6, 2.6);
     for (let i = 0; i < count; i++) {
       const g = new THREE.Group();
       g.add(new THREE.Mesh(core, this.coreMat));
       g.add(new THREE.Mesh(sheath, this.sheathMat));
-      const fl = new THREE.Mesh(flareGeo, this.flareMat); fl.position.z = -2.6; fl.name = 'flare'; g.add(fl);
+      const fl = new THREE.Mesh(flareGeo, this.flareMat); fl.position.z = -3.7; fl.name = 'flare'; g.add(fl);
       g.visible = false;
       g.userData = { vel: new THREE.Vector3(), life: 0, flare: fl };
       scene.add(g);
@@ -45,7 +45,7 @@ export class Lasers {
     }
     this._q = new THREE.Quaternion();
   }
-  fire(origin, dir, speed = 460) {
+  fire(origin, dir, speed = 520) {
     const b = this.pool.find((p) => !p.visible);
     if (!b) return;
     b.visible = true;
@@ -140,7 +140,7 @@ export class SpeedLines {
       P[o + 3] = s.x - px * wHead; P[o + 4] = s.y - py * wHead; P[o + 5] = s.z;
       P[o + 6] = s.x - px * wTail; P[o + 7] = s.y - py * wTail; P[o + 8] = s.z - L;
       P[o + 9] = s.x + px * wTail; P[o + 10] = s.y + py * wTail; P[o + 11] = s.z - L;
-      const ah = A * 0.5, at = 0;
+      const ah = A * 0.38, at = 0;
       C[c] = 0.85; C[c + 1] = 0.95; C[c + 2] = 1.0; C[c + 3] = ah;
       C[c + 4] = 0.85; C[c + 5] = 0.95; C[c + 6] = 1.0; C[c + 7] = ah;
       C[c + 8] = 0.6; C[c + 9] = 0.8; C[c + 10] = 1.0; C[c + 11] = at;
@@ -309,7 +309,7 @@ export function makeGradePass() {
           float mv = fract(rr * (1.6 + id * 1.2) - time * (3.0 + id * 2.0) + id * 7.0);
           float seg = smoothstep(0.0, 0.35, mv) * smoothstep(1.0, 0.55, mv);
           float streak = line * seg * smoothstep(0.22, 0.6, rr) * step(0.25, id) * boost;
-          col += vec3(0.75, 0.9, 1.0) * streak * 0.28;
+          col += vec3(0.75, 0.9, 1.0) * streak * 0.18;
         }
         // warm/cool grade: lift shadows toward teal, highlights toward warm (only when lookdev grade is absent)
         if (grade > 0.5) {

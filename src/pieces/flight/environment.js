@@ -87,15 +87,20 @@ export function buildOcean() {
       }
       void main(){
         vec2 p = vW.xz;
-        float dx = 0.0, dz = 0.0;
-        wave(p, normalize(vec2(0.8, 0.6)), 0.35, 0.22, 2.6, dx, dz);
-        wave(p, normalize(vec2(-0.5, 0.9)), 0.6, 0.12, 3.4, dx, dz);
-        wave(p, normalize(vec2(0.2, -1.0)), 1.3, 0.05, 5.0, dx, dz);
-        float rip = noise(p * 0.35 + vec2(time * 0.7, -time * 0.4));
-        dx += (rip - 0.5) * 0.25; dz += (noise(p * 0.35 + 17.0 - time * 0.5) - 0.5) * 0.25;
-        vec3 N = normalize(vec3(-dx, 1.0, -dz));
         vec3 V = normalize(camPos - vW);
         float dist = length(camPos - vW);
+        // detail fades with distance so the far water never aliases into moire
+        float det = 1.0 - smoothstep(120.0, 700.0, dist);
+        float det2 = 1.0 - smoothstep(60.0, 320.0, dist);
+        float dx = 0.0, dz = 0.0;
+        wave(p, normalize(vec2(0.8, 0.6)), 0.35, 0.22 * (0.35 + 0.65 * det), 2.6, dx, dz);
+        wave(p, normalize(vec2(-0.5, 0.9)), 0.6, 0.12 * det, 3.4, dx, dz);
+        wave(p, normalize(vec2(0.2, -1.0)), 1.3, 0.05 * det2, 5.0, dx, dz);
+        float rip = noise(p * 0.35 + vec2(time * 0.7, -time * 0.4));
+        dx += (rip - 0.5) * 0.25 * det2; dz += (noise(p * 0.35 + 17.0 - time * 0.5) - 0.5) * 0.25 * det2;
+        // long swell visible from far away
+        wave(p, normalize(vec2(0.3, 0.95)), 0.045, 0.9 * (1.0 - det * 0.5), 1.1, dx, dz);
+        vec3 N = normalize(vec3(-dx, 1.0, -dz));
         // colour: deep channel with turquoise sandbanks
         float bank = noise(p * 0.012) * 0.65 + noise(p * 0.04) * 0.35;
         vec3 water = mix(deep, shallow, smoothstep(0.42, 0.78, bank));
@@ -106,9 +111,10 @@ export function buildOcean() {
         // sun glints: tight + broad lobes
         vec3 H = normalize(V + sunDir);
         float nh = max(dot(N, H), 0.0);
-        col += sunCol * (pow(nh, 520.0) * 2.6 + pow(nh, 48.0) * 0.22);
-        // foam flecks on wave crests
-        float crest = smoothstep(0.62, 0.8, noise(p * 0.5 + vec2(time * 0.9, time * 0.3)) * (0.5 + 0.5 * rip));
+        float spec = mix(520.0, 60.0, 1.0 - det); // broader, calmer lobe in the distance
+        col += sunCol * (pow(nh, spec) * mix(0.9, 2.6, det) + pow(nh, 48.0) * 0.22);
+        // foam flecks on wave crests (near only)
+        float crest = smoothstep(0.62, 0.8, noise(p * 0.5 + vec2(time * 0.9, time * 0.3)) * (0.5 + 0.5 * rip)) * det2;
         col += vec3(0.9, 0.95, 1.0) * crest * 0.18;
         // soft diffuse from sun
         col *= 0.82 + 0.28 * max(dot(N, sunDir), 0.0);
@@ -140,7 +146,7 @@ function rockMaterial(opts = {}) {
     vertexShader: `
       #include <common>
       #include <fog_pars_vertex>
-      varying vec3 vN; varying vec3 vW; varying float vH;
+      varying vec3 vN; varying vec3 vW; varying float vH; varying float vSeed;
       void main(){
         #include <beginnormal_vertex>
         #include <defaultnormal_vertex>
@@ -148,8 +154,10 @@ function rockMaterial(opts = {}) {
         #include <project_vertex>
         vN = normalize(transformedNormal);
         vec4 wp = modelMatrix * vec4(transformed, 1.0);
+        vSeed = 0.5;
         #ifdef USE_INSTANCING
           wp = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
+          vSeed = fract(sin(dot(instanceMatrix[3].xz, vec2(12.9898, 78.233))) * 43758.5453);
         #endif
         vW = wp.xyz; vH = position.y;
         #include <fog_vertex>
@@ -157,17 +165,29 @@ function rockMaterial(opts = {}) {
     fragmentShader: `
       #include <fog_pars_fragment>
       uniform vec3 sunDir, sunCol, skyCol, groundCol, colA, colB, colTop; uniform float haze;
-      varying vec3 vN; varying vec3 vW; varying float vH;
+      varying vec3 vN; varying vec3 vW; varying float vH; varying float vSeed;
       ${NOISE_GLSL}
       void main(){
         vec3 N = normalize(vN);
+        float dist = length(cameraPosition - vW);
+        float det = 1.0 - smoothstep(80.0, 500.0, dist);
         // strata bands along world height + coarse grime
         float band = sin(vW.y * 0.42 + noise(vW.xz * 0.05) * 3.0 + noise(vec2(vW.y * 0.3, vW.x * 0.02)) * 2.0) * 0.5 + 0.5;
         float grime = noise(vW.xz * 0.18 + vW.y * 0.1) * 0.6 + noise(vW.xz * 0.6 + vW.y * 0.4) * 0.4;
         vec3 alb = mix(colA, colB, 0.3 + smoothstep(0.3, 0.8, band) * 0.28 + grime * 0.3);
+        // per-instance hue drift: warm ochre <-> cool mauve so the stacks are not clones
+        alb *= mix(vec3(1.06, 0.98, 0.9), vec3(0.9, 0.95, 1.08), vSeed);
+        // fine surface grain + pitting (near only)
+        float grain = noise(vW.xz * 2.2 + vW.y * 1.7) * 0.5 + noise(vec2(vW.y * 3.1, (vW.x + vW.z) * 2.4)) * 0.5;
+        alb *= 1.0 + (grain - 0.5) * 0.28 * det;
+        float pit = smoothstep(0.7, 0.85, noise(vW.xz * 1.1 + vW.y * 0.9)) * det;
+        alb *= 1.0 - pit * 0.35;
         // dark vertical streaks (water runoff / cracks)
         float crack = smoothstep(0.62, 0.72, noise(vec2(atan(vW.z - vW.x * 0.3, vW.x) * 6.0, vW.y * 0.08)));
         alb *= 1.0 - crack * 0.3;
+        // ledges: a thin lit line on the upper edge of each strata step
+        float ledge = smoothstep(0.92, 1.0, fract(vW.y * 0.42 * 0.159 + noise(vW.xz * 0.05) * 0.5)) * smoothstep(0.1, 0.5, N.y);
+        alb = mix(alb, colB * 1.1, ledge * 0.5 * det);
         // mossy cap on upward faces near the top
         float cap = smoothstep(0.45, 0.9, N.y) * smoothstep(0.55, 0.95, vH);
         alb = mix(alb, colTop, cap);
@@ -178,11 +198,15 @@ function rockMaterial(opts = {}) {
         // wrapped diffuse + sky/ground ambient so shadow sides stay readable and warm
         float wrap = max(dot(N, sunDir) * 0.6 + 0.4, 0.0);
         vec3 amb = mix(vec3(0.55, 0.42, 0.36), skyCol * 1.1, N.y * 0.5 + 0.5) * 0.9;
-        vec3 col = alb * (amb + sunCol * (ndl * 1.1 + wrap * 0.45));
+        // fake AO: darker in the lower third and on overhangs
+        float ao = mix(0.7, 1.0, smoothstep(0.0, 0.45, vH)) * mix(0.75, 1.0, N.y * 0.5 + 0.5);
+        vec3 col = alb * (amb * ao + sunCol * (ndl * 1.1 + wrap * 0.45));
         // warm rim from the low sun
         float rim = pow(1.0 - max(dot(N, normalize(cameraPosition - vW)), 0.0), 3.0) * max(dot(N, sunDir) + 0.3, 0.0);
         col += sunCol * rim * 0.25;
-        col = mix(col, skyCol, haze);
+        // aerial perspective: far rocks sink into the warm haze, lit faces stay a touch warmer
+        float hz = haze + (1.0 - haze) * smoothstep(300.0, 1600.0, dist) * 0.55;
+        col = mix(col, mix(skyCol, sunCol * 0.9, ndl * 0.35), hz);
         gl_FragColor = vec4(col, 1.0);
         #include <fog_fragment>
       }`,
@@ -191,20 +215,24 @@ function rockMaterial(opts = {}) {
 }
 
 /** Jagged sea-stack geometry: displaced cylinder, flat shaded. Unit height (0..1), unit radius. */
-function rockGeometry(rng, radialSeg = 14, heightSeg = 7) {
-  const geo = new THREE.CylinderGeometry(0.55, 1.0, 1, radialSeg, heightSeg, false);
+function rockGeometry(rng, radialSeg = 14, heightSeg = 7, topR = 0.55) {
+  const geo = new THREE.CylinderGeometry(topR, 1.0, 1, radialSeg, heightSeg, false);
   geo.translate(0, 0.5, 0);
   const pos = geo.attributes.position;
   const v = new THREE.Vector3();
   const seed = rng.range(0, 100);
+  const lean = rng.range(-0.12, 0.12), lean2 = rng.range(-0.12, 0.12);
   for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i);
     const a = Math.atan2(v.z, v.x), h = v.y;
     const r0 = Math.hypot(v.x, v.z);
     if (r0 > 1e-4) {
-      const n = 0.82 + 0.16 * Math.sin(a * 3 + seed) * Math.cos(h * 7 + seed * 0.3) + 0.1 * Math.sin(a * 7 + h * 5 + seed) + 0.05 * Math.sin(h * 17 + a * 2);
+      // multi-octave radial noise + strata steps so silhouettes read as layered stone
+      const step = 0.06 * (Math.sin(h * 21 + seed) > 0.55 ? 1 : 0) * (1 - h);
+      const n = 0.82 + 0.16 * Math.sin(a * 3 + seed) * Math.cos(h * 7 + seed * 0.3) + 0.1 * Math.sin(a * 7 + h * 5 + seed) + 0.05 * Math.sin(h * 17 + a * 2)
+        + 0.04 * Math.sin(a * 11 + h * 13 + seed * 1.7) + step;
       const r = r0 * n * (1 + 0.1 * Math.sin(h * 5.0 + seed));
-      v.x = Math.cos(a) * r; v.z = Math.sin(a) * r;
+      v.x = Math.cos(a) * r + lean * h * h; v.z = Math.sin(a) * r + lean2 * h * h;
     }
     v.y = h + 0.03 * Math.sin(a * 5 + seed) * (h > 0.05 ? 1 : 0);
     pos.setXYZ(i, v.x, v.y, v.z);
@@ -235,7 +263,7 @@ export class Pillars {
     this.count = count;
     this.mesh = new THREE.Group();
     this.mat = rockMaterial({ a: 0x9a6a52, b: 0xdcb08c, top: 0x6f9a4c });
-    this.geos = [rockGeometry(rng, 14, 7), rockGeometry(rng, 12, 8), rockGeometry(rng, 16, 6)];
+    this.geos = [rockGeometry(rng, 16, 10, 0.5), rockGeometry(rng, 14, 12, 0.35), rockGeometry(rng, 18, 9, 0.62), rockGeometry(rng, 14, 11, 0.28)];
     const per = Math.ceil(count / this.geos.length);
     this.insts = this.geos.map((g) => { const m = new THREE.InstancedMesh(g, this.mat, per); m.frustumCulled = false; this.mesh.add(m); return m; });
     this.foamTex = foamTexture();
@@ -291,8 +319,9 @@ export class Pillars {
 
 /** Far island silhouettes in haze: ring of big rocks that parallax slowly. */
 export function buildIslands(rng) {
-  const geo = rockGeometry(rng, 12, 5);
-  const mat = rockMaterial({ a: 0x7a6478, b: 0xa88ea0, top: 0x6b8a63, haze: 0.3 });
+  // peaked ridges rather than slabs; the material's aerial perspective does the rest
+  const geo = rockGeometry(rng, 14, 8, 0.12);
+  const mat = rockMaterial({ a: 0x6e5a74, b: 0xa48a9a, top: 0x5f7f5c, haze: 0.22 });
   const N = 44;
   const inst = new THREE.InstancedMesh(geo, mat, N);
   const M = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), pos = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
@@ -301,8 +330,8 @@ export function buildIslands(rng) {
     // keep the corridor ahead (around -z) mostly open at the horizon: smaller islands there
     const ahead = Math.max(0, -Math.sin(a));
     const r = rng.range(900, 1500);
-    const h = rng.range(50, 190) * (1 - ahead * 0.55);
-    const w = rng.range(120, 360);
+    const h = rng.range(110, 330) * (1 - ahead * 0.55);
+    const w = rng.range(140, 320);
     pos.set(Math.cos(a) * r, -4, Math.sin(a) * r);
     q.setFromAxisAngle(up, rng.range(0, Math.PI));
     s.set(w, h, w * rng.range(0.7, 1.5));
