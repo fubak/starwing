@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { createEnemyManager, FORMATIONS } from './manager.js';
 import { createEnvironment } from './env.js';
 import { createLockOnHud } from './hud.js';
+import { buildEnemyCraft } from './craft.js';
 
 export { createEnemyManager, FORMATIONS } from './manager.js';
 export { buildEnemyCraft, CRAFT_KINDS, makeCraftMaterials } from './craft.js';
@@ -53,7 +54,15 @@ export async function create(ctx) {
     hud.announce(w);
     return w;
   }
-  OPENING.forEach(launch);
+  // dev: ?piece=enemies&lineup  -> static hangar line-up of the three designs for material review
+  const lineup = /[?&]lineup/.test(location.search);
+  const lineupGroup = new THREE.Group();
+  if (lineup) {
+    ['vulture', 'hornet', 'mantis'].forEach((k, i) => {
+      const g = buildEnemyCraft(k); g.position.set((i - 1) * 22, 8 + (i === 1 ? 3 : -3), -30); g.rotation.set(0.3, Math.PI * (0.7 + 0.2 * i), 0.1 * (i - 1)); lineupGroup.add(g);
+    });
+    scene.add(lineupGroup);
+  } else OPENING.forEach(launch);
 
   events.on('player:hit', () => { shake = Math.max(shake, 1); flash = Math.max(flash, 0.35); });
   events.on('enemy:killed', ({ position, kind }) => { const d = position.distanceTo(camera.position); shake = Math.max(shake, THREE.MathUtils.clamp(1 - d / 140, 0, 0.7)); score += kind === 'mantis' ? 300 : kind === 'vulture' ? 150 : 100; });
@@ -69,10 +78,15 @@ export async function create(ctx) {
   };
 
   function update(dt, time) {
+    // core's first real-time frame can deliver a *negative* dt (RAF timestamp precedes
+    // performance.now() taken after the async create): a negative dt makes every
+    // "decay toward zero" term grow instead, which used to white-flash the whole opening.
+    dt = THREE.MathUtils.clamp(dt, 0, 0.05);
     t = time;
     // waves
     waveTimer -= dt;
-    if (waveTimer <= 0) {
+    if (lineup) { for (const g of lineupGroup.children) g.rotation.y += dt * 0.6; }
+    else if (waveTimer <= 0) {
       const o = ROTATION[waveIx++ % ROTATION.length];
       launch({ ...o, mirror: rng.sign() });
       waveTimer = rng.range(2.6, 3.8);
@@ -122,7 +136,7 @@ export async function create(ctx) {
   }
 
   function dispose() {
-    em.dispose(); env.dispose(); hud.dispose(); scene.remove(player); input.script = null;
+    em.dispose(); env.dispose(); hud.dispose(); scene.remove(player); scene.remove(lineupGroup); input.script = null;
   }
 
   return { update, dispose };

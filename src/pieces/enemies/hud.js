@@ -29,15 +29,16 @@ const CSS = `
 .en-ret.near span:nth-child(3){left:50%;top:0;width:2px;height:16px;margin-left:-1px}.en-ret.near span:nth-child(4){left:50%;bottom:0;width:2px;height:16px;margin-left:-1px}
 .en-ret.far{border:2px solid #6ef0a5;border-radius:50%;box-shadow:0 0 10px rgba(110,240,165,.7),inset 0 0 6px rgba(110,240,165,.5)}
 .en-ret.far span{left:50%;top:50%;width:4px;height:4px;margin:-2px;border-radius:50%}
-.en-call{position:absolute;left:50%;top:14%;transform:translateX(-50%);text-align:center;opacity:0;transition:opacity .25s}
-.en-call h1{margin:0;font:800 30px/1 "Segoe UI",Roboto,system-ui;letter-spacing:.32em;text-transform:uppercase;color:#fff;text-shadow:0 0 18px rgba(255,90,120,.85),0 2px 0 rgba(0,0,0,.5)}
-.en-call p{margin:8px 0 0;font:600 13px/1 "Segoe UI",Roboto,system-ui;letter-spacing:.34em;text-transform:uppercase;color:#ffb3c2}
+.en-call{position:absolute;left:50%;bottom:9%;transform:translateX(-50%) translateY(0);text-align:center;opacity:0;transition:opacity .2s,transform .3s cubic-bezier(.2,1.4,.4,1);padding:8px 26px;border-top:1px solid rgba(255,140,160,.45);border-bottom:1px solid rgba(255,140,160,.45)}
+.en-call.show{opacity:1;transform:translateX(-50%) translateY(-6px)}
+.en-call h1{margin:0;font:800 17px/1 "Segoe UI",Roboto,system-ui;letter-spacing:.34em;text-transform:uppercase;color:#fff;text-shadow:0 0 14px rgba(255,90,120,.85),0 1px 0 rgba(0,0,0,.6)}
+.en-call p{margin:5px 0 0;font:600 10px/1 "Segoe UI",Roboto,system-ui;letter-spacing:.34em;text-transform:uppercase;color:#ffb3c2}
 .en-score{position:absolute;right:36px;top:28px;text-align:right}
 .en-score small{display:block;font:700 11px/1 system-ui;letter-spacing:.34em;color:#9fd9ff;opacity:.85}
 .en-score div{font:800 34px/1.1 "Segoe UI",Roboto,system-ui;letter-spacing:.06em;color:#fff;text-shadow:0 0 14px rgba(120,200,255,.6);font-variant-numeric:tabular-nums}
 .en-title{position:absolute;left:36px;bottom:30px}
-.en-title small{display:block;font:700 11px/1 system-ui;letter-spacing:.34em;color:#ffb3c2}
-.en-title div{font:800 22px/1.2 "Segoe UI",Roboto,system-ui;letter-spacing:.2em;color:#fff;text-shadow:0 0 12px rgba(255,90,120,.5)}
+.en-title small{display:block;font:700 10px/1 system-ui;letter-spacing:.34em;color:#ffb3c2;opacity:.9}
+.en-title div{font:800 15px/1.3 "Segoe UI",Roboto,system-ui;letter-spacing:.22em;color:#fff;text-shadow:0 0 12px rgba(255,90,120,.5);opacity:.9}
 .en-bars{position:absolute;left:36px;top:28px;display:flex;gap:14px;align-items:center}
 .en-bars small{display:block;font:700 11px/1 system-ui;letter-spacing:.34em;color:#ffb3c2}
 .en-bars div{font:800 30px/1 "Segoe UI",Roboto,system-ui;letter-spacing:.06em;color:#fff;text-shadow:0 0 14px rgba(255,90,120,.6);font-variant-numeric:tabular-nums}
@@ -56,7 +57,7 @@ export function createLockOnHud(ctx, em) {
   const retFar = mk('div', 'en-ret far', '<span></span>');
   const call = mk('div', 'en-call', '<h1></h1><p></p>');
   const score = mk('div', 'en-score', '<small>SCORE</small><div>000000</div>');
-  const title = mk('div', 'en-title', '<small>VENOM AIR WING</small><div>ENEMY SHOWCASE</div>');
+  const title = mk('div', 'en-title', '<small>SECTOR Z · ROUTE 06</small><div>VENOM SEA</div>');
   const bars = mk('div', 'en-bars', `<span>${Array.from({ length: 12 }, () => '<b></b>').join('')}</span><div>00</div><small>HOSTILES</small>`);
   root.append(retNear, retFar, call, score, title, bars);
   function mk(tag, cls, html) { const el = document.createElement(tag); el.className = cls; el.innerHTML = html; return el; }
@@ -70,7 +71,7 @@ export function createLockOnHud(ctx, em) {
   function announce(wave) {
     call.children[0].textContent = `${NAMES[wave.craft] ?? wave.craft} SQUADRON`;
     call.children[1].textContent = `WAVE ${String(wave.id).padStart(2, '0')}  ·  ${FORM[wave.kind] ?? wave.kind}  ·  ${wave.n} INBOUND`;
-    call.style.opacity = 1; callT = 2.2;
+    call.classList.add('show'); callT = 1.6;
   }
 
   function update(dt, t, aim, scoreVal) {
@@ -122,7 +123,7 @@ export function createLockOnHud(ctx, em) {
     hud.locked = best;
 
     // call-out fade
-    if (callT > 0) { callT -= dt; if (callT <= 0) call.style.opacity = 0; }
+    if (callT > 0) { callT -= dt; if (callT <= 0) call.classList.remove('show'); }
     score.lastChild.textContent = String(Math.round(scoreVal)).padStart(6, '0');
     // little threat meter: bars = alive enemies
     const alive = em.list.filter((e) => e.state === 'fly' && e.group.visible).length;

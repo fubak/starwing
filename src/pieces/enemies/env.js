@@ -28,10 +28,10 @@ export const ENEMY_LOOK = {
   label: 'VENOM SEA · DUSK',
   exposure: 1.05,
   envIntensity: 0.75,
-  bloom: { strength: 0.5, radius: 0.6, threshold: 0.86 },
-  sun: { dir: [0.5, 0.3, -0.6], color: 0xffb870, intensity: 3.2, size: 0.035, glow: 0.6 },
-  hemi: { sky: 0x8a6cd0, ground: 0x2a3a44, intensity: 1.0 },
-  fill: { dir: [-0.45, 0.4, 0.8], color: 0xd8c0ff, intensity: 2.0 },
+  bloom: { strength: 0.34, radius: 0.5, threshold: 0.9 },
+  sun: { dir: [0.5, 0.3, -0.6], color: 0xffb870, intensity: 3.4, size: 0.035, glow: 0.6 },
+  hemi: { sky: 0x8a6cd0, ground: 0x6a4a52, intensity: 1.0 },
+  fill: { dir: [-0.45, 0.4, 0.8], color: 0xd8c0ff, intensity: 1.6 },
   fog: { color: 0xf09456, density: 0.0007 },
   sky: { zenith: 0x2a1a60, horizon: 0xff9a44, ground: 0x2a1a30, haze: 5.0, stars: 0.25, nebula: 0.3, nebulaA: 0x3a1e6a, nebulaB: 0xb0326e, milky: 0.0 },
   grade: { contrast: 1.1, saturation: 1.18, lift: 0x06020a, gain: 0xfff0e2, gamma: 1.0, vignette: 0.38, grain: 0.02 },
@@ -129,6 +129,10 @@ export function createEnvironment(ctx) {
   const look = applyLook(ctx, ENEMY_LOOK, { shadowSize: 30, shadowMap: 512 });
   look.sun.castShadow = false;
   look.setFocus(new THREE.Vector3(0, 4, -60));
+  // ocean bounce: warm light from below so undersides of banking hulls never go to black
+  const bounce = new THREE.DirectionalLight(0xff9a5a, 1.1);
+  bounce.position.set(20, -60, 30); bounce.target.position.set(0, 10, -60);
+  scene.add(bounce, bounce.target);
 
   // ocean
   const oceanMat = makeOceanMaterial();
@@ -171,6 +175,7 @@ export function createEnvironment(ctx) {
   return {
     look, sun: look.sun,
     update(dt, t) {
+      dt = Math.max(0, dt); // guard: lookdev's flash decay would grow on a negative dt
       if (syncGL) { ctx.renderer.setRenderTarget(null); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, syncPx); }
       oceanMat.uniforms.uTime.value = t; hazeMat.uniforms.uTime.value = t;
       look.update(dt, t);
@@ -181,6 +186,7 @@ export function createEnvironment(ctx) {
     dispose() {
       [ocean, haze].forEach((m) => { scene.remove(m); m.geometry.dispose(); m.material.dispose(); });
       scene.remove(planet); planet.disposePlanet?.();
+      scene.remove(bounce, bounce.target);
       clouds.dispose();
       look.dispose();
     },
