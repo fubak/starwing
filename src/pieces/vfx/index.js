@@ -24,7 +24,7 @@ const _a = V(), _b = V(), _c = V();
 const LOOK = {
   ...PRESETS.space, name: 'vfx-orbit',
   sun: { ...PRESETS.space.sun, dir: [0.55, 0.62, -0.5], glow: 0.7, size: 0.03 },
-  bloom: { strength: 0.62, radius: 0.55, threshold: 0.86 },
+  bloom: { strength: 0.5, radius: 0.5, threshold: 0.9 },
   grade: { ...PRESETS.space.grade, contrast: 1.08, saturation: 1.15, vignette: 0.38 },
 };
 
@@ -98,6 +98,7 @@ export async function create(ctx) {
     const t = { kind: 'rock', mesh, pos: mesh.position, radius: r * 1.05, hp: 4, dead: false, age: 0, spin: V(rng.range(-0.4, 0.4), rng.range(-0.4, 0.4), 0.1), vel: V(rng.range(-1, 1), rng.range(-1, 1), 22), flash: 0, punch: 0 };
     targets.push(t); return t;
   };
+  const ROCK_TINT = new THREE.Color(0.3, 0.26, 0.22);
   const removeTarget = (t) => {
     scene.remove(t.mesh);
     if (t.kind === 'rock') { t.mesh.geometry.dispose(); t.mesh.material.dispose(); } else disposeCraft(t.mesh);
@@ -116,7 +117,7 @@ export async function create(ctx) {
         _b.copy(t.pos).addScaledVector(_a, t.radius * 0.9);
         vfx.hitSparks(_b, _a, { color: b.color, scale: 1 });
         t.hp -= b.damage; t.flash = 1; t.punch = 1;
-        if (t.hp <= 0) killTarget(t, t.kind === 'rock' ? 2.6 : 1.5, t.kind === 'rock' ? { debrisTint: new THREE.Color(0.45, 0.4, 0.34) } : {});
+        if (t.hp <= 0) killTarget(t, t.kind === 'rock' ? 3.0 : 2.0, t.kind === 'rock' ? { debrisTint: ROCK_TINT } : {});
         return true;
       }
     }
@@ -248,7 +249,7 @@ export async function create(ctx) {
     }
     // bomb kills
     // (one kill per frame, smaller & no screen flash: a dozen full explosions at once just white out)
-    if (vfx.bombRadius > 0) for (const t of targets) if (!t.dead && t.pos.distanceTo(vfx.bombCenter) < vfx.bombRadius) { killTarget(t, t.kind === 'rock' ? 1.2 : 0.8, { flash: false, quiet: true }); break; }
+    if (vfx.bombRadius > 0) for (const t of targets) if (!t.dead && t.pos.distanceTo(vfx.bombCenter) < vfx.bombRadius) { killTarget(t, t.kind === 'rock' ? 1.0 : 0.65, { flash: false, quiet: true, debrisTint: t.kind === 'rock' ? ROCK_TINT : undefined }); break; }
 
     // --- targets
     for (const t of targets) {

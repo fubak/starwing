@@ -32,6 +32,9 @@ void main() {
   vec3 p = aPos + aVel * (1.0 - exp(-k * age)) / k;
   mat3 R = rot(aAxis, aInfo.z * age);
   float sc = aInfo.w * (1.0 - smoothstep(0.8, 1.0, u));
+  // never fly through the lens: shrink away as the chunk nears the camera
+  vec4 cmv = modelViewMatrix * vec4(p, 1.0);
+  sc *= smoothstep(1.5, 7.0, -cmv.z);
   vec3 lp = R * (position * sc);
   vN = normalize(normalMatrix * (R * normal));
   vec4 mv = modelViewMatrix * vec4(p + lp, 1.0);
@@ -57,15 +60,15 @@ void main() {
   float ndl = max(dot(n, uSunDir), 0.0);
   vec3 hemi = mix(uGroundCol, uSkyCol, n.y * 0.5 + 0.5);
   vec3 h = normalize(uSunDir + v);
-  float spec = pow(max(dot(n, h), 0.0), 40.0) * 0.6;
+  float spec = pow(max(dot(n, h), 0.0), 28.0) * 0.5 + pow(max(dot(n, h), 0.0), 6.0) * 0.12;   // scorched-metal sheen
   float fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
   vec3 base = vTint;
-  vec3 col = base * (hemi * 0.9 + uSunCol * ndl) + uSunCol * spec + hemi * fres * 0.5;
-  // cooling heat: bright orange edges early, flickers off
-  float heat = pow(max(1.0 - vU * 1.6, 0.0), 1.6);
-  float flick = 0.7 + 0.3 * sin(vU * 60.0 + vSeed * 3.0);
-  vec3 hot = vec3(1.0, 0.45, 0.1) * 3.0;
-  col += hot * heat * flick * (0.45 + 0.75 * fres);
+  vec3 col = base * (hemi * 0.9 + uSunCol * ndl) + uSunCol * spec * 0.8 + hemi * fres * 0.35;
+  // cooling heat: molten yellow-orange edges early, dulls to ember red, flickers off
+  float heat = pow(max(1.0 - vU * 1.5, 0.0), 1.5);
+  float flick = 0.75 + 0.25 * sin(vU * 60.0 + vSeed * 3.0);
+  vec3 hot = mix(vec3(0.9, 0.15, 0.02), vec3(1.0, 0.6, 0.15), heat) * 2.2;
+  col += hot * heat * flick * (0.15 + 0.85 * fres);
   gl_FragColor = vec4(col, 1.0);
 }
 `;

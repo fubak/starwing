@@ -87,7 +87,9 @@ varying float vAge;
 varying float vNear;
 varying float vThick;
 
-float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+// precision-safe hash: lattice coords are scaled DOWN before fract so large
+// seeds/frequencies never collapse into flat square cells
+float hash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float vnoise(vec2 p) {
   vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   float a = hash(i), b = hash(i + vec2(1, 0)), c = hash(i + vec2(0, 1)), d = hash(i + vec2(1, 1));
@@ -99,77 +101,93 @@ float fbm(vec2 p) {
   return v;
 }
 
+// Fire colour ramp, heat 0..1: soot -> deep red -> orange -> yellow -> hot core.
+// colA = hot tint (yellow-ish), colB = cool tint (orange/red). Peak intensity is
+// kept < ~1.6 so the ACES curve rolls it off to warm yellow, never flat white.
+vec3 fireRamp(float h, vec3 hot, vec3 cool) {
+  vec3 soot = vec3(0.05, 0.03, 0.03);
+  vec3 red  = cool * vec3(0.55, 0.18, 0.12) / max(cool.r, 0.2);   // deep ember red of the cool tint
+  vec3 col = mix(soot, red, smoothstep(0.0, 0.22, h));
+  col = mix(col, cool * 0.95, smoothstep(0.22, 0.48, h));
+  col = mix(col, hot * 1.15, smoothstep(0.48, 0.78, h));
+  col = mix(col, mix(hot, vec3(1.0, 0.97, 0.85), 0.45) * 1.3, smoothstep(0.78, 1.0, h));
+  return col;
+}
+
 void main() {
   vec2 c = vUv * 2.0 - 1.0;
   float r = length(c);
   float u = vU;
   vec3 rgb = vec3(0.0); float a = 0.0;
+  bool stretched = (vType == 3.0 || vType == 6.0);
+  // hard guarantee: nothing outside the inscribed disc (sparks: outside a rounded bar)
+  if (!stretched && r > 0.985) discard;
+  if (stretched && (abs(c.y) > 0.985 || abs(c.x) > 0.985)) discard;
 
   if (vType == 0.0) {                       // SOFT additive glow
-    float g = exp(-r * r * 5.0) * (1.0 - smoothstep(0.7, 1.0, r));
+    float g = exp(-r * r * 5.0) * (1.0 - smoothstep(0.6, 0.98, r));
     float fade = 1.0 - smoothstep(0.3, 1.0, u);
-    rgb = mix(vColA, vColB, u) * g * fade * 1.6;
+    rgb = mix(vColA, vColB, u) * g * fade * 0.9;
     a = 0.0;
   } else if (vType == 1.0) {                // FIREBALL (chunky, stylised)
-    vec2 nq = c * 1.6 + vSeed * 37.0;
+    vec2 nq = c * 1.6 + vSeed * 11.0;
     float n = fbm(nq * 1.4 + vec2(0.0, -vAge * 0.9));
     float n2 = fbm(nq * 3.1 + vec2(vAge * 0.4, vAge * 0.7));
     // billowing silhouette: noise-warped disc that never reaches the quad border
     float shape = (1.0 - r * (0.95 + 0.4 * u)) + (n - 0.5) * 1.0 + (n2 - 0.5) * 0.4;
-    float mask = 1.0 - smoothstep(0.62, 0.9, r);
-    float edge = smoothstep(0.0, 0.09, shape) * mask;          // crisp cel-like rim
-    float heat = clamp(shape * 1.7 - u * 1.5 + 0.1, 0.0, 1.0);
-    heat = heat * heat;
-    // banded ramp: sooty rim -> deep orange -> hot orange -> yellow -> white core
-    float h = mix(heat, floor(heat * 5.0 + 0.5) / 5.0, 0.55);
-    vec3 soot = vColB * 0.12;
-    vec3 col = mix(soot, vColB, smoothstep(0.02, 0.18, h));
-    col = mix(col, mix(vColB, vColA, 0.5) * 1.15, smoothstep(0.2, 0.45, h));
-    col = mix(col, vColA * 1.25, smoothstep(0.45, 0.7, h));
-    col = mix(col, vec3(1.0, 0.98, 0.92) * 1.7, smoothstep(0.7, 0.95, h));
-    // interior detail: darker creases from the fine noise so it reads as a volume
-    col *= 0.8 + 0.4 * smoothstep(0.3, 0.7, n2);
-    float fade = 1.0 - smoothstep(0.55, 1.0, u);
+    float mask = 1.0 - smoothstep(0.6, 0.9, r);
+    float edge = smoothstep(0.0, 0.1, shape) * mask;           // crisp cel-like rim
+    // heat: hottest at the centre early; the whole ball cools to red then soot
+    // over its life so the ramp reads yellow core -> orange -> red -> dark smoke
+    float cool = smoothstep(0.15, 0.9, u);
+    float heat = clamp(shape * 1.6 + 0.15 - cool * 1.35 - r * 0.25, 0.0, 1.0);
+    // gentle banding for the stylised cel look
+    float h = mix(heat, floor(heat * 6.0 + 0.5) / 6.0, 0.45);
+    vec3 col = fireRamp(h, vColA, vColB);
+    // interior creases from the fine noise so it reads as a volume
+    col *= 0.82 + 0.36 * smoothstep(0.3, 0.7, n2);
+    float fade = 1.0 - smoothstep(0.7, 1.0, u);
     a = edge * fade;
-    float glow = pow(heat, 1.5) * 1.6;
-    rgb = col * a + col * glow * a;      // premultiplied + emissive push
-    a *= 0.95;
-  } else if (vType == 2.0) {                // SMOKE
-    vec2 nq = c * 1.5 + vSeed * 53.0;
+    rgb = col * a;                            // premultiplied, opaque-ish: occludes what's behind
+    a *= 0.97;
+  } else if (vType == 2.0) {                // SMOKE (soft alpha, lit side)
+    vec2 nq = c * 1.5 + vSeed * 13.0 + 7.0;
     float n = fbm(nq * 1.2 + vec2(vAge * 0.15, -vAge * 0.25));
     float n2 = fbm(nq * 2.6 + vec2(-vAge * 0.2, vAge * 0.1));
-    float shape = (1.0 - r * 1.1) + (n - 0.5) * 0.8 + (n2 - 0.5) * 0.3;
-    float mask = 1.0 - smoothstep(0.55, 0.88, r);            // organic edge, never the quad
-    float edge = smoothstep(0.03, 0.32, shape) * mask;
-    float fade = (1.0 - smoothstep(0.35, 1.0, u)) * smoothstep(0.0, 0.08, u);
-    // lit-side gradient: colA is lit, colB shadow
-    float lit = clamp(0.5 + c.x * 0.35 - c.y * 0.45 + (n - 0.5), 0.0, 1.0);
+    float shape = (1.0 - r * 1.15) + (n - 0.5) * 0.7 + (n2 - 0.5) * 0.25;
+    float mask = 1.0 - smoothstep(0.35, 0.9, r);             // very soft feather to the disc
+    float edge = smoothstep(0.0, 0.45, shape) * mask;
+    float fade = (1.0 - smoothstep(0.3, 1.0, u)) * smoothstep(0.0, 0.12, u);
+    // lit-side gradient: colA is lit, colB shadow; early smoke still carries ember glow
+    float lit = clamp(0.5 + c.x * 0.35 - c.y * 0.45 + (n - 0.5) * 0.8, 0.0, 1.0);
     vec3 col = mix(vColB, vColA, lit);
-    a = edge * fade * 0.6;
+    float ember = (1.0 - smoothstep(0.0, 0.45, u)) * smoothstep(0.2, 0.7, n2) * 0.5;
+    col += vec3(0.9, 0.3, 0.06) * ember * (1.0 - r);
+    a = edge * fade * 0.7;
     rgb = col * a;
-  } else if (vType == 3.0 || vType == 6.0) { // SPARK / EMBER (stretched)
-    float core = exp(-c.y * c.y * 9.0) * (1.0 - smoothstep(0.55, 1.0, abs(c.x)));
+  } else if (stretched) {                   // SPARK / EMBER (stretched)
+    float core = exp(-c.y * c.y * 9.0) * (1.0 - smoothstep(0.55, 0.98, abs(c.x)));
     float tail = smoothstep(-1.0, 0.6, c.x);
     float fade = 1.0 - smoothstep(0.4, 1.0, u);
     vec3 col = mix(vColA, vColB, smoothstep(0.0, 0.8, u));
-    rgb = col * core * tail * fade * 2.2;
+    rgb = col * core * tail * fade * 1.8;
     a = 0.0;
   } else if (vType == 4.0) {                // RING shockwave
-    float rad = mix(0.15, 0.92, 1.0 - pow(1.0 - u, 2.5));
+    float rad = mix(0.15, 0.9, 1.0 - pow(1.0 - u, 2.5));
     float th = (0.045 + 0.09 * u) * vThick;
     float band = exp(-pow((r - rad) / th, 2.0));
     // faint fill just inside the wavefront only (outside must stay black or the quad shows)
-    float inner = smoothstep(rad - 0.4, rad, r) * (1.0 - smoothstep(rad, rad + th * 1.5, r)) * 0.25 * (1.0 - u);
-    float fade = 1.0 - smoothstep(0.35, 1.0, u);
-    rgb = mix(vColA, vColB, u) * (band * 2.0 + inner) * fade;
+    float inner = smoothstep(rad - 0.3, rad, r) * (1.0 - smoothstep(rad, rad + th * 1.5, r)) * 0.08 * (1.0 - u);
+    float fade = 1.0 - smoothstep(0.3, 1.0, u);
+    rgb = mix(vColA, vColB, u) * (band * 1.4 + inner) * fade;
     a = 0.0;
   } else {                                  // FLASH (star)
     float ang = atan(c.y, c.x);
     float rays = pow(abs(cos(ang * 2.0)), 14.0) * 0.9 + pow(abs(cos(ang * 2.0 + 1.5708)), 40.0) * 0.6;
-    float edge = 1.0 - smoothstep(0.55, 0.95, r);      // never reach the quad border
-    float g = (exp(-r * r * 9.0) * 1.4 + rays * exp(-r * 3.0) * 0.9) * edge;
+    float edge = 1.0 - smoothstep(0.5, 0.95, r);       // never reach the quad border
+    float g = (exp(-r * r * 9.0) * 1.2 + rays * exp(-r * 3.0) * 0.8) * edge;
     float fade = 1.0 - smoothstep(0.0, 1.0, u);
-    rgb = mix(vec3(1.0), vColA, smoothstep(0.0, 0.7, r)) * g * fade * fade * 2.6;
+    rgb = mix(mix(vColA, vec3(1.0), 0.6), vColA, smoothstep(0.0, 0.6, r)) * g * fade * fade * 1.8;
     a = 0.0;
   }
   rgb *= vNear; a *= vNear;

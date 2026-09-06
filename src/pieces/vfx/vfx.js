@@ -16,6 +16,7 @@ import { LaserSystem } from './lasers.js';
 
 const V = () => new THREE.Vector3();
 const _a = V(), _b = V(), _c = V(), _q = new THREE.Quaternion();
+const _col = new THREE.Color(), _col2 = new THREE.Color();
 const UP = new THREE.Vector3(0, 1, 0);
 
 export const PALETTE = {
@@ -23,13 +24,14 @@ export const PALETTE = {
   playerLaserHot: new THREE.Color(0.8, 1.0, 0.7),
   enemyLaser: new THREE.Color(1.0, 0.25, 0.2),
   charge: new THREE.Color(0.45, 0.75, 1.0),
-  fireHot: new THREE.Color(1.0, 0.85, 0.45),
-  fireCool: new THREE.Color(1.0, 0.32, 0.06),
-  smokeLit: new THREE.Color(0.55, 0.5, 0.5),
-  smokeDark: new THREE.Color(0.08, 0.07, 0.1),
+  fireHot: new THREE.Color(1.0, 0.82, 0.38),
+  fireCool: new THREE.Color(1.0, 0.36, 0.06),
+  smokeLit: new THREE.Color(0.46, 0.40, 0.38),
+  smokeDark: new THREE.Color(0.05, 0.04, 0.05),
+  debris: new THREE.Color(0.16, 0.15, 0.17),
   boost: new THREE.Color(0.3, 0.7, 1.0),
   boostHot: new THREE.Color(0.85, 0.95, 1.0),
-  bomb: new THREE.Color(0.55, 0.85, 1.0),
+  bomb: new THREE.Color(0.35, 0.72, 1.0),
 };
 
 // ---------- boost trail ribbon ----------
@@ -383,12 +385,12 @@ void main() {
   float cells = noise(vP * 3.0 + vec3(uTime * 0.7, -uTime * 0.4, 0.0)) * 0.6 + noise(vP * 7.0 - vec3(0.0, uTime * 1.6, uTime * 0.9)) * 0.4;
   float web = smoothstep(0.48, 0.66, cells);
   float bands = 0.5 + 0.5 * sin(vP.y * 60.0 - uTime * 14.0);
-  bands = smoothstep(0.55, 0.95, bands) * 0.35;
+  bands = smoothstep(0.55, 0.95, bands) * 0.15;
   // life: snap bright on (first 12%) then decay; inner shell lags
   float on = smoothstep(0.0, 0.08, uU);
   float fade = (1.0 - smoothstep(0.35, 1.0, uU)) * on;
   float back = gl_FrontFacing ? 1.0 : 0.2;
-  vec3 col = uColor * (rim2 * 0.28 + web * (0.02 + 0.22 * rim2) + bands * rim2 * 0.5) + uHot * pow(rim, 1.8) * 0.7;
+  vec3 col = uColor * (rim2 * 0.14 + web * (0.012 + 0.14 * rim2) + bands * rim2 * 0.4) + mix(uColor, uHot, 0.3) * pow(rim, 1.8) * 0.4;
   col = mix(col, col * vec3(0.7, 0.55, 1.0), uInner);        // inner shell leans violet
   // when the camera is close to / inside the shell the fresnel rim covers the whole disc: thin it out
   gl_FragColor = vec4(col * fade * uNear * back, 0.0);
@@ -416,15 +418,17 @@ class Bomb {
     this.mesh.visible = true; this.mesh.position.copy(pos);
     const vfx = this.vfx;
     // crisp nova: a short hard white pop, then thin cyan shock rings; no big soft fills
-    vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.FLASH, colA: PALETTE.bomb, size0: 3, size1: this.maxR * 0.45, life: 0.16 });
-    vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.RING, colA: PALETTE.bomb, colB: PALETTE.charge, size0: 2, size1: this.maxR * 2.4, life: 1.1, rot: 0.28 });
+    vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.FLASH, colA: PALETTE.bomb, size0: 3, size1: this.maxR * 0.3, life: 0.12 });
+    vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.RING, colA: PALETTE.charge, colB: new THREE.Color(0.25, 0.45, 1.0), size0: 2, size1: this.maxR * 2.4, life: 1.1, rot: 0.28 });
     vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.RING, colA: PALETTE.charge, colB: new THREE.Color(0.5, 0.3, 1.0), size0: 1, size1: this.maxR * 2.0, life: 1.5, delay: 0.12, rot: 0.2 });
-    for (let i = 0; i < 110; i++) {
-      _a.set(vfx.rng() - 0.5, vfx.rng() - 0.5, vfx.rng() - 0.5).normalize().multiplyScalar(this.maxR * (0.5 + vfx.rng() * 0.6) / 1.2);
-      vfx.particles.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: _a.x, vy: _a.y, vz: _a.z, type: P.SPARK, colA: PALETTE.boostHot, colB: PALETTE.bomb,
-        size0: 0.45, size1: 0.1, life: 1.0 + vfx.rng() * 0.6, drag: 0.6, delay: vfx.rng() * 0.15 });
+    for (let i = 0; i < 44; i++) {
+      _a.set(vfx.rng() - 0.5, vfx.rng() - 0.5, vfx.rng() - 0.5).normalize();
+      _b.copy(_a).multiplyScalar(this.maxR * (0.5 + vfx.rng() * 0.6) / 1.2);
+      _a.multiplyScalar(2 + vfx.rng() * 5);     // born on a shell, not a point: never a central blob
+      vfx.particles.spawn({ x: pos.x + _a.x, y: pos.y + _a.y, z: pos.z + _a.z, vx: _b.x, vy: _b.y, vz: _b.z, type: P.SPARK, colA: PALETTE.boostHot, colB: PALETTE.bomb,
+        size0: 0.3, size1: 0.08, life: 1.0 + vfx.rng() * 0.6, drag: 0.6, delay: vfx.rng() * 0.35 });
     }
-    vfx.shake(1.0); vfx.hitStop(0.12); vfx.flashLight(pos, PALETTE.bomb, 28, this.maxR * 3); vfx.flashAmount = Math.max(vfx.flashAmount, 0.16);
+    vfx.shake(1.0); vfx.hitStop(0.12); vfx.flashLight(pos, PALETTE.bomb, 10, this.maxR * 3); vfx.flashAmount = Math.max(vfx.flashAmount, 0.08);
   }
   update(dt, camera) {
     this.time += dt; this.mat.uniforms.uTime.value = this.time;
@@ -508,54 +512,58 @@ export function createVfx(ctx, opts = {}) {
 
     explode(pos, size = 1, o = {}) {
       const hot = o.hot ?? PALETTE.fireHot, cool = o.color ?? PALETTE.fireCool;
-      const white = new THREE.Color(1, 1, 1);
-      // 1. core flash
-      particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.FLASH, colA: hot, size0: size * 2, size1: size * 9, life: 0.28, rot: rng() * 6.28 });
-      particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.SOFT, colA: white, colB: hot, size0: size * 5, size1: size * 1.5, life: 0.45 });
-      // 2. ring shockwave(s)
-      particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.RING, colA: white, colB: hot, size0: size * 1, size1: size * 14, life: 0.55 });
-      particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.RING, colA: hot, colB: cool, size0: size * 0.5, size1: size * 9, life: 0.75, delay: 0.08 });
-      // 3. fireball cluster (animated procedural noise sprites)
-      const nFire = Math.round(7 + size * 5);
-      for (let i = 0; i < nFire; i++) {
-        _a.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize().multiplyScalar(size * (0.2 + rng() * 0.8));
-        _b.copy(_a).normalize().multiplyScalar(size * (3 + rng() * 6));
-        particles.spawn({ x: pos.x + _a.x, y: pos.y + _a.y, z: pos.z + _a.z, vx: _b.x, vy: _b.y + size * 1.5, vz: _b.z,
-          type: P.FIRE, colA: hot, colB: cool, size0: size * (0.8 + rng() * 1.0), size1: size * (3.2 + rng() * 2.4),
-          life: 0.7 + rng() * 0.5, drag: 2.2, rot: rng() * 6.28, rotVel: (rng() - 0.5) * 3, seed: rng(), delay: rng() * 0.06 });
+      const sparkHot = _col.setRGB(1, 1, 1).lerp(hot, 0.45);
+      // 1. core flash: brief, tinted, small. The fireball ramp carries the heat.
+      //    (quiet = secondary/bomb kills: many stack in a few frames, so no additive core at all)
+      if (!o.quiet) {
+        particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.FLASH, colA: hot, size0: size * 2, size1: size * 6, life: 0.16, rot: rng() * 6.28 });
+        particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.SOFT, colA: hot, colB: cool, size0: size * 3.2, size1: size * 1.2, life: 0.3 });
+        // 2. ring shockwave(s)
+        particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.RING, colA: hot, colB: cool, size0: size * 1, size1: size * 14, life: 0.42, rot: 0.55 });
       }
-      // 4. smoke (lingers, lit side)
-      const nSmoke = Math.round(5 + size * 3);
+      particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.RING, colA: hot, colB: cool, size0: size * 0.5, size1: size * 8, life: 0.6, delay: 0.08, rot: 0.7 });
+      // 3. fireball cluster (animated procedural noise sprites). Inner tight cluster
+      //    stays hot longest; outer lobes are born cooler and turn to smoke sooner.
+      const nFire = o.quiet ? Math.round(4 + size * 3) : Math.round(8 + size * 5);
+      for (let i = 0; i < nFire; i++) {
+        const outer = i >= nFire * 0.4;
+        _a.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize().multiplyScalar(size * (outer ? 0.6 + rng() * 0.8 : 0.1 + rng() * 0.4));
+        _b.copy(_a).normalize().multiplyScalar(size * (outer ? 4 + rng() * 6 : 1 + rng() * 3));
+        particles.spawn({ x: pos.x + _a.x, y: pos.y + _a.y, z: pos.z + _a.z, vx: _b.x, vy: _b.y + size * 1.2, vz: _b.z,
+          type: P.FIRE, colA: hot, colB: cool, size0: size * (0.8 + rng() * 0.9), size1: size * (outer ? 3.6 + rng() * 2.6 : 2.8 + rng() * 1.6),
+          life: outer ? 0.65 + rng() * 0.45 : 0.9 + rng() * 0.5, drag: 2.2, rot: rng() * 6.28, rotVel: (rng() - 0.5) * 3, seed: rng(), delay: outer ? 0.04 + rng() * 0.08 : rng() * 0.03 });
+      }
+      // 4. smoke (lingers, lit side, soft alpha)
+      const nSmoke = Math.round(6 + size * 4);
       for (let i = 0; i < nSmoke; i++) {
         _a.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize().multiplyScalar(size * (2 + rng() * 4));
-        particles.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: _a.x, vy: _a.y + size, vz: _a.z, type: P.SMOKE,
-          colA: PALETTE.smokeLit, colB: PALETTE.smokeDark, size0: size * 1.2, size1: size * (4 + rng() * 3), life: 1.6 + rng() * 1.2,
-          drag: 1.5, rot: rng() * 6.28, rotVel: (rng() - 0.5) * 1.2, seed: rng(), delay: 0.12 + rng() * 0.2 });
+        particles.spawn({ x: pos.x + _a.x * 0.15, y: pos.y + _a.y * 0.15, z: pos.z + _a.z * 0.15, vx: _a.x, vy: _a.y + size * 0.8, vz: _a.z, type: P.SMOKE,
+          colA: PALETTE.smokeLit, colB: PALETTE.smokeDark, size0: size * 1.4, size1: size * (3.5 + rng() * 2.5), life: 1.5 + rng() * 1.1,
+          drag: 1.5, rot: rng() * 6.28, rotVel: (rng() - 0.5) * 1.2, seed: rng(), delay: 0.1 + rng() * 0.25 });
       }
       // 5. embers / sparks
-      const nSpark = Math.round(18 + size * 14);
+      const nSpark = Math.round(14 + size * 10);
       for (let i = 0; i < nSpark; i++) {
-        _a.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize().multiplyScalar(size * (12 + rng() * 26));
-        particles.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: _a.x, vy: _a.y, vz: _a.z, type: P.SPARK, colA: white, colB: cool,
-          size0: size * 0.35, size1: 0.04, life: 0.5 + rng() * 0.9, drag: 1.4, gravity: 4 });
+        _a.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize().multiplyScalar(size * (10 + rng() * 22));
+        particles.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: _a.x, vy: _a.y, vz: _a.z, type: P.SPARK, colA: sparkHot, colB: cool,
+          size0: size * 0.3, size1: 0.04, life: 0.5 + rng() * 0.9, drag: 1.4, gravity: 4 });
       }
-      // 6. debris chunks
-      const nDeb = Math.round(6 + size * 5);
+      // 6. debris chunks (charred hull, glowing edges) + ember streak riding each chunk
+      const nDeb = Math.round(5 + size * 4);
       for (let i = 0; i < nDeb; i++) {
         _a.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize();
-        _b.copy(_a).multiplyScalar(size * (7 + rng() * 14));
+        _b.copy(_a).multiplyScalar(size * (6 + rng() * 12));
         _c.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize();
         debris.spawn({ x: pos.x + _a.x * size * 0.3, y: pos.y + _a.y * size * 0.3, z: pos.z + _a.z * size * 0.3, vx: _b.x, vy: _b.y, vz: _b.z,
-          ax: _c.x, ay: _c.y, az: _c.z, angVel: 4 + rng() * 10, scale: size * (0.18 + rng() * 0.3), life: 1.4 + rng() * 1.2,
-          tint: o.debrisTint ?? new THREE.Color(0.35, 0.36, 0.42) });
-        // smoke puff riding each chunk
+          ax: _c.x, ay: _c.y, az: _c.z, angVel: 4 + rng() * 10, scale: size * (0.16 + rng() * 0.26), life: 1.3 + rng() * 1.1,
+          tint: o.debrisTint ?? PALETTE.debris });
         particles.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: _b.x * 0.95, vy: _b.y * 0.95, vz: _b.z * 0.95, type: P.EMBER, colA: hot, colB: cool,
-          size0: size * 0.5, size1: 0.1, life: 0.6 + rng() * 0.5, drag: 0.35 });
+          size0: size * 0.4, size1: 0.08, life: 0.5 + rng() * 0.5, drag: 0.35 });
       }
       if (o.quiet) return;                      // secondary kills: no camera/screen response
-      this.flashLight(pos, hot, 30 * size, 40 * size);
+      this.flashLight(pos, _col2.copy(hot).lerp(cool, 0.4), 9 * size, 26 * size);
       this.shake(Math.min(1, 0.25 * size));
-      if (o.flash !== false) this.flashAmount = Math.min(0.35, this.flashAmount + 0.04 * size);
+      if (o.flash !== false) this.flashAmount = Math.min(0.14, this.flashAmount + 0.015 * size);
       if (size >= 2) this.hitStop(0.05 + 0.02 * size);
     },
 
