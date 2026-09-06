@@ -8,14 +8,14 @@ export function dressArwing(api) {
   if (!M) return;
   // painted hull: cool off-white; the livery texture supplies blue nose/spine + red rings
   if (M.matHull) {
-    M.matHull.color.set(0xa6b6ca);
+    M.matHull.color.set(0xb3bcc6);
     M.matHull.roughness = 0.34; M.matHull.metalness = 0.08;
     M.matHull.clearcoat = 1.0; M.matHull.clearcoatRoughness = 0.12;
     M.matHull.envMapIntensity = 1.35;
     M.matHull.specularIntensity = 1.0;
   }
   if (M.matWing) {
-    M.matWing.color.set(0xa2b2c6);
+    M.matWing.color.set(0xadb7c2);
     M.matWing.roughness = 0.38; M.matWing.metalness = 0.08;
     M.matWing.clearcoat = 1.0; M.matWing.clearcoatRoughness = 0.14;
     M.matWing.envMapIntensity = 1.3;

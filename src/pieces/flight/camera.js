@@ -59,7 +59,7 @@ export function createChaseCamera(camera, opts = {}) {
 
     // --- screen anchor: where the ship should appear (NDC), with lead + overshoot
     const tx = O.anchor.x + THREE.MathUtils.clamp(stick.x * O.anchorLead.x + S.vx * O.anchorVel.x, -O.anchorClamp.x, O.anchorClamp.x);
-    const ty = O.anchor.y + THREE.MathUtils.clamp(stick.y * O.anchorLead.y + S.vy * O.anchorVel.y, -O.anchorClamp.y, O.anchorClamp.y) - S.brake * 0.05 + S.boost * 0.03;
+    const ty = O.anchor.y + THREE.MathUtils.clamp(stick.y * O.anchorLead.y + S.vy * O.anchorVel.y, -O.anchorClamp.y, O.anchorClamp.y) - S.brake * 0.03 + S.boost * 0.03;
     cur.ax = damp(cur.ax, tx, O.anchorLambda, dt);
     cur.ay = damp(cur.ay, ty, O.anchorLambda, dt);
 

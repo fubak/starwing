@@ -90,8 +90,10 @@ export function buildOcean() {
         vec3 V = normalize(camPos - vW);
         float dist = length(camPos - vW);
         // detail fades with distance so the far water never aliases into moire
-        float det = 1.0 - smoothstep(120.0, 700.0, dist);
-        float det2 = 1.0 - smoothstep(60.0, 320.0, dist);
+        // grazing views alias sooner: shorten the detail range as the view flattens
+        float graze = 1.0 - clamp(V.y, 0.0, 1.0);
+        float det = 1.0 - smoothstep(80.0, mix(520.0, 260.0, graze), dist);
+        float det2 = 1.0 - smoothstep(40.0, mix(220.0, 120.0, graze), dist);
         float dx = 0.0, dz = 0.0;
         wave(p, normalize(vec2(0.8, 0.6)), 0.35, 0.22 * (0.35 + 0.65 * det), 2.6, dx, dz);
         wave(p, normalize(vec2(-0.5, 0.9)), 0.6, 0.12 * det, 3.4, dx, dz);
@@ -181,7 +183,7 @@ function rockMaterial(opts = {}) {
         float grain = noise(vW.xz * 2.2 + vW.y * 1.7) * 0.5 + noise(vec2(vW.y * 3.1, (vW.x + vW.z) * 2.4)) * 0.5;
         alb *= 1.0 + (grain - 0.5) * 0.28 * det;
         float pit = smoothstep(0.7, 0.85, noise(vW.xz * 1.1 + vW.y * 0.9)) * det;
-        alb *= 1.0 - pit * 0.35;
+        alb *= 1.0 - pit * 0.18;
         // dark vertical streaks (water runoff / cracks)
         float crack = smoothstep(0.62, 0.72, noise(vec2(atan(vW.z - vW.x * 0.3, vW.x) * 6.0, vW.y * 0.08)));
         alb *= 1.0 - crack * 0.3;
@@ -199,7 +201,7 @@ function rockMaterial(opts = {}) {
         float wrap = max(dot(N, sunDir) * 0.6 + 0.4, 0.0);
         vec3 amb = mix(vec3(0.55, 0.42, 0.36), skyCol * 1.1, N.y * 0.5 + 0.5) * 0.9;
         // fake AO: darker in the lower third and on overhangs
-        float ao = mix(0.7, 1.0, smoothstep(0.0, 0.45, vH)) * mix(0.75, 1.0, N.y * 0.5 + 0.5);
+        float ao = mix(0.78, 1.0, smoothstep(0.0, 0.45, vH)) * mix(0.82, 1.0, N.y * 0.5 + 0.5);
         vec3 col = alb * (amb * ao + sunCol * (ndl * 1.1 + wrap * 0.45));
         // warm rim from the low sun
         float rim = pow(1.0 - max(dot(N, normalize(cameraPosition - vW)), 0.0), 3.0) * max(dot(N, sunDir) + 0.3, 0.0);
