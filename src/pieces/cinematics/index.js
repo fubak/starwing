@@ -8,11 +8,13 @@
 // the cinematics match the rest of the game, and the ship piece's Arwing.
 import * as THREE from 'three';
 import { Ease, seg, evalTrack, evalScalar, clamp01, lerp, smoothstep } from './tween.js';
-import { makeMaterials, buildGreatFox, buildHangar, makeArwing } from './assets.js';
+import { makeMaterials, buildHangar, makeArwing } from './assets.js';
+import { buildGreatFox } from './greatfox.js';
 import { Overlay } from './overlay.js';
 import { applyLook, makePlanet, resolvePreset, PRESETS } from '../lookdev/index.js';
 
-export { buildGreatFox, buildHangar } from './assets.js';
+export { buildHangar } from './assets.js';
+export { buildGreatFox, makeGreatFoxMaterials, patchRim, loft } from './greatfox.js';
 
 // Headless harness runs (?fixed / ?autoplay) must not be yanked by Vite full
 // reloads triggered by other pieces being edited mid-shoot.
@@ -26,8 +28,8 @@ const CINE_PRESET = {
   name: 'cinematic',
   exposure: 1.0,
   envIntensity: 0.7,
-  bloom: { strength: 0.7, radius: 0.55, threshold: 0.8 },
-  sun: { dir: [0.6, 0.38, 0.7], color: 0xfff1d6, intensity: 3.4, size: 0.035, glow: 1.1 },
+  bloom: { strength: 0.6, radius: 0.55, threshold: 0.86 },
+  sun: { dir: [0.6, 0.38, 0.7], color: 0xfff1d6, intensity: 2.9, size: 0.022, glow: 0.45 },
   hemi: { sky: 0x3d63b8, ground: 0x1a1230, intensity: 0.8 },
   fill: { dir: [-0.7, 0.35, 0.6], color: 0x3f7fff, intensity: 1.1 },
   sky: { zenith: 0x02040e, horizon: 0x12204a, ground: 0x030308, haze: 5.5, stars: 1.0, nebula: 1.0, nebulaA: 0x1e2e8a, nebulaB: 0xb0326e, milky: 0.6 },
@@ -59,6 +61,8 @@ class Stage {
     // planet
     const preset = resolvePreset(THREE, CINE_PRESET);
     this.planet = makePlanet({ radius: PLANET_R, seed: 7, preset }); this.planet.position.copy(PLANET_POS); scene.add(this.planet);
+    // art-direction cheat: light the planet from the side so a terminator, ocean glint and night-side cities are in frame
+    this.planet.lightDir = new THREE.Vector3(0.92, 0.2, 0.25).normalize(); this.planet.setPreset(preset);
 
     // actors
     this.mats = makeMaterials(rng);
@@ -88,9 +92,10 @@ class Stage {
   /** Next cam() call snaps instead of damping (hard cut). */
   cut() { this.rig.cut = true; }
   /** Centre shadow frustum + kicker/rim lights on an object. */
-  focus(obj, size = 12) {
+  focus(obj, size = 12, { kicker = 0.5, rim = 1.2, sunDir = SUN_DIR } = {}) {
+    this.kicker.intensity = kicker; this.rim.intensity = rim;
     const p = obj.getWorldPosition(this._p);
-    this.sun.target.position.copy(p); this.sun.position.copy(p).addScaledVector(SUN_DIR, 120);
+    this.sun.target.position.copy(p); this.sun.position.copy(p).addScaledVector(sunDir, 120);
     const sc = this.sun.shadow.camera;
     if (Math.abs(sc.right - size) > 1e-3) { sc.left = sc.bottom = -size; sc.right = sc.top = size; sc.updateProjectionMatrix(); }
     // kicker: from camera, slightly above / right
@@ -215,9 +220,17 @@ function titleSeq(st, ov, { auto = false } = {}) {
 
 function introSeq(st, ov) {
   const gf = st.greatFox, hangar = st.hangar, aw = st.arwings;
-  const A_END = 3.4, B_END = 6.6, C_END = 10.0;
-  const gfTrack = [{ t: 0, v: [-170, 40, -190] }, { t: A_END, v: [120, -34, 40], ease: Ease.linear }];
+  const A_END = 3.6, B_END = 6.8, C_END = 10.2;
+  // Shot A: the Great Fox cruises toward the planet; the camera is rigged in SHIP space and
+  // slides from under the cannon prongs back along the flank to the engines, so the hull
+  // fills the frame from a low angle the whole way.
+  const gfTrack = [{ t: 0, v: [10, 4, 80] }, { t: A_END, v: [-6, -2, -240], ease: Ease.linear }];
   const gfDir = new THREE.Vector3(gfTrack[1].v[0] - gfTrack[0].v[0], gfTrack[1].v[1] - gfTrack[0].v[1], gfTrack[1].v[2] - gfTrack[0].v[2]).normalize();
+  const camLocal = [{ t: 0, v: [28, -17, -104] }, { t: A_END, v: [62, -17, 14], ease: Ease.inOutSine }];
+  const lookLocal = [{ t: 0, v: [-2, -4, -48] }, { t: A_END * 0.55, v: [0, -2, -12], ease: Ease.inOutSine }, { t: A_END, v: [-4, 2, 4], ease: Ease.inOutSine }];
+  const keyA = new THREE.Vector3(0.75, 0.55, -0.3).normalize(); // shot-A key light: upper-front, camera side
+  const keyC = new THREE.Vector3(-0.45, 0.5, -0.74).normalize(); // shot-C key: planet-shine from ahead so the bay face is lit
+  const keyB = new THREE.Vector3(); // shot-B key: sunlight streaming in through the bay mouth (set in start())
   let shot = -1;
   const launchT = [0.7, 1.25, 1.8, 2.35]; // per ship launch time inside shot B
   const hangarQ = new THREE.Quaternion();
@@ -230,19 +243,22 @@ function introSeq(st, ov) {
       hangar.position.set(0, 0, 0);
       hangar.lookAt(PLANET_POS); hangar.rotateY(Math.PI); // hangar's -Z toward planet
       hangarQ.copy(hangar.quaternion);
+      keyB.set(0.35, 0.3, -1).applyQuaternion(hangarQ).normalize();
     },
     update(t, dt) {
       if (t < A_END) {
         // ---- Shot A: Great Fox fly-by, camera pans to follow
         if (shot !== 0) { shot = 0; gf.visible = true; hangar.visible = false; aw.forEach((a) => (a.visible = false)); st.cut(); }
         evalTrack(gfTrack, t, gf.position);
-        aim(gf, gfDir, -0.08); gf.userData.setPower(1.5);
-        const look = tmpB.copy(gf.position).add(tmpC.set(0, -2, 14));
-        const fov = evalScalar([{ t: 0, v: 36 }, { t: A_END, v: 70, ease: Ease.inOutSine }], t);
-        st.cam(tmpA.set(0, 4, 0), look, fov, { lambda: 5, roll: -0.04 + t * 0.014, shake: 0.6 });
-        st.focus(gf, 80);
+        aim(gf, gfDir, -0.10 + Math.sin(t * 0.7) * 0.02); gf.userData.setPower(1.4);
+        gf.updateMatrixWorld();
+        evalTrack(camLocal, t, tmpA); gf.localToWorld(tmpA);
+        evalTrack(lookLocal, t, tmpB); gf.localToWorld(tmpB);
+        const fov = evalScalar([{ t: 0, v: 46 }, { t: A_END, v: 52, ease: Ease.inOutSine }], t);
+        st.cam(tmpA, tmpB, fov, { lambda: 0, roll: -0.14 + seg(t, 0, A_END, Ease.inOutSine) * 0.2, shake: 0.5 });
+        st.focus(gf, 90, { kicker: 0.5, rim: 1.8, sunDir: keyA });
         ov.setFade(1 - seg(t, 0, 0.8, Ease.outCubic) + seg(t, A_END - 0.25, A_END, Ease.inQuad));
-        st.exposure = 1.0;
+        st.exposure = 0.8;
       } else if (t < B_END) {
         // ---- Shot B: hangar bay, Arwings launch with anticipation
         const u = t - A_END, len = B_END - A_END;
@@ -267,41 +283,43 @@ function introSeq(st, ov) {
         const look = tmpB.set(0, -1.6 - kick * 0.4, -60);
         hangar.localToWorld(pos); hangar.localToWorld(look);
         st.cam(pos, look, 54 + kick * 3, { lambda: 3.5, roll: kick * 0.02, shake: 0.8 + kick * 3 });
-        st.focus(aw[2], 22);
+        st.focus(aw[2], 30, { kicker: 0.25, rim: 0.6, sunDir: keyB });
         ov.setFlash(kick * 0.12);
         ov.setFade(1 - seg(u, 0, 0.5, Ease.outCubic) + seg(u, len - 0.2, len, Ease.inQuad));
-        st.exposure = 1.05;
+        st.exposure = 0.9;
       } else {
         // ---- Shot C: exterior — Arwings pour out of the bay, peel into formation; level-start pan + caption
         const u = t - B_END, len = C_END - B_END;
         if (shot !== 2) { shot = 2; hangar.visible = false; gf.visible = true; gf.position.set(0, 0, 0); gf.quaternion.copy(hangarQ); gf.userData.setPower(1.2); aw.forEach((a) => { a.userData.api.flap(0); a.userData.api.setThrust(1); }); st.cut(); }
         const fwd = tmpE.set(0, 0, -1).applyQuaternion(hangarQ);
         const right = tmpF.set(1, 0, 0).applyQuaternion(hangarQ);
+        gf.updateMatrixWorld();
+        const bayW = gf.localToWorld(tmpD.copy(gf.userData.bay)); // chin bay mouth (world)
         aw.forEach((a, i) => {
           a.visible = true;
           const k = u + 0.3 - i * 0.28;
-          const dist = 40 + Math.max(0, k) * 48 + Math.max(0, k - 1.5) * 30;
+          const dist = 6 + Math.max(0, k) * 48 + Math.max(0, k - 1.5) * 30;
           const spread = smoothstep(0.2, 1.6, k) * (i % 2 ? 1 : -1) * (7 + Math.floor(i / 2) * 7) * 1.2;
           const rise = smoothstep(0.2, 1.8, k) * (-6 + Math.floor(i / 2) * 9);
-          a.position.copy(gf.position).addScaledVector(fwd, dist).addScaledVector(right, spread).add(tmpA.set(0, -1.5 + rise, 0));
+          a.position.copy(bayW).addScaledVector(fwd, dist).addScaledVector(right, spread).add(tmpA.set(0, rise, 0));
           const dir = tmpB.copy(fwd).addScaledVector(right, smoothstep(0.2, 1.2, k) * (1 - smoothstep(1.2, 2.2, k)) * (i % 2 ? 0.25 : -0.25));
           const bank = (i % 2 ? -1 : 1) * Math.sin(clamp01(k / 2.2) * Math.PI) * 0.9;
           aim(a, dir, bank);
           a.userData.setPower(2.2);
         });
-        // crane: starts low-front looking back at bay, swings wide to follow squadron toward planet
-        const camK = seg(u, 0, 3.2, Ease.inOutSine);
-        const pos = tmpA.copy(gf.position).addScaledVector(fwd, 70 + camK * 40).addScaledVector(right, -30 + camK * 46).add(tmpB.set(0, -12 + camK * 6, 0));
-        // look target: starts on the bay mouth, ends far ahead toward the planet (far so camera offsets never dominate)
-        const bay = tmpB.copy(gf.position).addScaledVector(fwd, 36).add(tmpC.set(0, -1, 0));
-        const far = tmpC.copy(gf.position).addScaledVector(fwd, 700).add(tmpD.set(0, -60, 0));
-        const look = bay.lerp(far, camK);
-        st.cam(pos, look, 44 - camK * 6, { lambda: 3.0, roll: -0.05 + camK * 0.08, shake: 0.5 });
-        st.focus(aw[0], 30);
+        // crane: hangs low beside the Great Fox's chin, watching the Arwings burst out of the bay and
+        // stream past; then swings to follow the squadron toward the planet
+        const camK = seg(u, 0.7, 2.8, Ease.inOutSine);
+        const pos = tmpA.copy(bayW).addScaledVector(fwd, 30 + camK * 64).addScaledVector(right, -24 - camK * 8).add(tmpB.set(0, -9 - camK * 3, 0));
+        const toBay = tmpB.copy(bayW).addScaledVector(fwd, 4).sub(pos).normalize();
+        const lookDir = toBay.lerp(fwd, camK).normalize();
+        const look = tmpC.copy(pos).addScaledVector(lookDir, 60).add(tmpD.set(0, -camK * 6, 0));
+        st.cam(pos, look, 46 - camK * 8, { lambda: 3.0, roll: -0.05 + camK * 0.08, shake: 0.5 });
+        st.focus(aw[0], 30, { kicker: 0.6, rim: 1.4, sunDir: keyC });
         ov.setFade(1 - seg(u, 0, 0.5, Ease.outCubic) + seg(u, len - 0.5, len, Ease.inQuad));
         const cap = seg(u, 1.0, 1.7, Ease.outCubic);
         ov.setCaption(cap * (1 - seg(u, len - 0.55, len - 0.2)), 1 - Ease.outBack(cap), seg(u, 1.3, 2.2, Ease.outQuart));
-        st.exposure = 1.0;
+        st.exposure = 0.85;
       }
       return t >= C_END;
     },

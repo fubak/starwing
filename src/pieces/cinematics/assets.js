@@ -60,6 +60,37 @@ export function makeWindowTexture(rng, size = 512) {
   return tex;
 }
 
+/** Hangar wall plating: pale panels with cobalt trim bands, vents, stencils and a hazard rail. */
+export function makeHangarWallTexture(rng, size = 1024) {
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const g = c.getContext('2d');
+  g.fillStyle = '#c9d2dd'; g.fillRect(0, 0, size, size);
+  const cols = 8, rows = 5, cw = size / cols, rh = size / rows;
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+    const v = 0.9 + rng.next() * 0.14;
+    g.fillStyle = `rgb(${Math.round(190 * v)},${Math.round(200 * v)},${Math.round(214 * v)})`;
+    g.fillRect(x * cw + 4, y * rh + 4, cw - 8, rh - 8);
+    // bevel highlight / shadow
+    g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(x * cw + 4, y * rh + 4, cw - 8, 3);
+    g.fillStyle = 'rgba(20,28,44,0.45)'; g.fillRect(x * cw + 4, y * rh + rh - 8, cw - 8, 4);
+    const r = rng.next();
+    if (r < 0.2) { g.fillStyle = 'rgba(24,30,44,0.55)'; for (let k = 0; k < 6; k++) g.fillRect(x * cw + cw * 0.3, y * rh + rh * 0.35 + k * 8, cw * 0.4, 3); }
+    else if (r < 0.32) { g.strokeStyle = 'rgba(28,36,54,0.5)'; g.lineWidth = 3; g.beginPath(); g.arc(x * cw + cw / 2, y * rh + rh / 2, rh * 0.22, 0, Math.PI * 2); g.stroke(); }
+    else if (r < 0.42) { g.fillStyle = 'rgba(30,38,56,0.6)'; g.font = `bold ${Math.floor(rh * 0.22)}px sans-serif`; g.fillText(`${String.fromCharCode(65 + Math.floor(rng.next() * 6))}-${Math.floor(rng.next() * 9) + 1}`, x * cw + 14, y * rh + rh * 0.55); }
+  }
+  // recessed seams
+  g.fillStyle = 'rgba(16,22,34,0.85)';
+  for (let y = 0; y <= rows; y++) g.fillRect(0, y * rh - 3, size, 6);
+  for (let x = 0; x <= cols; x++) g.fillRect(x * cw - 3, 0, 6, size);
+  // cobalt trim band + red hazard line across the middle row
+  g.fillStyle = '#1e4fd8'; g.fillRect(0, rh * 2 - 22, size, 16);
+  g.fillStyle = '#d8342a'; g.fillRect(0, rh * 3 + 6, size, 6);
+  for (let i = 0; i < 400; i++) { g.fillStyle = `rgba(${rng.next() < 0.5 ? '30,40,60' : '255,255,255'},${rng.next() * 0.05})`; g.fillRect(rng.next() * size, rng.next() * size, 2 + rng.next() * 5, 20 + rng.next() * 120); }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+  return tex;
+}
+
 export function makeFloorTexture(rng, size = 1024) {
   const c = document.createElement('canvas'); c.width = c.height = size;
   const g = c.getContext('2d');
@@ -87,6 +118,7 @@ export function makeMaterials(rng) {
   const panels = makePanelTexture(rng, '#e6ecf2');
   const panelsDark = makePanelTexture(rng, '#3a4250', 'rgba(10,14,22,0.6)');
   const floor = makeFloorTexture(rng);
+  const hwall = makeHangarWallTexture(rng);
   const mats = {
     hull: new THREE.MeshPhysicalMaterial({ color: 0xf2f5f8, map: panels, metalness: 0.1, roughness: 0.42, clearcoat: 0.8, clearcoatRoughness: 0.15, envMapIntensity: 1.0 }),
     hullBlue: new THREE.MeshPhysicalMaterial({ color: 0x2458c8, metalness: 0.5, roughness: 0.3, clearcoat: 0.5, clearcoatRoughness: 0.2, envMapIntensity: 1.2 }),
@@ -95,10 +127,11 @@ export function makeMaterials(rng) {
     gunmetal: new THREE.MeshStandardMaterial({ color: 0x1e222b, metalness: 0.9, roughness: 0.35, envMapIntensity: 1.3 }),
     glow: new THREE.MeshStandardMaterial({ color: 0x8fe4ff, emissive: 0x5fd0ff, emissiveIntensity: 4.0, roughness: 1, metalness: 0 }),
     glowOrange: new THREE.MeshStandardMaterial({ color: 0xffb060, emissive: 0xff9040, emissiveIntensity: 3.0 }),
-    glowWhite: new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff4e0, emissiveIntensity: 3.5 }),
+    glowWhite: new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff4e0, emissiveIntensity: 1.8 }),
     windows: new THREE.MeshStandardMaterial({ color: 0x0a0c10, emissive: 0xffffff, emissiveMap: makeWindowTexture(rng), emissiveIntensity: 2.2, metalness: 0.6, roughness: 0.4 }),
-    hangarFloor: new THREE.MeshStandardMaterial({ color: 0xffffff, map: floor, metalness: 0.55, roughness: 0.5, envMapIntensity: 0.7 }),
-    hangarWall: new THREE.MeshStandardMaterial({ color: 0x8a94a6, map: panelsDark, metalness: 0.6, roughness: 0.55, envMapIntensity: 0.6 }),
+    hangarFloor: new THREE.MeshStandardMaterial({ color: 0xffffff, map: floor, metalness: 0.12, roughness: 0.78, envMapIntensity: 0.6 }),
+    hangarWall: new THREE.MeshStandardMaterial({ color: 0xffffff, map: hwall, metalness: 0.35, roughness: 0.55, envMapIntensity: 0.6 }),
+    hangarCeil: new THREE.MeshStandardMaterial({ color: 0x8a94a6, map: panelsDark, metalness: 0.6, roughness: 0.6, envMapIntensity: 0.5 }),
     bayInner: new THREE.MeshStandardMaterial({ color: 0x0b0e14, side: THREE.BackSide, roughness: 0.9 }),
   };
   panels.repeat.set(1, 1);
@@ -235,17 +268,24 @@ export function buildHangar(mats) {
   const W = 26, H = 12, L = 70;
   const wall = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.set(rx, ry, rz); m.receiveShadow = true; h.add(m); return m; };
   mats.hangarFloor.map.repeat.set(2, 6);
+  mats.hangarWall.map.repeat.set(4, 1);
   wall(new THREE.BoxGeometry(W, 1, L), mats.hangarFloor, 0, -H / 2, 0);
-  wall(new THREE.BoxGeometry(W, 1, L), mats.hangarWall, 0, H / 2, 0);
-  wall(new THREE.BoxGeometry(1, H, L), mats.hangarWall, -W / 2, 0, 0);
-  wall(new THREE.BoxGeometry(1, H, L), mats.hangarWall, W / 2, 0, 0);
+  wall(new THREE.BoxGeometry(W, 1, L), mats.hangarCeil, 0, H / 2, 0);
+  // side walls as planes so the texture's UV runs along the bay (u along z)
+  const sideGeo = new THREE.PlaneGeometry(L, H);
+  wall(sideGeo, mats.hangarWall, -W / 2 + 0.5, 0, 0, 0, Math.PI / 2, 0);
+  wall(sideGeo, mats.hangarWall, W / 2 - 0.5, 0, 0, 0, -Math.PI / 2, 0);
   wall(new THREE.BoxGeometry(W, H, 1), mats.hangarWall, 0, 0, L / 2); // back wall
+  // atmosphere: faint additive haze sheets across the bay so the launch lights bloom in the air
+  const hazeMat = new THREE.MeshBasicMaterial({ color: 0x3a5a90, transparent: true, opacity: 0.014, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  for (let i = 0; i < 6; i++) { const s = new THREE.Mesh(new THREE.PlaneGeometry(W, H), hazeMat); s.position.set(0, 0, -L / 2 + 4 + i * 10); h.add(s); }
   // ribs + ceiling light bars + side conduits
   for (let i = 0; i < 9; i++) {
     const z = -L / 2 + 6 + i * 7;
-    const rib = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 0.9, 0.9), mats.hullDark); rib.position.set(0, H / 2 - 0.95, z); h.add(rib);
+    const rib = new THREE.Mesh(new THREE.BoxGeometry(W - 0.5, 0.9, 0.9), mats.hull); rib.position.set(0, H / 2 - 0.95, z); rib.castShadow = true; h.add(rib);
     for (const s of [-1, 1]) {
-      const r2 = new THREE.Mesh(new THREE.BoxGeometry(0.9, H - 0.5, 0.9), mats.hullDark); r2.position.set(s * (W / 2 - 0.95), 0, z); h.add(r2);
+      const r2 = new THREE.Mesh(new THREE.BoxGeometry(0.9, H - 0.5, 0.9), mats.hull); r2.position.set(s * (W / 2 - 0.95), 0, z); r2.castShadow = true; h.add(r2);
+      const band = new THREE.Mesh(new THREE.BoxGeometry(0.95, 1.2, 0.95), mats.hullBlue); band.position.set(s * (W / 2 - 0.95), 1.4, z); h.add(band);
       const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 7, 10), mats.gunmetal); pipe.rotation.x = Math.PI / 2; pipe.position.set(s * (W / 2 - 1.2), 2.5, z + 3.5); h.add(pipe);
       const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.5, 0.2), mats.glowOrange); lamp.position.set(s * (W / 2 - 1.2), -1, z); h.add(lamp);
     }
@@ -263,9 +303,10 @@ export function buildHangar(mats) {
   const frame = new THREE.Mesh(holeBox(W + 2, H + 2, 2, W - 1.5, H - 1.5), mats.gunmetal); frame.position.set(0, 0, -L / 2 - 0.5); h.add(frame);
   for (const s of [-1, 1]) { const l = new THREE.Mesh(new THREE.BoxGeometry(0.3, H - 2, 0.3), mats.glowOrange); l.position.set(s * (W / 2 - 0.6), 0, -L / 2 - 1.6); h.add(l); }
   // interior lights
-  const l1 = new THREE.PointLight(0xbfe4ff, 140, 70, 1.7); l1.position.set(0, 4.5, 4); h.add(l1);
-  const l2 = new THREE.PointLight(0xffb070, 60, 60, 1.7); l2.position.set(0, -3, -16); h.add(l2);
-  const l3 = new THREE.PointLight(0x9fd8ff, 80, 60, 1.7); l3.position.set(0, 4, 24); h.add(l3);
+  // interior lights: cool overheads (kept modest so the white Arwing hulls hold their plating), warm floor bounce at the mouth
+  const l1 = new THREE.PointLight(0xbfe4ff, 34, 60, 1.8); l1.position.set(0, 5.0, 2); h.add(l1);
+  const l2 = new THREE.PointLight(0xffb070, 22, 50, 1.8); l2.position.set(0, -4, -18); h.add(l2);
+  const l3 = new THREE.PointLight(0x9fd8ff, 26, 50, 1.8); l3.position.set(0, 5.0, 26); h.add(l3);
   return h;
 }
 
