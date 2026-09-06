@@ -31,21 +31,22 @@ function panelTexture(size = 512, base = '#eef1f6', line = '#b9c2d2', accent = '
       g.beginPath(); g.arc(x + dx * size / cells, y + dy * size / cells, 4, 0, Math.PI * 2); g.fill();
     }
   }
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 2;
   return t;
 }
 
 function roughnessTexture(size = 512) {
   const c = document.createElement('canvas'); c.width = c.height = size;
   const g = c.getContext('2d');
-  g.fillStyle = '#707070'; g.fillRect(0, 0, size, size);
-  // subtle smudges / wear
+  // multiplies material.roughness: ~1.0 base with soft smudges / wear that
+  // roughen (never polish) the surface
+  g.fillStyle = '#e6e6e6'; g.fillRect(0, 0, size, size);
   for (let i = 0; i < 260; i++) {
     const r = 10 + Math.random() * 60;
     const x = Math.random() * size, y = Math.random() * size;
     const gg = g.createRadialGradient(x, y, 0, x, y, r);
-    const v = 90 + Math.floor(Math.random() * 80);
-    gg.addColorStop(0, `rgba(${v},${v},${v},0.35)`); gg.addColorStop(1, 'rgba(0,0,0,0)');
+    const v = 235 + Math.floor(Math.random() * 20);
+    gg.addColorStop(0, `rgba(${v},${v},${v},0.5)`); gg.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = gg; g.fillRect(x - r, y - r, r * 2, r * 2);
   }
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.NoColorSpace;
@@ -55,21 +56,23 @@ function roughnessTexture(size = 512) {
 function gridTexture(size = 1024) {
   const c = document.createElement('canvas'); c.width = c.height = size;
   const g = c.getContext('2d');
-  g.fillStyle = '#1b2028'; g.fillRect(0, 0, size, size);
-  g.strokeStyle = '#2a323f'; g.lineWidth = 2;
+  g.fillStyle = '#cfd6e0'; g.fillRect(0, 0, size, size);
+  g.strokeStyle = '#aeb8c8'; g.lineWidth = 2;
   const n = 12;
   for (let i = 0; i <= n; i++) {
     const p = (i / n) * size;
     g.beginPath(); g.moveTo(p, 0); g.lineTo(p, size); g.stroke();
     g.beginPath(); g.moveTo(0, p); g.lineTo(size, p); g.stroke();
   }
-  g.strokeStyle = '#3a4657'; g.lineWidth = 6;
+  g.strokeStyle = '#8b97ab'; g.lineWidth = 6;
   for (let i = 0; i <= 3; i++) {
     const p = (i / 3) * size;
     g.beginPath(); g.moveTo(p, 0); g.lineTo(p, size); g.stroke();
     g.beginPath(); g.moveTo(0, p); g.lineTo(size, p); g.stroke();
   }
-  // yellow landing chevrons
+  // blue landing ring + yellow chevrons
+  g.strokeStyle = '#2457d6'; g.lineWidth = 14;
+  g.beginPath(); g.arc(size / 2, size / 2, size * 0.36, 0, Math.PI * 2); g.stroke();
   g.fillStyle = '#e0b43a';
   g.save(); g.translate(size / 2, size / 2);
   for (let k = 0; k < 3; k++) {
@@ -77,33 +80,38 @@ function gridTexture(size = 1024) {
     g.beginPath(); g.moveTo(-r, r * 0.35); g.lineTo(0, -r * 0.35); g.lineTo(r, r * 0.35); g.lineTo(r - 18, r * 0.35); g.lineTo(0, -r * 0.35 + 22); g.lineTo(-r + 18, r * 0.35); g.closePath(); g.fill();
   }
   g.restore();
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 2;
   return t;
 }
 
+/**
+ * STARWING material language. Only the white hull carries a clear-coat
+ * (MeshPhysical); everything else is MeshStandard — same GGX/fresnel response,
+ * roughly half the fragment cost, which matters on software GL and on Switch-
+ * class GPUs alike.
+ */
 export function makeHeroMaterials() {
   const hullMap = panelTexture();
   const rough = roughnessTexture();
   return {
     hull: new THREE.MeshPhysicalMaterial({
-      map: hullMap, roughnessMap: rough, color: 0xffffff, roughness: 0.42, metalness: 0.08,
-      clearcoat: 1.0, clearcoatRoughness: 0.12, envMapIntensity: 1.0,
+      map: hullMap, roughnessMap: rough, color: 0xffffff, roughness: 0.42, metalness: 0.05,
+      clearcoat: 1.0, clearcoatRoughness: 0.2, envMapIntensity: 1.0,
     }),
-    cobalt: new THREE.MeshPhysicalMaterial({
-      color: 0x1e4fd8, roughness: 0.28, metalness: 0.9, roughnessMap: rough, clearcoat: 0.4, clearcoatRoughness: 0.2,
-    }),
-    cobaltDS: new THREE.MeshPhysicalMaterial({
-      color: 0x1e4fd8, roughness: 0.28, metalness: 0.9, roughnessMap: rough, clearcoat: 0.4, clearcoatRoughness: 0.2, side: THREE.DoubleSide,
-    }),
-    chrome: new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.06, metalness: 1.0 }),
-    gold: new THREE.MeshPhysicalMaterial({ color: 0xd9a543, roughness: 0.34, metalness: 1.0, roughnessMap: rough }),
-    graphite: new THREE.MeshPhysicalMaterial({ map: gridTexture(), color: 0xffffff, roughness: 0.72, metalness: 0.15, roughnessMap: rough }),
-    dark: new THREE.MeshPhysicalMaterial({ color: 0x1a1f28, roughness: 0.55, metalness: 0.6 }),
-    emitRed: new THREE.MeshPhysicalMaterial({ color: 0x400808, emissive: 0xff2a1a, emissiveIntensity: 2.6, roughness: 0.3 }),
-    emitBlue: new THREE.MeshPhysicalMaterial({ color: 0x082040, emissive: 0x48a8ff, emissiveIntensity: 1.8, roughness: 0.3 }),
+    // NB: direct-light GGX highlights below ~0.25 roughness saturate into hard
+    // blobs under ACES (point lights have no angular size); keep mirrors >= 0.26
+    // and let the PMREM sky carry the crisp reflections.
+    cobalt: new THREE.MeshStandardMaterial({ color: 0x1e4fd8, roughness: 0.36, metalness: 0.85, roughnessMap: rough }),
+    cobaltDS: new THREE.MeshStandardMaterial({ color: 0x1e4fd8, roughness: 0.36, metalness: 0.85, side: THREE.DoubleSide }),
+    chrome: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.27, metalness: 1.0 }),
+    gold: new THREE.MeshStandardMaterial({ color: 0xd9a543, roughness: 0.4, metalness: 1.0, roughnessMap: rough }),
+    deck: new THREE.MeshStandardMaterial({ map: gridTexture(), color: 0xffffff, roughness: 0.8, metalness: 0.0, roughnessMap: rough }),
+    dark: new THREE.MeshStandardMaterial({ color: 0x232a36, roughness: 0.5, metalness: 0.7 }),
+    emitRed: new THREE.MeshStandardMaterial({ color: 0x400808, emissive: 0xff2a1a, emissiveIntensity: 2.6, roughness: 0.3 }),
+    emitBlue: new THREE.MeshStandardMaterial({ color: 0x082040, emissive: 0x48a8ff, emissiveIntensity: 1.8, roughness: 0.3 }),
     glass: new THREE.MeshPhysicalMaterial({
-      color: 0x8fd3ff, roughness: 0.05, metalness: 0.0, transmission: 0.0, transparent: true, opacity: 0.55,
-      clearcoat: 1, clearcoatRoughness: 0.05, ior: 1.45, thickness: 0.6,
+      color: 0x8fd3ff, roughness: 0.2, metalness: 0.0, transparent: true, opacity: 0.5,
+      clearcoat: 1, clearcoatRoughness: 0.2, ior: 1.45, depthWrite: false,
     }),
   };
 }
@@ -127,7 +135,7 @@ export function makeHero() {
 
   // ---- sky dock: hexagonal deck, rim, under-glow
   const deck = new THREE.Group();
-  const top = new THREE.Mesh(new THREE.CylinderGeometry(6.2, 6.6, 0.5, 6, 1), M.graphite);
+  const top = new THREE.Mesh(new THREE.CylinderGeometry(6.2, 6.6, 0.5, 6, 1), M.deck);
   top.receiveShadow = true; top.castShadow = true;
   top.position.y = -0.25;
   deck.add(top);
@@ -163,14 +171,14 @@ export function makeHero() {
   // centre: chrome sphere on a cobalt pedestal
   const ped = add(new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.1, 0.6, 6), M.cobalt), { y: 0.3, spin: 0, bob: 0 });
   ped.receiveShadow = true;
-  add(new THREE.Mesh(new THREE.SphereGeometry(1.15, 64, 48), M.chrome), { y: 1.95, spin: 0, bob: 0.08, phase: 0 });
+  add(new THREE.Mesh(new THREE.SphereGeometry(1.15, 48, 32), M.chrome), { y: 1.95, spin: 0, bob: 0.08, phase: 0 });
   // left: white hull cube with panel lines (bevelled via rounded box-ish)
   const cube = add(new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.7, 1.7, 1, 1, 1), M.hull), { x: -3.2, y: 1.5, z: 0.6, spin: 0.35, bob: 0.1, phase: 1.3 });
   // blue emitter bar set into the cube
   const bar = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.16, 0.16), M.emitBlue);
   bar.position.set(0, -0.55, 0.86); cube.add(bar);
   // right: gold torus, tilted
-  const torus = add(new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.36, 32, 96), M.gold), { x: 3.2, y: 1.6, z: 0.4, spin: 0.5, bob: 0.12, phase: 2.6 });
+  const torus = add(new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.36, 24, 64), M.gold), { x: 3.2, y: 1.6, z: 0.4, spin: 0.5, bob: 0.12, phase: 2.6 });
   torus.rotation.x = 0.7;
   // back: G-diffuser emitter (capsule in a cobalt cowl)
   const gd = new THREE.Group();

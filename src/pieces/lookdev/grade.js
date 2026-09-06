@@ -35,7 +35,7 @@ export function makeGradePass() {
         vec3 c = texture2D(tDiffuse, vUv).rgb;
         // lift / gain (split toning): lift raises shadows, gain tints highlights
         c = c * uGain + uLift * (1.0 - c);
-        c = pow(max(c, 0.0), vec3(1.0 / uGamma));
+        if (abs(uGamma - 1.0) > 0.001) c = pow(max(c, 0.0), vec3(1.0 / uGamma));
         // filmic S-curve around mid grey
         c = (c - 0.5) * uContrast + 0.5;
         float l = dot(c, vec3(0.2126, 0.7152, 0.0722));

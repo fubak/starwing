@@ -113,30 +113,33 @@ const FRAG = /* glsl */ `
     // ---- atmosphere gradient
     float h = exp(-max(y, 0.0) * uHaze);
     vec3 sky = mix(uZenith, uHorizon, h);
-    float below = smoothstep(0.0, -0.08, y);
+    float below = smoothstep(0.02, -0.3, y);
     vec3 ground = mix(uHorizon * 0.55, uGround, smoothstep(0.0, -0.45, y));
     vec3 col = mix(sky, ground, below);
-
-    // sun forward scatter: broad mie lobe + tight core, strongest near horizon
-    float m = max(mu, 0.0);
-    float horizonBoost = 0.5 + 0.5 * h;
-    float glow = pow(m, 6.0) * 0.28 + pow(m, 40.0) * 0.55 + pow(m, 250.0) * 1.2;
-    col += uSunColor * glow * uSunGlow * horizonBoost * (1.0 - below * 0.8);
 
     // ---- deep-space content, hidden by bright atmosphere
     float atmoMask = clamp(1.0 - dot(sky, vec3(0.6)) * 1.6, 0.0, 1.0) * (1.0 - below);
 
+    // sun forward scatter: broad mie lobe (only where there is air to scatter
+    // in) + tight corona, strongest near the horizon
+    float m = max(mu, 0.0);
+    float horizonBoost = 0.5 + 0.5 * h;
+    float glow = pow(m, 6.0) * 0.22 * (1.0 - atmoMask * 0.85) + pow(m, 40.0) * 0.22 + pow(m, 300.0) * 0.7;
+    col += uSunColor * glow * uSunGlow * horizonBoost * (1.0 - below * 0.8);
+
     // nebula: two-colour fbm with a tilted milky-way band
     vec2 euv = vec2(atan(d.z, d.x) / 6.2831853 + 0.5, asin(clamp(d.y, -1.0, 1.0)) / 3.1415926 + 0.5);
     vec3 nz = texture2D(uNoise, euv).rgb;
-    float n1 = nz.r, n2 = nz.g;
+    float n1 = nz.r, n2 = nz.g, n3 = nz.b;
     float bandCoord = dot(d, normalize(vec3(0.35, 1.0, 0.25)));
     float band = exp(-bandCoord * bandCoord * 18.0);
     float neb = smoothstep(0.42, 0.78, n1) * (0.35 + 0.65 * band * uMilky + 0.4 * (1.0 - uMilky));
+    // fine filaments carve dark lanes into the soft body so it reads as gas, not fog
+    neb *= 0.55 + 0.45 * smoothstep(0.3, 0.7, n3);
     float wisp = smoothstep(0.5, 0.85, n2);
     vec3 nebCol = mix(uNebulaA, uNebulaB, smoothstep(0.35, 0.7, n2)) * neb * 1.4
                 + uNebulaB * wisp * neb * 0.6
-                + vec3(0.7, 0.8, 1.0) * band * uMilky * 0.09 * smoothstep(0.3, 0.6, n1);
+                + vec3(0.7, 0.8, 1.0) * band * uMilky * 0.11 * smoothstep(0.3, 0.6, n1) * (0.6 + 0.4 * n3);
     col += nebCol * uNebula * atmoMask;
 
     // stars: three layers of different scale/brightness
@@ -149,7 +152,7 @@ const FRAG = /* glsl */ `
     float ang = sqrt(max(0.0, 2.0 - 2.0 * mu)); // chord length ~ angle for small angles
     float disc = 1.0 - smoothstep(uSunSize * 0.85, uSunSize * 1.05, ang);
     float limb = 1.0 - 0.35 * smoothstep(0.0, uSunSize, ang);
-    col += uSunColor * disc * limb * uSunIntensity * 6.0 * (1.0 - below);
+    col += uSunColor * disc * limb * uSunIntensity * 3.0 * (1.0 - below);
 
     gl_FragColor = vec4(col, 1.0);
   }

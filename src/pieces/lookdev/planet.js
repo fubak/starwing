@@ -78,7 +78,7 @@ export function bakePlanetTexture(seed = 7, W = 1024, H = 512) {
   tex.wrapT = THREE.RepeatWrapping;
   tex.premultiplyAlpha = false;
   tex.minFilter = THREE.LinearMipmapLinearFilter;
-  tex.anisotropy = 4;
+  tex.anisotropy = 1;
   return tex;
 }
 
@@ -102,8 +102,7 @@ const SURF_FRAG = /* glsl */ `
   void main() {
     vec4 tex = texture2D(uMap, vUv);
     float det = texture2D(uMap, vUv * vec2(8.0, 8.0)).a;
-    float det2 = texture2D(uMap, vUv * vec2(29.0, 29.0) + 0.37).a;
-    float h = tex.r + (det - 0.5) * 0.09 + (det2 - 0.5) * 0.035;
+    float h = tex.r + (det - 0.5) * 0.1;
     vec3 N = normalize(vN);
     vec3 V = normalize(cameraPosition - vWP);
     vec3 L = normalize(uSunDir);
@@ -127,9 +126,8 @@ const SURF_FRAG = /* glsl */ `
     float diff = pow(wrap, 1.4);
     // terrain shading: fake slope lighting from the height gradient
     vec2 px = vec2(1.0 / 1024.0, 1.0 / 512.0);
-    float hx = texture2D(uMap, vUv + vec2(px.x, 0.0)).r - texture2D(uMap, vUv - vec2(px.x, 0.0)).r;
-    float hy = texture2D(uMap, vUv + vec2(0.0, px.y)).r - texture2D(uMap, vUv - vec2(0.0, px.y)).r;
-    float slope = clamp(1.0 + (hx * 6.0 - hy * 4.0) * land * 2.5, 0.5, 1.5);
+    vec2 hxy = vec2(texture2D(uMap, vUv + vec2(px.x, 0.0)).r, texture2D(uMap, vUv + vec2(0.0, px.y)).r) - tex.r;
+    float slope = clamp(1.0 + (hxy.x * 12.0 - hxy.y * 8.0) * land * 2.5, 0.5, 1.5);
     diff *= slope;
     float term = smoothstep(0.0, 0.35, wrap) * (1.0 - smoothstep(0.35, 0.8, wrap));
     vec3 light = uSunColor * diff + uAtmoWarm * term * 0.2;
@@ -138,12 +136,15 @@ const SURF_FRAG = /* glsl */ `
     float spec = pow(max(dot(N, Hv), 0.0), 140.0) * (1.0 - land) * (1.0 - ice) * 1.6
                + pow(max(dot(N, Hv), 0.0), 12.0) * (1.0 - land) * 0.12;
     // limb fresnel (in-atmosphere scattering seen through the air column)
-    float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+    float NdV = max(dot(N, V), 0.0);
+    float fres = pow(1.0 - NdV, 3.0);
+    float rim = pow(1.0 - NdV, 7.0);
     vec3 atmoCol = mix(uAtmo, uAtmoWarm, smoothstep(0.3, -0.1, NdL) * 0.8);
-    vec3 atmo = atmoCol * fres * (0.04 + 0.96 * clamp(NdL * 1.6 + 0.3, 0.0, 1.0)) * 1.1;
-    // haze over the whole disc lifts shadows toward atmosphere colour
+    vec3 atmo = atmoCol * rim * (0.04 + 0.96 * clamp(NdL * 1.6 + 0.3, 0.0, 1.0)) * 1.4;
+    // thin haze over the disc lifts shadows toward atmosphere colour; the limb
+    // itself gets the strong in-scatter term so the edge reads as a crisp blue rim
     vec3 col = albedo * (light + uAmbient * 0.35) + uSunColor * spec * clamp(NdL * 4.0, 0.0, 1.0);
-    col = mix(col, atmoCol * (0.08 + 0.92 * diff), fres * 0.35);
+    col = mix(col, atmoCol * (0.08 + 0.92 * diff), fres * 0.22);
     col += atmo;
     // night-side city lights, flickering ever so slightly
     float night = smoothstep(0.12, -0.15, NdL);
@@ -170,8 +171,8 @@ const CLOUD_FRAG = /* glsl */ `
     float term = smoothstep(0.0, 0.3, wrap) * (1.0 - smoothstep(0.3, 0.7, wrap));
     vec3 col = uCloud * (uSunColor * wrap * wrap * 1.1 + uAmbient * 0.25) + uAtmoWarm * term * 0.35;
     float rim = pow(1.0 - max(dot(N, V), 0.0), 2.0);
-    float alpha = cov * (1.0 - rim * 0.5) * (0.35 + 0.65 * smoothstep(-0.25, 0.1, NdL));
-    gl_FragColor = vec4(col, alpha * 0.92);
+    float alpha = cov * (1.0 - rim * 0.7) * (0.35 + 0.65 * smoothstep(-0.25, 0.1, NdL));
+    gl_FragColor = vec4(col, alpha * 0.85);
   }
 `;
 
@@ -219,26 +220,28 @@ export function makePlanet({ radius = 640, seed = 7, preset } = {}) {
       uIceLat: { value: 0.8 },
     },
   });
-  const surface = new THREE.Mesh(new THREE.SphereGeometry(radius, 128, 64), surfMat);
+  const surface = new THREE.Mesh(new THREE.SphereGeometry(radius, 96, 48), surfMat);
   const cloudMat = new THREE.ShaderMaterial({
     vertexShader: SURF_VERT, fragmentShader: CLOUD_FRAG, transparent: true, depthWrite: false,
     uniforms: { ...shared, uCloud: { value: new THREE.Color() }, uAtmoWarm: { value: new THREE.Color() } },
   });
-  const clouds = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.012, 96, 48), cloudMat);
+  const clouds = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.012, 64, 32), cloudMat);
   clouds.renderOrder = 1;
   const haloMat = new THREE.ShaderMaterial({
     vertexShader: SURF_VERT, fragmentShader: HALO_FRAG, side: THREE.BackSide, transparent: true,
     blending: THREE.AdditiveBlending, depthWrite: false,
-    uniforms: { uSunDir: shared.uSunDir, uAtmo: { value: new THREE.Color() }, uAtmoWarm: { value: new THREE.Color() }, uStrength: { value: 1.6 } },
+    uniforms: { uSunDir: shared.uSunDir, uAtmo: { value: new THREE.Color() }, uAtmoWarm: { value: new THREE.Color() }, uStrength: { value: 2.2 } },
   });
-  const halo = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.075, 96, 48), haloMat);
+  const halo = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.075, 64, 32), haloMat);
   halo.renderOrder = 2;
   for (const m of [surfMat, cloudMat, haloMat]) m.toneMapped = false;
   group.add(surface, clouds, halo);
 
+  /** Optional art-direction cheat: light the planet from a direction other than the sky's sun. */
+  group.lightDir = null;
   group.setPreset = (p) => {
     const q = p.planet;
-    shared.uSunDir.value.copy(p.sun.dir).normalize();
+    shared.uSunDir.value.copy(group.lightDir ?? p.sun.dir).normalize();
     shared.uSunColor.value.copy(p.sun.color);
     shared.uAmbient.value.copy(p.sky.zenith).lerp(p.sky.horizon, 0.5);
     const su = surfMat.uniforms;

@@ -28,8 +28,14 @@ export async function create(ctx) {
   look.setFocus(new THREE.Vector3(0, 0.8, 0));
 
   // ---- planet below the dock
-  const planet = makePlanet({ radius: 640, seed: 7, preset: look.preset });
-  planet.position.set(0, -700, -180);
+  const planet = makePlanet({ radius: 640, seed: 7 });
+  planet.position.set(60, -668, -220);
+  planet.rotation.x = Math.PI / 2; // equator (oceans/continents) faces us, not the ice cap
+  // Art-direction cheat: the visible cap of the planet is lit from up-right so
+  // the terminator sits just past the sun side of the limb (dawn), while the
+  // sky's sun stays low for the rim/flare.
+  planet.lightDir = new THREE.Vector3(0.55, 0.62, -0.55).normalize();
+  planet.setPreset(look.preset);
   scene.add(planet);
 
   // ---- hero material chart
@@ -70,9 +76,10 @@ export async function create(ctx) {
   };
 
   // ---- camera rig: spring-damped orbit with overshoot on input
+  const AZ0 = -0.42, EL0 = 0.15;
   const rig = {
-    az: 0.25, el: 0.16, dist: 14.5,
-    tAz: 0.25, tEl: 0.16, tDist: 14.5,
+    az: AZ0, el: EL0, dist: 14.5,
+    tAz: AZ0, tEl: EL0, tDist: 14.5,
     vAz: 0, vEl: 0, vDist: 0,
     kick: 0,
   };
@@ -107,8 +114,8 @@ export async function create(ctx) {
       if (syncGL) drainGL();
       // input -> orbit targets (with anticipation: kick pulls back before the settle)
       const ax = input.axes.x, ay = input.axes.y;
-      rig.tAz = 0.25 + ax * 0.55;
-      rig.tEl = 0.16 + ay * 0.13;
+      rig.tAz = AZ0 + ax * 0.5;
+      rig.tEl = EL0 + ay * 0.12;
       rig.kick = Math.max(0, rig.kick - dt * 2.2);
       rig.tDist = 14.5 - Math.abs(ax) * 1.2 + Math.sin(rig.kick * Math.PI) * 1.6;
       [rig.az, rig.vAz] = spring(rig.az, rig.vAz, rig.tAz, dt, 18, 4.2);
