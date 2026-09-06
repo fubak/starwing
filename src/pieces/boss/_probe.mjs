@@ -15,7 +15,7 @@ page.on('crash', () => console.log('PAGE CRASHED'));
 // other agents saving files makes Vite full-reload the page mid-run: kill HMR
 await page.addInitScript(() => { window.WebSocket = class { constructor() {} addEventListener() {} removeEventListener() {} send() {} close() {} }; });
 const piece = process.env.PIECE || 'boss';
-await page.goto(`http://localhost:5173/?piece=${piece}&seed=1&mute&autoplay&fixed`, { waitUntil: 'networkidle' });
+await page.goto(`http://localhost:5174/?piece=${piece}&seed=1&mute&autoplay&fixed`, { waitUntil: 'networkidle' });
 const ok = await page.waitForFunction(() => window.__engine?.piece, null, { timeout: 60000 }).catch(() => false);
 console.log('booted', !!ok, W, H);
 await page.evaluate(() => { cancelAnimationFrame(window.__engine._raf); });

@@ -20,7 +20,7 @@ export function buildHud(ui) {
     .bz-pips span{width:64px;height:5px;border-radius:2px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3)}
     .bz-pips span.on{background:#ff8a3a;box-shadow:0 0 10px #ff6a2a}
     .bz-pips span.done{background:rgba(120,150,200,.35)}
-    .bz-warn{position:absolute;left:50%;top:26%;transform:translateX(-50%) scale(1);font-weight:900;font-size:34px;letter-spacing:.3em;color:#ffe08a;text-shadow:0 0 18px rgba(255,120,40,.9),0 3px 0 #000;opacity:0;white-space:nowrap;text-transform:uppercase}
+    .bz-warn{position:absolute;left:50%;top:26%;transform:translateX(-50%) scale(1);font-weight:900;font-size:min(34px,2.7vw);letter-spacing:.3em;color:#ffe08a;text-shadow:0 0 18px rgba(255,120,40,.9),0 3px 0 #000;opacity:0;white-space:nowrap;text-transform:uppercase}
     .bz-warn.show{animation:bzwarn .9s ease-out both}
     @keyframes bzwarn{0%{opacity:0;transform:translateX(-50%) scale(1.5)}12%{opacity:1;transform:translateX(-50%) scale(.96)}22%{transform:translateX(-50%) scale(1.03)}70%{opacity:1}100%{opacity:0;transform:translateX(-50%) scale(1)}}
     .bz-ret{position:absolute;width:64px;height:64px;margin:-32px 0 0 -32px;opacity:0;transition:opacity .2s}
@@ -35,7 +35,7 @@ export function buildHud(ui) {
     .bz-br b{display:block;font-size:34px;color:#fff;letter-spacing:.1em;font-weight:900;text-shadow:0 0 12px rgba(120,180,255,.5)}
     .bz-comm{position:absolute;left:50%;bottom:34px;transform:translateX(-50%);padding:10px 22px;background:rgba(6,10,28,.72);border:1px solid rgba(140,190,255,.35);border-radius:4px;font-size:15px;letter-spacing:.06em;color:#dff0ff;opacity:0;transition:opacity .25s;white-space:nowrap;max-width:80vw}
     .bz-comm b{color:#8fd0ff;letter-spacing:.2em;font-size:11px;display:block;margin-bottom:2px}
-    .bz-win{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);font-weight:900;font-size:56px;letter-spacing:.35em;color:#fff;text-shadow:0 0 30px rgba(120,200,255,.9),0 4px 0 #000;opacity:0;white-space:nowrap}
+    .bz-win{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);font-weight:900;font-size:min(56px,4.4vw);letter-spacing:.35em;color:#fff;text-shadow:0 0 30px rgba(120,200,255,.9),0 4px 0 #000;opacity:0;white-space:nowrap}
     .bz-win small{display:block;font-size:16px;letter-spacing:.6em;color:#8fd0ff}
     .bz-win.show{animation:bzwin 1s cubic-bezier(.2,1.4,.4,1) both}
     @keyframes bzwin{0%{opacity:0;transform:translate(-50%,-50%) scale(1.8)}100%{opacity:1;transform:translate(-50%,-50%) scale(1)}}

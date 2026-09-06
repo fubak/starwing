@@ -101,25 +101,32 @@ export function buildSky(THREE, scene, renderer, sunDir, { size = 640 } = {}) {
     })
   );
   planet.position.copy(planetPos);
-  bake.add(planet);
+  // atmosphere shell: additive scattering rim, thicker + warmer toward the sun
   const halo = new THREE.Mesh(
-    new THREE.SphereGeometry(826, 64, 32),
+    new THREE.SphereGeometry(860, 96, 48),
     new THREE.ShaderMaterial({
       transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide,
       uniforms: { uSun: { value: sunDir.clone() } },
       vertexShader: /* glsl */ `varying vec3 vN; varying vec3 vV; void main(){ vN = normalize(mat3(modelMatrix) * normal); vec4 wp = modelMatrix * vec4(position,1.0); vV = normalize(cameraPosition - wp.xyz); gl_Position = projectionMatrix * viewMatrix * wp; }`,
       fragmentShader: /* glsl */ `precision highp float; varying vec3 vN; varying vec3 vV; uniform vec3 uSun;
-        void main(){ vec3 n = normalize(vN); float f = pow(max(dot(n, normalize(vV)), 0.0), 3.0); float lit = smoothstep(-0.5, 0.6, dot(-n, normalize(uSun))); gl_FragColor = vec4(vec3(0.45, 0.95, 0.40) * f * (0.12 + lit) * 1.1, 1.0); }`,
+        void main(){ vec3 n = normalize(vN); float c = max(dot(n, normalize(vV)), 0.0);
+          float f = pow(c, 2.2) * (1.0 - smoothstep(0.55, 0.95, c) * 0.85); // ring hugging the limb
+          float lit = smoothstep(-0.55, 0.7, dot(-n, normalize(uSun)));
+          vec3 col = mix(vec3(0.30, 0.75, 0.35), vec3(0.95, 0.85, 0.45), pow(lit, 3.0) * 0.5);
+          gl_FragColor = vec4(col * f * (0.10 + 1.3 * lit) * 1.4, 1.0); }`,
     })
   );
   halo.position.copy(planetPos);
-  bake.add(halo);
 
   // ---------- bake to an HDR cubemap
   const rt = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
   const cc = new THREE.CubeCamera(1, 20000, rt);
   cc.update(renderer, bake);
+  // the planet + atmosphere are live scene objects (crisp limb, no cube-texel edge);
+  // only the nebula dome is baked.
   bake.traverse((o) => { o.geometry?.dispose?.(); o.material?.dispose?.(); });
+  planet.frustumCulled = false; halo.frustumCulled = false; halo.renderOrder = -1;
+  scene.add(planet, halo);
 
   scene.background = rt.texture;
   scene.backgroundIntensity = 1.0;
@@ -135,6 +142,7 @@ export function buildSky(THREE, scene, renderer, sunDir, { size = 640 } = {}) {
     texture: rt.texture,
     dispose() {
       rt.dispose(); envTex.dispose();
+      scene.remove(planet, halo); planet.geometry.dispose(); planet.material.dispose(); halo.geometry.dispose(); halo.material.dispose();
       if (scene.background === rt.texture) scene.background = null;
       if (scene.environment === envTex) scene.environment = null;
     },

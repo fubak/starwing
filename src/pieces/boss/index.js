@@ -8,6 +8,7 @@ import { loadArwing } from './arwing.js';
 import { buildBoss } from './bossModel.js';
 import { Particles, Shards, Explosions, Beam, Missiles, Bolts, makeShield, makeTextures } from './fx.js';
 import { buildHud } from './hud.js';
+import { makeGradePass } from '../lookdev/grade.js';
 
 const BOSS_BASE_Z = -135;
 // hull shield: covers the central hull + cannon arms only; the wing-mounted
@@ -34,18 +35,28 @@ function hullSolid(p) {
 const PLAYER_X = 34, PLAYER_Y_MIN = -16, PLAYER_Y_MAX = 18;
 
 export async function create(ctx) {
-  const { THREE, scene, camera, renderer, bloom, input, ui, audio, rng, size } = ctx;
-  bloom.strength = 0.85; bloom.radius = 0.55; bloom.threshold = 0.72;
-  renderer.toneMappingExposure = 1.05;
+  const { THREE, scene, camera, renderer, composer, bloom, input, ui, audio, rng, size } = ctx;
+  bloom.strength = 0.7; bloom.radius = 0.5; bloom.threshold = 0.8;
+  renderer.toneMappingExposure = 1.1;
   camera.fov = 58; camera.near = 0.5; camera.far = 9000; camera.updateProjectionMatrix();
 
-  // ---------- lighting rig
-  const sunDir = new THREE.Vector3(0.55, 0.62, 0.55).normalize();
-  const sun = new THREE.DirectionalLight(0xffe4c4, 2.8); sun.position.copy(sunDir).multiplyScalar(600); scene.add(sun);
-  const rim = new THREE.DirectionalLight(0x5c8cff, 1.1); rim.position.set(-400, 120, -500); scene.add(rim);
-  const fill = new THREE.HemisphereLight(0x6a58b8, 0x2c3a24, 0.55); scene.add(fill);
-  const planetBounce = new THREE.DirectionalLight(0x9bd45a, 0.45); planetBounce.position.set(-500, -600, -300); scene.add(planetBounce);
+  // ---------- lighting rig: warm key from the player's upper-right, cool blue rim from
+  // behind the dreadnought, violet nebula fill, acid planet bounce from below-left.
+  const sunDir = new THREE.Vector3(0.6, 0.55, 0.6).normalize();
+  const sun = new THREE.DirectionalLight(0xffe2c0, 3.4); sun.position.copy(sunDir).multiplyScalar(600); scene.add(sun);
+  const rim = new THREE.DirectionalLight(0x6f9cff, 2.2); rim.position.set(-300, 220, -700); scene.add(rim);
+  const kick = new THREE.DirectionalLight(0xff9a70, 0.6); kick.position.set(500, -200, -300); scene.add(kick);
+  const fill = new THREE.HemisphereLight(0x7a66c8, 0x2a3a2a, 0.7); scene.add(fill);
+  const planetBounce = new THREE.DirectionalLight(0x9bd45a, 0.55); planetBounce.position.set(-500, -600, -300); scene.add(planetBounce);
   const sky = buildSky(THREE, scene, renderer, sunDir);
+  // display-space grade (shared lookdev pass): contrast, split-tone, soft vignette, fine grain
+  let grade = composer?.passes.find((p) => p.isLookGrade);
+  if (!grade && composer) { grade = makeGradePass(); composer.addPass(grade); }
+  if (grade) {
+    grade.enabled = true; const gu = grade.uniforms;
+    gu.uContrast.value = 1.08; gu.uSaturation.value = 1.12; gu.uLift.value.setRGB(0.012, 0.008, 0.03); gu.uGain.value.setRGB(1.0, 0.97, 0.94);
+    gu.uGamma.value = 1.0; gu.uVignette.value = 0.34; gu.uGrain.value = 0.018; gu.uAspect.value = size.x / size.y;
+  }
 
   // ---------- actors
   const boss = buildBoss(THREE, rng);
@@ -61,6 +72,8 @@ export async function create(ctx) {
   const wpLights = Array.from({ length: 2 }, () => { const l = new THREE.PointLight(0xffb347, 0, 90, 1.8); scene.add(l); return l; });
   const coreLight = new THREE.PointLight(0xff3020, 0, 160, 1.6); scene.add(coreLight);
   const engineLight = new THREE.PointLight(0x4fa8ff, 400, 220, 1.5); boss.root.add(engineLight); engineLight.position.set(0, 0, -90);
+  // player-side bounce: a soft warm point light that rides with the Arwing so the hull facing us is never unlit
+  const frontLight = new THREE.PointLight(0xffd8b0, 380, 420, 1.3); scene.add(frontLight);
 
   // ---------- fx
   const tex = makeTextures(THREE, rng);
@@ -116,9 +129,9 @@ export async function create(ctx) {
     const p = worldPos(w.mesh, new THREE.Vector3());
     explosions.spawn(p, w.phase === 3 ? 26 : 13, 1.2, w.phase === 3 ? [1.2, 0.9, 0.9] : null);
     shards.burst(p, w.phase === 3 ? 60 : 34, 40, w.radius * 0.45, { glow: 1, life: 2.6 });
-    for (let i = 0; i < 40; i++) smoke.emit(p, V.a.set((Math.random() - 0.5) * 24, (Math.random() - 0.5) * 24, (Math.random() - 0.5) * 24), { life: 2.5 + Math.random() * 2, size: 5, grow: 3, drag: 1.2, c0: [0.5, 0.45, 0.4], c1: [0.12, 0.12, 0.14] });
+    for (let i = 0; i < 30; i++) smoke.emit(p, V.a.set((Math.random() - 0.5) * 24, (Math.random() - 0.5) * 24, (Math.random() - 0.5) * 24), { life: 2.2 + Math.random() * 1.6, size: 4.5, grow: 2.6, drag: 1.2, c0: [0.3, 0.26, 0.24], c1: [0.06, 0.06, 0.08] });
     for (let i = 0; i < 30; i++) sparks.emit(p, V.a.set((Math.random() - 0.5) * 90, (Math.random() - 0.5) * 90, (Math.random() - 0.5) * 90), { life: 0.6 + Math.random() * 0.6, size: 1.6, drag: 1.5, c0: [3, 2, 1], c1: [1, 0.3, 0.1] });
-    S.shake = Math.max(S.shake, 0.8); S.flash = Math.max(S.flash, 0.25); sfx.shatter(); sfx.boom(0.4);
+    S.shake = Math.max(S.shake, 0.8); S.flash = Math.max(S.flash, 0.14); sfx.shatter(); sfx.boom(0.4);
     // a fire takes hold where the component was
     S.fires.push({ local: boss.root.worldToLocal(p.clone()), size: 1.2, born: S.ft });
     const remaining = activePoints().length;
@@ -166,14 +179,18 @@ export async function create(ctx) {
   const partInfo = {};
   for (const [name, g] of Object.entries(boss.parts)) {
     const box = new THREE.Box3().setFromObject(g); const c = box.getCenter(new THREE.Vector3());
-    partInfo[name] = { c, drift: new THREE.Vector3(), vel: c.clone().normalize().multiplyScalar(6 + Math.random() * 6).add(new THREE.Vector3(0, 0, 8)), rot: new THREE.Quaternion(), av: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.5) };
+    // chunks tumble outward and AWAY from the player (-z) so none of them can drift into the camera
+    partInfo[name] = { c, drift: new THREE.Vector3(), vel: (c.x * c.x + c.y * c.y > 1 ? c.clone().setZ(0).normalize() : new THREE.Vector3(0, 1, 0)).multiplyScalar(5 + Math.random() * 5).add(new THREE.Vector3(0, 2, -9)), rot: new THREE.Quaternion(), av: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(0.5) };
   }
   function resetFight() {
     S.destruct = null; S.transition = null; S.phase = 0; S.intro = true; S.ft = 0; S.timeScale = 1; S.fires = []; S.iris = 0; S.lunge = 0; S.hits = 0;
     for (const w of boss.weakPoints) { w.alive = true; w.hp = w.maxHp; w.mesh.visible = true; }
     for (const [name, g] of Object.entries(boss.parts)) { g.position.set(0, 0, 0); g.quaternion.identity(); g.visible = true; partInfo[name].drift.set(0, 0, 0); partInfo[name].rot.identity(); }
     shield.visible = true; shield.material.uniforms.uDissolve.value = 0; shield.material.uniforms.uPower.value = 1;
-    boss.engineGlowMat.uniforms.uPower.value = 1; engineLight.intensity = 400;
+    boss.engineGlowMat.uniforms.uPower.value = 1; boss.engineDiscMat.uniforms.uPower.value = 1; engineLight.intensity = 400;
+    // no lingering smoke / shards / fireballs from the previous kill on a full-health hull
+    smoke.clear(); fire.clear(); sparks.clear(); shards.clear(); explosions.clear();
+    S.shake = 0; S.flash = 0;
     for (const h of boss.hatches) { h.lid.rotation.z = 0; h.glow.opacity = 0; }
     hud.hideTop(false); hud.win(false); hud.setPhase(1);
     S.player.shield = 1; setCam('chase', true);
@@ -278,7 +295,10 @@ export async function create(ctx) {
     B.position.set(Math.sin(S.ft * 0.31) * 3, Math.sin(S.ft * 0.47) * 2.2 + 1, BOSS_BASE_Z + S.lunge * 28 + (S.transition?.kind === 'coreOpen' ? -12 * Math.sin(Math.min(1, S.transition.t / 1.2) * Math.PI) : 0));
     B.rotation.set(Math.sin(S.ft * 0.2) * 0.012, 0, Math.sin(S.ft * 0.27) * 0.02);
     for (const head of boss.turrets) head.lookAt(P.pos);
-    boss.engineGlowMat.uniforms.uTime.value = S.ft;
+    boss.engineGlowMat.uniforms.uTime.value = S.ft; boss.engineDiscMat.uniforms.uTime.value = S.ft; boss.lensMat.uniforms.uTime.value = S.ft;
+    // cannon lenses: ember when idle, white-hot while a beam telegraphs / fires
+    { let ch = 0; for (const b of beams) { if (b.state === 'tele') ch = Math.max(ch, Math.min(1, b.t / b.teleDur) * 0.8); else if (b.state === 'fire') ch = 1; } boss.lensMat.uniforms.uCharge.value = ch; }
+    worldPos(ship, frontLight.position); frontLight.position.z -= 40; frontLight.position.y += 10;
     boss.redLightMat.color.setScalar(0.6 + 0.4 * (Math.sin(S.ft * 4) > 0.3 ? 1 : 0)).multiply(new THREE.Color(1, 0.18, 0.1));
     // iris
     const irisTarget = S.phase === 3 || S.destruct ? 1 : 0;
@@ -397,8 +417,8 @@ export async function create(ctx) {
         if (Math.random() > 0.55) continue;
         const wp = V.a.copy(f.local).applyMatrix4(B.matrixWorld);
         const grow = Math.min(1, (S.ft - f.born) / 1.5);
-        fire.emit(wp, V.b.set((Math.random() - 0.5) * 6, 6 + Math.random() * 8, 4 + Math.random() * 8), { life: 0.45 + Math.random() * 0.4, size: 3.2 * f.size * grow, grow: -0.6, drag: 1, c0: [3.0, 1.6, 0.5], c1: [1.2, 0.25, 0.05] });
-        if (Math.random() < 0.5) smoke.emit(wp, V.b.set((Math.random() - 0.5) * 5, 8 + Math.random() * 6, 6 + Math.random() * 6), { life: 2.2 + Math.random() * 2, size: 4 * f.size * grow, grow: 3.2, drag: 0.6, rise: 2, c0: [0.35, 0.3, 0.3], c1: [0.05, 0.05, 0.07] });
+        fire.emit(wp, V.b.set((Math.random() - 0.5) * 6, 6 + Math.random() * 8, 2 + Math.random() * 6), { life: 0.4 + Math.random() * 0.35, size: 2.6 * f.size * grow, grow: -0.6, drag: 1, c0: [3.0, 1.6, 0.5], c1: [1.2, 0.25, 0.05] });
+        if (Math.random() < 0.32) smoke.emit(wp, V.b.set((Math.random() - 0.5) * 5, 8 + Math.random() * 6, -2 + Math.random() * 4), { life: 1.8 + Math.random() * 1.6, size: 3.2 * f.size * grow, grow: 2.6, drag: 0.6, rise: 2, c0: [0.16, 0.14, 0.15], c1: [0.03, 0.03, 0.04] });
       }
     }
     if (S.destruct == null && dmg > 0.3 && Math.random() < dmg * 0.25) { const a = boss.damageAnchors[Math.floor(Math.random() * boss.damageAnchors.length)]; const wp = a.clone().applyMatrix4(B.matrixWorld); for (let i = 0; i < 4; i++) sparks.emit(wp, V.b.set((Math.random() - 0.5) * 30, Math.random() * 30, (Math.random() - 0.5) * 30), { life: 0.6, size: 1.2, drag: 1, c0: [3, 2.2, 1.2], c1: [1, 0.4, 0.1] }); }
@@ -411,15 +431,15 @@ export async function create(ctx) {
         const a = boss.damageAnchors[D.chainIdx++ % boss.damageAnchors.length];
         const wp = a.clone().applyMatrix4(B.matrixWorld).add(new THREE.Vector3((Math.random() - 0.5) * 20, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 20));
         explosions.spawn(wp, 9 + Math.random() * 9, 1.6); shards.burst(wp, 14, 25, 1.6, { life: 4 }); sfx.boom(0.25); S.shake = Math.max(S.shake, 0.4);
-        for (let i = 0; i < 20; i++) smoke.emit(wp, V.b.set((Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30), { life: 5, size: 7, grow: 2.5, drag: 0.8, c0: [0.5, 0.4, 0.35], c1: [0.05, 0.05, 0.06] });
+        for (let i = 0; i < 14; i++) smoke.emit(wp, V.b.set((Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30), { life: 4.5, size: 6, grow: 2.5, drag: 0.8, c0: [0.3, 0.24, 0.2], c1: [0.04, 0.04, 0.05] });
       }
       if (D.real >= 3.4 && !D.final) {
         D.final = true;
         const c = B.position.clone().add(new THREE.Vector3(0, 6, 10));
         explosions.spawn(c, 95, 2.6, [1.15, 1.05, 0.95]); explosions.spawn(c.clone().add(new THREE.Vector3(-50, 2, -10)), 55, 2.2); explosions.spawn(c.clone().add(new THREE.Vector3(55, 0, -10)), 55, 2.2);
-        shards.burst(c, 120, 70, 4, { life: 6 }); S.flash = 1.6; S.shake = 2.2; sfx.boom(0.9);
-        for (let i = 0; i < 400; i++) smoke.emit(c.clone().add(new THREE.Vector3((Math.random() - 0.5) * 160, (Math.random() - 0.5) * 50, (Math.random() - 0.5) * 120)), V.b.set((Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40), { life: 6 + Math.random() * 4, size: 14, grow: 2.5, drag: 0.5, c0: [0.8, 0.5, 0.35], c1: [0.04, 0.04, 0.05] });
-        boss.engineGlowMat.uniforms.uPower.value = 0; engineLight.intensity = 0; coreLight.intensity = 0; S.fires = [];
+        shards.burst(c, 120, 70, 4, { life: 6 }); S.flash = 0.9; S.shake = 2.2; sfx.boom(0.9);
+        for (let i = 0; i < 320; i++) smoke.emit(c.clone().add(new THREE.Vector3((Math.random() - 0.5) * 160, (Math.random() - 0.5) * 50, (Math.random() - 0.5) * 120)), V.b.set((Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40 - 10), { life: 6 + Math.random() * 4, size: 13, grow: 2.5, drag: 0.5, c0: [0.7, 0.42, 0.28], c1: [0.03, 0.03, 0.04] });
+        boss.engineGlowMat.uniforms.uPower.value = 0; boss.engineDiscMat.uniforms.uPower.value = 0; engineLight.intensity = 0; coreLight.intensity = 0; S.fires = [];
         hud.hits(S.hits);
       }
       if (D.final) {
@@ -437,14 +457,15 @@ export async function create(ctx) {
 
     // ---- fx systems
     smoke.update(dtS); fire.update(dtS); sparks.update(dtS); shards.update(dtS); explosions.update(dtS, camera, real); missiles.update(dtS, S.ft);
-    for (const e of boss.engines) e.scale.setScalar(1 + Math.sin(S.ft * 30 + e.position.x) * 0.04);
+    for (const e of boss.engines) { e.scale.y = 1 + Math.sin(S.ft * 30 + e.position.x) * 0.06 + S.lunge * 0.25; e.scale.x = e.scale.z = 1 + Math.sin(S.ft * 23 + e.position.x * 2) * 0.03; }
 
     // ---- camera
     updateCamera(real, dtS);
 
     // ---- HUD
     hud.setHealth(bossHealth()); hud.shield(P.shield); hud.hits(S.hits);
-    hud.flash(Math.min(0.85, S.flash * 0.8 + explosions.flash * 0.2 + P.hurt * 0.12)); S.flash *= Math.exp(-real * 4);
+    // never white out the whole frame: cap the overlay so the explosion itself stays readable
+    hud.flash(Math.min(0.5, S.flash * 0.6 + explosions.flash * 0.12 + P.hurt * 0.1)); S.flash *= Math.exp(-real * 4);
     hud.slowmo(S.timeScale < 0.6 ? 1 - S.timeScale : 0);
     {
       const pts = activePoints();
@@ -467,7 +488,8 @@ export async function create(ctx) {
       const u = Math.min(1, C.t / 4.2); const e = 1 - Math.pow(1 - u, 3);
       wantPos.set(-150 + 150 * e, -30 + 42 * e, -60 + 90 * e); wantLook.set(-60 + 60 * e, 4, BOSS_BASE_Z + 20); wantFov = 50 + 8 * e; stiff = 40;
     } else if (C.mode === 'chase') {
-      wantPos.set(P.pos.x * 0.55, P.pos.y * 0.55 + 5.0, 15 + P.vel.length() * 0.02); wantLook.set(P.pos.x * 0.6, P.pos.y * 0.6 + 1, -60); wantFov = 58 + (P.roll > 0 ? 3 : 0); stiff = 5.5;
+      // follow tightly enough that the Arwing never leaves the frame, while still letting it slide across the boss
+      wantPos.set(P.pos.x * 0.8, P.pos.y * 0.8 + 5.5, 17 + P.vel.length() * 0.02); wantLook.set(P.pos.x * 0.88, P.pos.y * 0.85 + 0.5, -60); wantFov = 58 + (P.roll > 0 ? 3 : 0); stiff = 7;
     } else if (C.mode === 'orbitFront') {
       const a = -0.9 + C.t * 0.45; wantPos.set(Math.sin(a) * 120, 30 + C.t * 4, B.position.z + Math.cos(a) * 130); wantLook.copy(B.position).add(new THREE.Vector3(0, 6, 20)); wantFov = 52; stiff = 30;
     } else if (C.mode === 'orbitCore') {
@@ -475,7 +497,8 @@ export async function create(ctx) {
     } else if (C.mode === 'destruct') {
       const a = 0.9 - C.t * 0.22; const r = 95 + C.t * 12; wantPos.set(Math.sin(a) * r, 26 + C.t * 5, B.position.z + 30 + Math.cos(a) * r); wantLook.copy(B.position).add(new THREE.Vector3(0, 8, 10)); wantFov = 50; stiff = 4;
     } else if (C.mode === 'flyaway') {
-      wantPos.set(P.pos.x - 14, P.pos.y + 6 + C.t * 1.5, 18 + C.t * 4); wantLook.copy(B.position).add(new THREE.Vector3(0, 6, 0)); wantFov = 52; stiff = 3;
+      // high, wide and pulling back: the Arwing banks across frame with the whole burning wreck behind it
+      wantPos.set(P.pos.x - 22, P.pos.y + 22 + C.t * 3, 48 + C.t * 7); wantLook.set(P.pos.x * 0.5, 4, B.position.z + 10); wantFov = 54; stiff = 3;
     }
     if (C.cut) { camState.pos.copy(wantPos); camState.look.copy(wantLook); camState.fov = wantFov; C.cut = false; }
     const k = Math.min(1, real * stiff);
@@ -497,8 +520,8 @@ export async function create(ctx) {
       input.script = null;
       hud.dispose(); sky.dispose(); arwing.dispose();
       smoke.dispose(); fire.dispose(); sparks.dispose(); shards.dispose(); explosions.dispose(); for (const b of beams) b.dispose(); missiles.dispose(); bolts.dispose();
-      scene.remove(boss.root, ship, smoke.points, fire.points, sparks.points, shards.mesh, sun, rim, fill, planetBounce, ...wpLights, coreLight);
-      renderer.toneMappingExposure = 1;
+      scene.remove(boss.root, ship, smoke.points, fire.points, sparks.points, shards.mesh, sun, rim, kick, fill, planetBounce, ...wpLights, coreLight, frontLight);
+      renderer.toneMappingExposure = 1; if (grade) grade.enabled = false;
       boss.root.traverse((o) => o.geometry?.dispose?.()); for (const m of boss.materials) m.dispose(); for (const t of boss.textures) t.dispose();
       for (const w of boss.weakPoints) w.mat.dispose(); shield.geometry.dispose(); shield.material.dispose();
       for (const t of Object.values(tex)) t.dispose();

@@ -87,6 +87,7 @@ export class Particles {
     this.geo.setDrawRange(0, n);
     for (const a of ['position', 'aSize', 'aAlpha', 'aCol']) this.geo.attributes[a].needsUpdate = true;
   }
+  clear() { this.n = 0; this.geo.setDrawRange(0, 0); }
   dispose() { this.geo.dispose(); this.mat.dispose(); }
 }
 
@@ -101,6 +102,7 @@ export class Shards {
     this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._s = new THREE.Vector3();
     this.emissiveAttr = new Float32Array(max);
   }
+  clear() { this.items.length = 0; this.mesh.count = 0; }
   burst(p, count, speed, size, { glow = 0.9, life = 2.2, dirBias = null } = {}) {
     const THREE = this.THREE;
     for (let i = 0; i < count && this.items.length < this.max; i++) {
@@ -159,6 +161,7 @@ export class Explosions {
     this.light = new THREE.PointLight(0xffa050, 0, 260, 1.6); scene.add(this.light);
     this.flash = 0;
   }
+  clear() { for (const e of this.pool) { e.active = false; e.fire.visible = e.ring.visible = false; } this.light.intensity = 0; this.flash = 0; }
   spawn(p, size = 10, dur = 1.1, tint = null) {
     const e = this.pool.find((x) => !x.active) || this.pool[0];
     e.active = true; e.age = 0; e.dur = dur; e.size = size;
