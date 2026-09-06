@@ -46,7 +46,7 @@ function hullTexture() {
     g.fillRect(x, y, 2 + Math.random() * 30, 1 + Math.random() * 3);
   }
   // panel lines (dark thin lines) — rings along the hull and longitudinal seams
-  g.strokeStyle = 'rgba(30,38,55,0.55)'; g.lineWidth = 2;
+  g.strokeStyle = 'rgba(30,38,55,0.75)'; g.lineWidth = 3;
   const rings = [0.11, 0.2, 0.34, 0.43, 0.55, 0.62, 0.74, 0.83, 0.905];
   for (const r of rings) { g.beginPath(); g.moveTo(0, H * r); g.lineTo(W, H * r); g.stroke(); }
   const seams = [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875];
@@ -236,10 +236,10 @@ export function buildArwing(opts = {}) {
   const roughTex = hullRoughnessTexture();
   const wingTex = wingTexture();
 
-  const matHull = new THREE.MeshStandardMaterial({ map: hullTex, roughnessMap: roughTex, metalness: 0.25, roughness: 0.55, envMapIntensity: 1.1 });
-  const matWing = new THREE.MeshStandardMaterial({ map: wingTex, metalness: 0.25, roughness: 0.5, envMapIntensity: 1.1 });
+  const matHull = new THREE.MeshStandardMaterial({ map: hullTex, roughnessMap: roughTex, metalness: 0.2, roughness: 0.5, envMapIntensity: 0.7 });
+  const matWing = new THREE.MeshStandardMaterial({ map: wingTex, metalness: 0.2, roughness: 0.5, envMapIntensity: 0.7 });
   const matBlue = new THREE.MeshStandardMaterial({ color: 0x2458c8, metalness: 0.35, roughness: 0.4, envMapIntensity: 1.2 });
-  const matGrey = new THREE.MeshStandardMaterial({ color: 0x5f6a7c, metalness: 0.6, roughness: 0.45 });
+  const matGrey = new THREE.MeshStandardMaterial({ color: 0x8e99ab, metalness: 0.45, roughness: 0.4 });
   const matDark = new THREE.MeshStandardMaterial({ color: 0x222833, metalness: 0.7, roughness: 0.35 });
   const matRed = new THREE.MeshStandardMaterial({ color: 0xd8342a, metalness: 0.3, roughness: 0.4 });
   const matCanopy = canopyMaterial(); patchFresnel(matCanopy);
@@ -267,9 +267,9 @@ export function buildArwing(opts = {}) {
   nozzleHousing.rotation.x = Math.PI / 2; nozzleHousing.position.set(0, -0.02, 3.2); rig.add(nozzleHousing);
   const nozzleLip = new THREE.Mesh(new THREE.TorusGeometry(0.31, 0.035, 10, 40), matGrey);
   nozzleLip.position.set(0, -0.02, 3.37); rig.add(nozzleLip);
-  const nozzleInner = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.3, 32, 1, true), new THREE.MeshBasicMaterial({ color: 0xffa040, side: THREE.BackSide }));
+  const nozzleInner = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.28, 0.3, 32, 1, true), new THREE.MeshBasicMaterial({ color: 0xff7a20, side: THREE.BackSide }));
   nozzleInner.rotation.x = Math.PI / 2; nozzleInner.position.set(0, -0.02, 3.25); rig.add(nozzleInner);
-  const nozzleCore = new THREE.Mesh(new THREE.CircleGeometry(0.22, 32), new THREE.MeshBasicMaterial({ color: 0xfff1d0 }));
+  const nozzleCore = new THREE.Mesh(new THREE.CircleGeometry(0.22, 32), new THREE.MeshBasicMaterial({ color: 0xffd9a0 }));
   nozzleCore.position.set(0, -0.02, 3.12); rig.add(nozzleCore);
 
   // --- Canopy
@@ -333,9 +333,11 @@ export function buildArwing(opts = {}) {
     const gd = new THREE.Mesh(new THREE.LatheGeometry([
       new THREE.Vector2(0.0, -0.9), new THREE.Vector2(0.09, -0.8), new THREE.Vector2(0.15, -0.5), new THREE.Vector2(0.17, 0.0),
       new THREE.Vector2(0.17, 0.5), new THREE.Vector2(0.14, 0.75), new THREE.Vector2(0.08, 0.85), new THREE.Vector2(0.0, 0.85),
-    ], 28), matGrey);
+    ], 28), matWing);
     gd.rotation.x = -Math.PI / 2; gd.position.set(1.15 * s, 0.05, 0.2); tipG.add(gd);
-    const gdCap = new THREE.Mesh(new THREE.LatheGeometry([new THREE.Vector2(0, -0.92), new THREE.Vector2(0.08, -0.82), new THREE.Vector2(0.14, -0.55), new THREE.Vector2(0.0, -0.55)], 28), matRed);
+    const gdCap = new THREE.Mesh(new THREE.LatheGeometry([new THREE.Vector2(0, -0.92), new THREE.Vector2(0.08, -0.82), new THREE.Vector2(0.14, -0.55), new THREE.Vector2(0.0, -0.55)], 28), matBlue);
+    const gdBand = new THREE.Mesh(new THREE.CylinderGeometry(0.175, 0.175, 0.12, 28, 1, true), matRed);
+    gdBand.rotation.x = Math.PI / 2; gdBand.position.set(1.15 * s, 0.05, 0.85); tipG.add(gdBand);
     gdCap.rotation.x = -Math.PI / 2; gdCap.position.copy(gd.position); gdCap.position.z -= 0.02; tipG.add(gdCap);
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.04, 12, 40), new THREE.ShaderMaterial({
       vertexShader: glowVert, fragmentShader: ringFrag, uniforms: { uTime, uThrust, uCol: { value: new THREE.Color(1.0, 0.32, 0.08) } },
@@ -376,7 +378,7 @@ export function buildArwing(opts = {}) {
   // uv.y along the lathe runs 0..1 from first to last point — good.
   const plumeMat = new THREE.ShaderMaterial({
     vertexShader: glowVert, fragmentShader: plumeFrag, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-    uniforms: { uTime, uThrust, uCore: { value: new THREE.Color(1.0, 0.85, 0.55) }, uEdge: { value: new THREE.Color(0.2, 0.5, 1.0) } },
+    uniforms: { uTime, uThrust, uCore: { value: new THREE.Color(1.0, 0.72, 0.38) }, uEdge: { value: new THREE.Color(0.25, 0.45, 1.0) } },
   });
   const plume = new THREE.Mesh(plumeGeo, plumeMat);
   plume.rotation.x = Math.PI / 2; plume.position.set(0, -0.02, 3.25); plume.renderOrder = 10; rig.add(plume);
@@ -388,7 +390,7 @@ export function buildArwing(opts = {}) {
     vertexShader: discVert, fragmentShader: discFrag, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     uniforms: { uCol: { value: new THREE.Color(col) }, uIntensity: { value: intensity } },
   });
-  const engineDisc = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.6), discMat(0xffb060, 1.4));
+  const engineDisc = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 1.7), discMat(0xff9a40, 0.8));
   engineDisc.position.set(0, -0.02, 3.35); engineDisc.renderOrder = 12; rig.add(engineDisc);
   const gdDiscs = [];
   for (const p of flapPivots) {
@@ -416,7 +418,7 @@ export function buildArwing(opts = {}) {
     engineLight.intensity = 3 + state.thrust * 8;
     const ps = 0.7 + state.thrust * 0.75 + Math.sin(t * 37) * 0.03;
     plume.scale.set(1, 1, ps); plume2.scale.set(0.55, 0.55, 0.7 * ps);
-    engineDisc.material.uniforms.uIntensity.value = 0.9 + state.thrust * 1.4 + Math.sin(t * 23) * 0.06;
+    engineDisc.material.uniforms.uIntensity.value = 0.5 + state.thrust * 0.9 + Math.sin(t * 23) * 0.05;
     for (const d of gdDiscs) d.material.uniforms.uIntensity.value = 0.6 + state.thrust * 0.7 + Math.sin(t * 7 + d.position.z) * 0.08;
     // bank: spring with overshoot
     const bk = 90, bc = 11;

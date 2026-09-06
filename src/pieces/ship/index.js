@@ -8,11 +8,19 @@ import { makeStarfield, makeNebulaSky, makePlanet, makeEnvironment } from './spa
 export { buildArwing };
 
 const gradeShader = {
-  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 } },
+  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uHeat: { value: new THREE.Vector4(0.5, 0.5, 0, 0) }, uAspect: { value: 1.78 } },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-  fragmentShader: `uniform sampler2D tDiffuse; uniform float uTime; varying vec2 vUv;
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float uTime; uniform vec4 uHeat; uniform float uAspect; varying vec2 vUv;
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+    float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+      return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
     void main(){
-      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      // heat shimmer: screen-space refraction in a disc behind the engine nozzle (uHeat = x,y,radius,strength)
+      vec2 d = (vUv - uHeat.xy) * vec2(uAspect, 1.0);
+      float m = smoothstep(uHeat.z, uHeat.z * 0.2, length(d)) * uHeat.w;
+      vec2 off = vec2(noise(vUv * 40.0 + vec2(0.0, -uTime * 6.0)), noise(vUv * 40.0 + vec2(7.3, -uTime * 5.0))) - 0.5;
+      vec2 suv = vUv + off * m * 0.02;
+      vec3 c = texture2D(tDiffuse, suv).rgb;
       // gentle S-curve contrast + saturation lift, cool shadows / warm highlights
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
       c = mix(vec3(l), c, 1.12);
@@ -35,23 +43,23 @@ export async function create(ctx) {
   scene.background = new THREE.Color(0x03040a);
   scene.environment = makeEnvironment(renderer, sunDir);
   disposables.push(scene.environment);
-  bloom.threshold = 0.82; bloom.strength = 0.55; bloom.radius = 0.5;
-  renderer.toneMappingExposure = 1.05;
+  bloom.threshold = 0.9; bloom.strength = 0.42; bloom.radius = 0.45;
+  renderer.toneMappingExposure = 0.95;
 
-  const sun = new THREE.DirectionalLight(0xfff1dc, 3.4);
+  const sun = new THREE.DirectionalLight(0xfff1dc, 2.4);
   sun.position.copy(sunDir).multiplyScalar(30);
-  sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+  sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024);
   sun.shadow.camera.left = sun.shadow.camera.bottom = -6; sun.shadow.camera.right = sun.shadow.camera.top = 6;
   sun.shadow.camera.near = 10; sun.shadow.camera.far = 60; sun.shadow.bias = -0.0008; sun.shadow.normalBias = 0.02;
   scene.add(sun); scene.add(sun.target);
-  const fill = new THREE.DirectionalLight(0x4f78ff, 0.9); fill.position.set(-8, -3, 6); scene.add(fill);
-  const rim = new THREE.DirectionalLight(0x8fb4ff, 1.4); rim.position.set(-4, 2, -10); scene.add(rim);
-  scene.add(new THREE.HemisphereLight(0x3350a0, 0x2a1a10, 0.35));
+  const fill = new THREE.DirectionalLight(0x4f78ff, 0.45); fill.position.set(-8, -3, 6); scene.add(fill);
+  const rim = new THREE.DirectionalLight(0x8fb4ff, 0.9); rim.position.set(-4, 2, -10); scene.add(rim);
+  scene.add(new THREE.HemisphereLight(0x3350a0, 0x2a1a10, 0.25));
 
   // ---- backdrop
-  const stars = makeStarfield(rng, 6000); scene.add(stars);
+  const stars = makeStarfield(rng, 3500); scene.add(stars);
   const sky = makeNebulaSky(renderer, sunDir); scene.background = sky.texture; scene.backgroundIntensity = 1.0;
-  const planet = makePlanet(renderer, sunDir); planet.scale.setScalar(120); planet.position.set(-150, -110, -260); scene.add(planet);
+  const planet = makePlanet(renderer, sunDir); planet.scale.setScalar(140); planet.position.set(-90, -230, -330); scene.add(planet);
 
   // ---- ship
   const ship = buildArwing({ THREE });
@@ -108,6 +116,7 @@ export async function create(ctx) {
     return { x, y, buttons };
   };
 
+  const heatPos = new THREE.Vector3();
   let roll = 0, rollVel = 0, rollTarget = 0, rolling = 0;
   let pitch = 0;
   const shots = [ // camera beauty passes: [azimuth speed, elevation, radius]
@@ -163,6 +172,11 @@ export async function create(ctx) {
     planet.material.uniforms.uTime.value = t;
     planet.rotation.y = t * 0.004;
     grade.uniforms.uTime.value = t;
+    // heat shimmer target: project the nozzle (plus a bit of plume) to screen space
+    heatPos.set(0, -0.02, 4.2); ship.rig.localToWorld(heatPos); heatPos.project(camera);
+    const behind = heatPos.z > 1 || heatPos.z < -1;
+    grade.uniforms.uHeat.value.set(heatPos.x * 0.5 + 0.5, heatPos.y * 0.5 + 0.5, 0.09 + 0.06 * ship.state.thrust, behind ? 0 : 0.35 + ship.state.thrust * 0.65);
+    grade.uniforms.uAspect.value = camera.aspect;
   }
 
   return {

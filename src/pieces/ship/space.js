@@ -13,7 +13,8 @@ export function makeStarfield(rng, count = 5000) {
     const k = rng.next();
     if (k < 0.12) c.setHSL(0.6, 0.6, 0.85); else if (k < 0.2) c.setHSL(0.08, 0.7, 0.8); else c.setHSL(0.6, 0.15, 0.95);
     col.set([c.r, c.g, c.b], i * 3);
-    sz[i] = rng.next() < 0.03 ? 3.2 + rng.next() * 2.5 : 0.8 + rng.next() * 1.5;
+    const k2 = rng.next();
+    sz[i] = k2 < 0.02 ? 3.0 + rng.next() * 2.5 : k2 < 0.15 ? 1.4 + rng.next() * 1.0 : 0.5 + rng.next() * 0.7;
     ph[i] = rng.next() * 6.283;
   }
   const g = new THREE.BufferGeometry();
@@ -25,10 +26,10 @@ export function makeStarfield(rng, count = 5000) {
     uniforms: { uTime: { value: 0 }, uPR: { value: 1 } },
     vertexShader: `attribute float size; attribute float phase; varying vec3 vC; varying float vTw; uniform float uTime; uniform float uPR;
       void main(){ vC = color; vTw = 0.75 + 0.25 * sin(uTime * 2.0 + phase);
-        vec4 mv = modelViewMatrix * vec4(position,1.0); gl_PointSize = size * uPR * 1.4; gl_Position = projectionMatrix * mv; }`,
+        vec4 mv = modelViewMatrix * vec4(position,1.0); gl_PointSize = size * uPR * 1.15; gl_Position = projectionMatrix * mv; }`,
     fragmentShader: `varying vec3 vC; varying float vTw;
       void main(){ vec2 p = gl_PointCoord - 0.5; float d = length(p) * 2.0; float a = pow(max(0.0, 1.0 - d), 1.5);
-        gl_FragColor = vec4(vC * (1.2 + 0.8 * vTw) * a, a); }`,
+        gl_FragColor = vec4(vC * (0.7 + 0.6 * vTw) * a, a); }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, vertexColors: true,
   });
   const pts = new THREE.Points(g, mat);
@@ -120,16 +121,16 @@ export function makePlanet(renderer, sunDir) {
       void main(){
         vec4 s = texture2D(tSurf, vUv);
         float clouds = texture2D(tSurf, vUv + vec2(uTime * 0.002, 0.0)).a;
-        vec3 alb = mix(s.rgb, vec3(1.0), clouds * 0.9);
+        vec3 alb = mix(s.rgb, vec3(0.85, 0.88, 0.92), clouds * 0.85);
         float land = step(0.2, s.g - s.b + 0.15);
         vec3 N = normalize(vN);
         float ndl = dot(N, uSun);
         float light = smoothstep(-0.15, 0.35, ndl);
         vec3 V = normalize(cameraPosition - vW);
         float spec = pow(max(0.0, dot(reflect(-uSun, N), V)), 60.0) * (1.0 - land) * (1.0 - clouds);
-        vec3 col = alb * (light * vec3(1.0, 0.95, 0.9) * 1.3 + vec3(0.02, 0.03, 0.06)) + spec * 0.8 * light;
+        vec3 col = alb * (light * vec3(1.0, 0.95, 0.9) * 0.75 + vec3(0.015, 0.02, 0.05)) + spec * 0.5 * light;
         float fres = pow(1.0 - max(0.0, dot(N, V)), 3.0);
-        col += vec3(0.35, 0.6, 1.0) * fres * (0.4 + 1.2 * light);
+        col += vec3(0.35, 0.6, 1.0) * fres * (0.25 + 0.8 * light);
         gl_FragColor = vec4(col, 1.0);
       }`,
   });
@@ -140,7 +141,7 @@ export function makePlanet(renderer, sunDir) {
     fragmentShader: `varying vec3 vN; varying vec3 vW; uniform vec3 uSun;
       void main(){ vec3 V = normalize(cameraPosition - vW); float f = pow(max(0.0, dot(normalize(vN), V)) , 2.5);
         float l = smoothstep(-0.3, 0.4, dot(normalize(vN), uSun));
-        gl_FragColor = vec4(vec3(0.3, 0.55, 1.0) * f * (0.15 + 1.1 * l), f); }`,
+        gl_FragColor = vec4(vec3(0.3, 0.55, 1.0) * f * (0.1 + 0.7 * l), f); }`,
   }));
   planet.add(atmo);
   planet.userData.dispose = () => { surf.dispose(); atmo.geometry.dispose(); atmo.material.dispose(); planet.geometry.dispose(); mat.dispose(); };
