@@ -72,7 +72,8 @@ export async function create(ctx) {
     update(dt, t) {
       tt += dt;
       if (engine.autoplay) {
-        while (evIdx < seqEvents.length && seqEvents[evIdx][0] <= tt) { const [, k, n] = seqEvents[evIdx++]; act(k, n); }
+        // +half a frame so a fixed-step accumulator that lands on 5.9999 still fires the 6.0 event on that frame
+        while (evIdx < seqEvents.length && seqEvents[evIdx][0] <= tt + 1 / 120) { const [, k, n] = seqEvents[evIdx++]; act(k, n); }
         if (evIdx >= seqEvents.length && tt > 21) { evIdx = 1; tt = 0.9; }    // loop the demo, keep music going
       }
       // core input bindings -> sfx
