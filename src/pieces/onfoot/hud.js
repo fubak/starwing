@@ -1,5 +1,6 @@
 // DOM HUD: mission header, ring counter, interaction prompt, controls, flash messages.
-export function makeHud(ui) {
+// opts.title=false hides the top-left mission header (integrator supplies its own captions).
+export function makeHud(ui, opts = {}) {
   const root = document.createElement('div');
   root.innerHTML = `
   <style>
@@ -28,7 +29,7 @@ export function makeHud(ui) {
   </style>
   <div class="of-hud">
     <div class="of-vig"></div>
-    <div class="of-top"><div class="of-title">GREAT FOX // HANGAR 01</div><div class="of-sub">PRE-FLIGHT</div><div class="of-bar"></div></div>
+    <div class="of-top"${opts.title === false ? ' style="display:none"' : ''}><div class="of-title">GREAT FOX // HANGAR 01</div><div class="of-sub">PRE-FLIGHT</div><div class="of-bar"></div></div>
     <div class="of-right">
       <div class="of-count"><span class="of-ring"></span><span class="of-rings">0 / 0</span></div>
       <div class="of-count"><span class="of-drone"></span><span class="of-drones">0</span></div>
@@ -49,6 +50,8 @@ export function makeHud(ui) {
     setDrones(n) { drones.textContent = String(n); },
     setPrompt(txt) { ptxt.textContent = txt; prompt.classList.toggle('on', !!txt); },
     flash(txt) { flash.textContent = txt; flash.classList.add('on'); flashT = 2.6; },
+    setVisible(v) { root.style.display = v ? '' : 'none'; },
+    setTitle(title, sub) { const a = q('.of-title'), b = q('.of-sub'); if (title != null) a.textContent = title; if (sub != null) b.textContent = sub; q('.of-top').style.display = title === '' && sub === '' ? 'none' : ''; },
     update(dt, t, s) {
       if (flashT > 0) { flashT -= dt; if (flashT <= 0) flash.classList.remove('on'); }
       reticle.classList.toggle('on', !!s.firing);

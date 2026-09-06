@@ -66,9 +66,10 @@ export function buildPilot() {
   const M = {
     fur: addRim(mat(0xffffff, { map: furTex, roughness: 0.92, metalness: 0.0, envMapIntensity: 0.35 }), 0xffb070, 0.35, 2.6),
     furWhite: addRim(mat(0xffffff, { map: furWhiteTex, roughness: 0.9, metalness: 0.0, envMapIntensity: 0.35 }), 0xbfe0ff, 0.3, 2.6),
-    pants: addRim(mat(0xdfe3ea, { map: fabric, roughness: 0.75, metalness: 0.0 }), 0x7fc8ff, 0.4, 3.0),
-    jacket: addRim(mat(0x2e8a54, { map: fabric, roughness: 0.7, metalness: 0.0 }), 0x9fe0c0, 0.45, 3.0),
-    vest: addRim(mat(0xf2f4f7, { map: fabric, roughness: 0.6, metalness: 0.02 }), 0x9fd8ff, 0.5, 3.0),
+    // whites are pulled down to light greys so the suit keeps shading detail under the key light
+    pants: addRim(mat(0xb9c2d0, { map: fabric, roughness: 0.78, metalness: 0.0 }), 0x7fc8ff, 0.32, 3.0),
+    jacket: addRim(mat(0x2e8a54, { map: fabric, roughness: 0.7, metalness: 0.0 }), 0x9fe0c0, 0.4, 3.0),
+    vest: addRim(mat(0xd6dce6, { map: fabric, roughness: 0.62, metalness: 0.02 }), 0x9fd8ff, 0.38, 3.0),
     dark: addRim(mat(0x1d2230, { roughness: 0.35, metalness: 0.3 }), 0x6fa8ff, 0.5, 3.0),
     red: addRim(mat(0xd8342c, { roughness: 0.5 }), 0xff9080, 0.4, 3.0),
     metal: mat(0x9aa4b4, { roughness: 0.25, metalness: 0.9, envMapIntensity: 1.2 }),
@@ -76,8 +77,8 @@ export function buildPilot() {
     iris: mat(0x2ecf6a, { roughness: 0.1, emissive: 0x0d6b2c, emissiveIntensity: 0.8 }),
     pupil: mat(0x06080c, { roughness: 0.05 }),
     nose: mat(0x1a1214, { roughness: 0.25, metalness: 0.1 }),
-    visorGlass: new THREE.MeshPhysicalMaterial({ color: 0x3aff9a, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.55, emissive: 0x1fbf5a, emissiveIntensity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
-    glow: new THREE.MeshStandardMaterial({ color: 0x66e0ff, emissive: 0x66e0ff, emissiveIntensity: 2.4, roughness: 0.3 }),
+    visorGlass: new THREE.MeshPhysicalMaterial({ color: 0x3aff9a, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.55, emissive: 0x1fbf5a, emissiveIntensity: 0.6, side: THREE.DoubleSide, depthWrite: false }),
+    glow: new THREE.MeshStandardMaterial({ color: 0x66e0ff, emissive: 0x66e0ff, emissiveIntensity: 1.3, roughness: 0.3 }),
   };
 
   const root = new THREE.Group();
@@ -128,7 +129,8 @@ export function buildPilot() {
   // ---- head: Fox McCloud-style vulpine head
   const neck = new THREE.Group(); neck.position.y = 0.57; torso.add(neck);
   const neckFur = sphere(0.075, M.fur, 12, 8); neckFur.position.y = 0.05; neck.add(neckFur);
-  const head = new THREE.Group(); head.position.y = 0.16; neck.add(head);
+  // stylised proportions: head is scaled up (~1.2x) so the face reads at third-person distance
+  const head = new THREE.Group(); head.position.y = 0.18; head.scale.setScalar(1.22); neck.add(head);
   const cranium = sphere(0.17, M.fur, 24, 18); cranium.scale.set(1.0, 0.98, 1.06); head.add(cranium);
   // cheek / jaw fur (white), muzzle, nose
   for (const s of [-1, 1]) { const cheek = sphere(0.085, M.furWhite, 14, 10); cheek.position.set(s * 0.085, -0.055, 0.09); cheek.scale.set(1.0, 0.85, 1.0); head.add(cheek); }
@@ -188,7 +190,12 @@ export function buildPilot() {
   const barrelTip = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.025, 0.08, 10), M.dark); barrelTip.rotation.x = Math.PI / 2; barrelTip.position.set(0, 0.06, 0.26); gun.add(barrelTip);
   const gunGlow = box(0.056, 0.02, 0.12, M.glow); gunGlow.position.set(0, 0.075, 0.12); gun.add(gunGlow);
   const muzzleO = new THREE.Object3D(); muzzleO.position.set(0, 0.06, 0.32); gun.add(muzzleO);
-  const muzzleFlash = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), new THREE.MeshBasicMaterial({ color: 0xaaf6ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+  // muzzle flash: small star-shaped burst (two crossed quads) rather than an additive sphere;
+  // tone-mapped and capped so it never blooms into a blob
+  const flashGeo = new THREE.PlaneGeometry(0.22, 0.22);
+  const flashMat = new THREE.MeshBasicMaterial({ color: 0xbff6ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  const muzzleFlash = new THREE.Group();
+  for (let i = 0; i < 3; i++) { const q = new THREE.Mesh(flashGeo, flashMat); q.rotation.z = i * Math.PI / 3; q.scale.set(1, 0.28, 1); muzzleFlash.add(q); }
   muzzleO.add(muzzleFlash);
 
   // legs
@@ -304,8 +311,9 @@ export function buildPilot() {
     } else {
       rollPivot.rotation.x = 0;
     }
-    muzzleFlash.material.opacity = st.fireFlash;
-    muzzleFlash.scale.setScalar(0.6 + st.fireFlash * 1.2);
+    flashMat.opacity = Math.min(0.85, st.fireFlash * 1.1);
+    muzzleFlash.scale.setScalar(0.5 + st.fireFlash * 0.9);
+    muzzleFlash.rotation.z += dt * 30;
   }
 
   function fire() { st.fireFlash = 1; }

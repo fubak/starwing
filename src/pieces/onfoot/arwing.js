@@ -13,11 +13,11 @@ export function buildDockedArwing(scale = 1.55, groundY = 1.6) {
   rig.setThrust(0); rig.setHover(0);
   rig.state.thrust = 0;
   // cold engines: hide plumes, drop the ship's own point lights
-  const toRemove = [];
+  const toRemove = [], discs = [];
   rig.group.traverse((o) => {
     if (o.isPointLight) toRemove.push(o);
     if (o.material?.uniforms?.uCore) o.visible = false; // plume lathes
-    if (o.material?.uniforms?.uIntensity) o.material.uniforms.uIntensity.value *= 0.35; // engine/G-diffuser discs dim glow
+    if (o.material?.uniforms?.uIntensity) discs.push(o.material.uniforms.uIntensity); // engine/G-diffuser discs
   });
   for (const l of toRemove) l.parent.remove(l);
   // landing gear (the flight model has none): nose strut + two mains, with pads and hydraulic detail
@@ -32,7 +32,9 @@ export function buildDockedArwing(scale = 1.55, groundY = 1.6) {
     const well = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.8), strutMat); well.position.set(x, hullBottom + 0.02, z); g.add(well);
   }
   g.userData.rig = rig;
-  g.userData.update = (dt, t, camera) => rig.update(dt, t, camera);
+  // rig.update() re-drives the disc intensities every frame, so dim them *after* it runs:
+  // cold engines read as a faint standby glow, never a flare that eats the hull outline.
+  g.userData.update = (dt, t, camera) => { rig.update(dt, t, camera); for (const u of discs) u.value *= 0.3; };
   g.userData.dispose = () => rig.dispose();
   return g;
 }

@@ -14,13 +14,18 @@ const godRayShader = {
   fragmentShader: /* glsl */`
     uniform vec3 color; uniform float intensity; uniform float time;
     varying vec2 vUv; varying vec3 vWorldPos; varying vec3 vNormal;
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+      return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y); }
     void main(){
       vec3 vd = normalize(cameraPosition - vWorldPos);
       float fres = abs(dot(vd, vNormal));
-      float edge = pow(fres, 1.6);              // fade at silhouette so cone reads as volume
-      float along = smoothstep(0.0, 0.15, vUv.y) * pow(1.0 - vUv.y, 1.3);
-      float flick = 0.92 + 0.08 * sin(time * 2.3 + vUv.x * 12.0);
-      float a = edge * along * intensity * flick;
+      float edge = pow(fres, 1.2);              // fade at silhouette so cone reads as volume
+      float along = smoothstep(0.0, 0.08, vUv.y) * pow(1.0 - vUv.y, 1.6);
+      // slow drifting dust-streaks inside the shaft so it reads as a volume, not a flat cone
+      float streak = 0.7 + 0.3 * noise(vec2(vUv.x * 14.0, vUv.y * 3.0 - time * 0.12));
+      float flick = 0.94 + 0.06 * sin(time * 2.3 + vUv.x * 12.0);
+      float a = edge * along * intensity * flick * streak;
       gl_FragColor = vec4(color * a, a);
     }`,
 };
@@ -62,7 +67,8 @@ export function buildHangar(ctx) {
   const padRing2 = new THREE.Mesh(new THREE.RingGeometry(4.2, 4.3, 64), padRing.material);
   padRing2.rotation.x = -Math.PI / 2; padRing2.position.set(-6, 0.012, -2); group.add(padRing2);
   // floor light strips (guide lights) down the walkway
-  const stripMat = new THREE.MeshStandardMaterial({ color: 0x9be8ff, emissive: 0x63d4ff, emissiveIntensity: 0.45, roughness: 0.3 });
+  // dark diffuse + cyan emissive: strips read as coloured light tubes, not white specular bars
+  const stripMat = new THREE.MeshStandardMaterial({ color: 0x10303c, emissive: 0x4fc8f0, emissiveIntensity: 0.62, roughness: 0.6, metalness: 0.0 });
   const stripGeo = new THREE.BoxGeometry(0.14, 0.03, 1.1);
   const strips = new THREE.InstancedMesh(stripGeo, stripMat, 2 * Math.floor(hz * 2 / 3));
   {
@@ -74,7 +80,7 @@ export function buildHangar(ctx) {
 
   // ---------- walls
   const wt = makeWallTextures();
-  const wallMat = new THREE.MeshStandardMaterial({ map: wt.map, emissiveMap: wt.emissiveMap, emissive: 0xffffff, emissiveIntensity: 1.6, roughness: 0.5, metalness: 0.55, envMapIntensity: 0.8, color: 0xe0e8f4 });
+  const wallMat = new THREE.MeshStandardMaterial({ map: wt.map, emissiveMap: wt.emissiveMap, emissive: 0xffffff, emissiveIntensity: 1.1, roughness: 0.5, metalness: 0.55, envMapIntensity: 0.8, color: 0xe0e8f4 });
   const mkWall = (w, hgt, rep) => { const m = wallMat.clone(); m.map = wt.map.clone(); m.emissiveMap = wt.emissiveMap.clone(); m.map.repeat.set(rep, hgt / 7); m.emissiveMap.repeat.set(rep, hgt / 7); m.map.needsUpdate = m.emissiveMap.needsUpdate = true; const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, hgt), m); mesh.receiveShadow = true; return mesh; };
   // -x wall (full)
   const wallL = mkWall(hz * 2, h, hz / 4); wallL.rotation.y = Math.PI / 2; wallL.position.set(-hx, h / 2, 0); group.add(wallL);
@@ -157,7 +163,7 @@ export function buildHangar(ctx) {
     const fTop = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.6, 25.6), frameMat); fTop.position.set(hx - 0.2, 10.3, 0); group.add(fTop);
     const fBot = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.6, 25.6), frameMat); fBot.position.set(hx - 0.2, 0.9, 0); group.add(fBot);
     for (const z of [-12.4, 12.4]) { const p = new THREE.Mesh(new THREE.BoxGeometry(0.8, 9.4, 0.8), frameMat); p.position.set(hx - 0.2, 5.6, z); group.add(p); }
-    const fieldGlow = new THREE.MeshStandardMaterial({ color: 0x8fe6ff, emissive: 0x63d4ff, emissiveIntensity: 3.0 });
+    const fieldGlow = new THREE.MeshStandardMaterial({ color: 0x8fe6ff, emissive: 0x63d4ff, emissiveIntensity: 1.6 });
     const gTop = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 24), fieldGlow); gTop.position.set(hx - 0.6, 9.98, 0); group.add(gTop);
     const gBot = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 24), fieldGlow); gBot.position.set(hx - 0.6, 1.22, 0); group.add(gBot);
     addCollider(hx + 0.5, 5, 0, 1, 20, hz * 2); // keep player inside
@@ -203,7 +209,7 @@ export function buildHangar(ctx) {
   }
 
   // ---------- hanging lights + god rays
-  const lampMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff2d8, emissiveIntensity: 4.0 });
+  const lampMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff2d8, emissiveIntensity: 2.2 });
   const housingMat = new THREE.MeshStandardMaterial({ color: 0x2a3140, roughness: 0.4, metalness: 0.9 });
   const lampPositions = [];
   for (let z = -21; z <= 21; z += 14) for (const x of [-4.5, 5.5]) lampPositions.push([x, z]);
@@ -219,24 +225,27 @@ export function buildHangar(ctx) {
     const lampGeo = new THREE.CircleGeometry(1.25, 20); lampGeo.rotateX(Math.PI / 2);
     const lamps = new THREE.InstancedMesh(lampGeo, lampMat, lampPositions.length);
     const rimGeo = new THREE.TorusGeometry(1.3, 0.06, 8, 24); rimGeo.rotateX(Math.PI / 2);
-    const rims = new THREE.InstancedMesh(rimGeo, new THREE.MeshStandardMaterial({ color: 0xffb040, emissive: 0xff8a20, emissiveIntensity: 1.2, roughness: 0.4, metalness: 0.6 }), lampPositions.length);
+    const rims = new THREE.InstancedMesh(rimGeo, new THREE.MeshStandardMaterial({ color: 0xffb040, emissive: 0xff8a20, emissiveIntensity: 0.7, roughness: 0.4, metalness: 0.6 }), lampPositions.length);
     const o = new THREE.Object3D();
     lampPositions.forEach(([x, z, hero], i) => {
       o.position.set(x, lampY, z); o.updateMatrix(); housings.setMatrixAt(i, o.matrix);
       o.position.set(x, lampY + 1.5, z); o.updateMatrix(); cables.setMatrixAt(i, o.matrix);
       o.position.set(x, lampY - 0.28, z); o.updateMatrix(); lamps.setMatrixAt(i, o.matrix);
       o.position.set(x, lampY - 0.27, z); o.updateMatrix(); rims.setMatrixAt(i, o.matrix);
-      const ray = makeGodRay(THREE, { radiusTop: 1.3, radiusBottom: hero ? 6.5 : 3.6, height: lampY - 0.4, intensity: hero ? 0.28 : 0.55, color: hero ? 0xfff0dc : 0xffd9a8 });
+      // god-ray cone: outer soft cone + inner brighter core so the shaft reads from any angle
+      const ray = makeGodRay(THREE, { radiusTop: 1.3, radiusBottom: hero ? 6.5 : 4.2, height: lampY - 0.4, intensity: hero ? 0.55 : 0.95, color: hero ? 0xfff0dc : 0xffd9a8 });
       ray.position.set(x, lampY - 0.3, z); group.add(ray); rays.push(ray);
-      // bloom halo sprite on the lamp face
-      const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeGlowTexture(), color: 0xffe2b8, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
-      halo.scale.setScalar(3.6); halo.position.set(x, lampY - 0.5, z); group.add(halo);
+      const rayIn = makeGodRay(THREE, { radiusTop: 1.0, radiusBottom: hero ? 3.6 : 2.2, height: lampY - 0.4, intensity: hero ? 0.4 : 0.6, color: 0xfff4e4 });
+      rayIn.position.set(x, lampY - 0.3, z); group.add(rayIn); rays.push(rayIn);
+      // small halo sprite on the lamp face (kept subtle; bloom does the rest)
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeGlowTexture(), color: 0xffe2b8, transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending, depthWrite: false }));
+      halo.scale.setScalar(3.0); halo.position.set(x, lampY - 0.5, z); group.add(halo);
     });
     group.add(housings, cables, lamps, rims);
   }
   // big cool light shaft pouring in from the bay force-field (volumetric feel)
   {
-    const shaft = makeGodRay(THREE, { radiusTop: 4.6, radiusBottom: 9, height: 20, intensity: 0.22, color: 0x5fb8ff });
+    const shaft = makeGodRay(THREE, { radiusTop: 4.6, radiusBottom: 9, height: 20, intensity: 0.4, color: 0x5fb8ff });
     shaft.rotation.z = -(Math.PI / 2 - 0.35); shaft.position.set(hx - 0.5, 6.2, 0); shaft.scale.set(1, 1, 2.4); group.add(shaft); rays.push(shaft);
   }
   animated.push((dt, t) => { for (const r of rays) r.material.uniforms.time.value = t; });
@@ -284,8 +293,9 @@ export function buildHangar(ctx) {
   animated.push((dt, t) => { for (const [i, p] of holos.entries()) { p.position.y = holoSpots[i][1] + Math.sin(t * 1.3 + i) * 0.06; p.material.opacity = 0.75 + Math.sin(t * 17 + i * 3) * 0.05; } });
 
   // ---------- blast door (end wall, -z), two sliding halves
-  const doorMat = new THREE.MeshStandardMaterial({ color: 0x6d7a90, roughness: 0.35, metalness: 0.9, envMapIntensity: 1.0 });
-  const doorTrimMat = new THREE.MeshStandardMaterial({ color: 0xff8a1e, roughness: 0.5, metalness: 0.3, emissive: 0xff4a00, emissiveIntensity: 0.6 });
+  // brushed (rougher) door so the orange spill light lands as a soft sheen, not a hot specular bar
+  const doorMat = new THREE.MeshStandardMaterial({ color: 0x6d7a90, roughness: 0.62, metalness: 0.85, envMapIntensity: 0.8 });
+  const doorTrimMat = new THREE.MeshStandardMaterial({ color: 0xff8a1e, roughness: 0.55, metalness: 0.3, emissive: 0xff4a00, emissiveIntensity: 0.45 });
   const doorGroup = new THREE.Group(); doorGroup.position.set(0, 0, -hz + 0.35); group.add(doorGroup);
   const halves = [];
   for (const s of [-1, 1]) {
@@ -297,7 +307,7 @@ export function buildHangar(ctx) {
   }
   const frame = new THREE.Mesh(new THREE.BoxGeometry(7.4, 0.5, 1.2), doorMat); frame.position.set(0, 5.25, -hz + 0.35); group.add(frame);
   for (const s of [-1, 1]) { const jamb = new THREE.Mesh(new THREE.BoxGeometry(0.6, 5.5, 1.2), doorMat); jamb.position.set(s * 3.4, 2.75, -hz + 0.35); group.add(jamb); }
-  const doorLamp = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.12, 0.1), new THREE.MeshStandardMaterial({ color: 0xff8040, emissive: 0xff5a20, emissiveIntensity: 3 }));
+  const doorLamp = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.12, 0.1), new THREE.MeshStandardMaterial({ color: 0xff8040, emissive: 0xff5a20, emissiveIntensity: 1.6 }));
   doorLamp.position.set(0, 5.0, -hz + 0.98); group.add(doorLamp);
   // corridor beyond door (lit, so opening reveals depth)
   const corr = new THREE.Group(); corr.position.set(0, 0, -hz); group.add(corr);
@@ -305,8 +315,8 @@ export function buildHangar(ctx) {
   const cFloor = new THREE.Mesh(new THREE.PlaneGeometry(6, 16), corrMat); cFloor.rotation.x = -Math.PI / 2; cFloor.position.set(0, 0.01, -8); corr.add(cFloor);
   const cCeil = new THREE.Mesh(new THREE.PlaneGeometry(6, 16), corrMat); cCeil.rotation.x = Math.PI / 2; cCeil.position.set(0, 5, -8); corr.add(cCeil);
   for (const s of [-1, 1]) { const w = new THREE.Mesh(new THREE.PlaneGeometry(16, 5), corrMat); w.rotation.y = s * Math.PI / 2; w.position.set(-s * 3, 2.5, -8); corr.add(w); }
-  const cEnd = new THREE.Mesh(new THREE.PlaneGeometry(6, 5), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xbfe8ff, emissiveIntensity: 2.5 })); cEnd.position.set(0, 2.5, -16); corr.add(cEnd);
-  const corrStrip = new THREE.InstancedMesh(new THREE.BoxGeometry(0.1, 0.08, 6), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x9fe0ff, emissiveIntensity: 3 }), 8);
+  const cEnd = new THREE.Mesh(new THREE.PlaneGeometry(6, 5), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xbfe8ff, emissiveIntensity: 1.3 })); cEnd.position.set(0, 2.5, -16); corr.add(cEnd);
+  const corrStrip = new THREE.InstancedMesh(new THREE.BoxGeometry(0.1, 0.08, 6), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x9fe0ff, emissiveIntensity: 1.5 }), 8);
   { const o = new THREE.Object3D(); let k = 0; for (const s of [-1, 1]) for (let i = 0; i < 4; i++) { o.position.set(s * 2.95, 0.5 + i * 1.3, -8); o.updateMatrix(); corrStrip.setMatrixAt(k++, o.matrix); } }
   corr.add(corrStrip);
   const doorCollider = { min: new THREE.Vector3(-3.2, 0, -hz - 1), max: new THREE.Vector3(3.2, 5, -hz + 0.7) };
@@ -319,6 +329,7 @@ export function buildHangar(ctx) {
       const e = this.open < 0.5 ? 2 * this.open * this.open : 1 - Math.pow(-2 * this.open + 2, 2) / 2;
       halves[0].position.x = -1.5 - e * 3.1; halves[1].position.x = 1.5 + e * 3.1;
       doorLamp.material.emissive.setHex(this.target ? 0x40ff80 : 0xff5a20);
+      doorLight.color.setHex(this.target ? 0x60ffa0 : 0xff7a30);
       doorCollider.max.z = this.open > 0.6 ? -hz - 100 : -hz + 0.7; // remove collider when open
     },
   };
@@ -335,7 +346,7 @@ export function buildHangar(ctx) {
   const bayLight = new THREE.DirectionalLight(0x5fa8ff, 1.9); bayLight.position.set(hx + 10, 7, 2); bayLight.target.position.set(0, 0, 0); group.add(bayLight, bayLight.target);
   // hero pool: warm-white work light over the docked Arwing (the room's focal point)
   const shipLight = new THREE.PointLight(0xffe9cc, 70, 22, 1.8); shipLight.position.set(-6, lampY - 1.5, -2); group.add(shipLight);
-  const doorLight = new THREE.PointLight(0xff7a30, 70, 16, 1.8); doorLight.position.set(0, 4.5, -hz + 2.5); group.add(doorLight);
+  const doorLight = new THREE.PointLight(0xff7a30, 32, 16, 1.8); doorLight.position.set(0, 4.5, -hz + 3.5); group.add(doorLight);
 
   scene.fog = new THREE.FogExp2(0x0b1626, 0.013);
   scene.background = new THREE.Color(0x05080f);

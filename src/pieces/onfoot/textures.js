@@ -191,15 +191,15 @@ export function makeFabricTexture() {
   const S = 256;
   const [c, g] = canvas(S, S);
   g.fillStyle = '#ffffff'; g.fillRect(0, 0, S, S);
-  g.fillStyle = 'rgba(0,0,0,0.12)';
+  // fine weave only (no hard quilting grid — that read as voxels at play distance)
+  g.fillStyle = 'rgba(0,0,0,0.07)';
   for (let y = 0; y < S; y += 3) g.fillRect(0, y, S, 1);
   for (let x = 0; x < S; x += 3) g.fillRect(x, 0, 1, S);
-  g.strokeStyle = 'rgba(0,0,0,0.28)'; g.lineWidth = 2;
-  for (let k = 0; k < S; k += 64) { g.beginPath(); g.moveTo(k, 0); g.lineTo(k, S); g.stroke(); g.beginPath(); g.moveTo(0, k); g.lineTo(S, k); g.stroke(); }
-  g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 1;
-  for (let k = 3; k < S; k += 64) { g.beginPath(); g.moveTo(k, 0); g.lineTo(k, S); g.stroke(); g.beginPath(); g.moveTo(0, k); g.lineTo(S, k); g.stroke(); }
-  grain(g, S, S, 16, 41);
-  const t = tex(c, 1); t.repeat.set(2, 2); return t;
+  // one soft diagonal stitch line per tile for a hint of tailoring
+  g.strokeStyle = 'rgba(0,0,0,0.10)'; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(0, S * 0.5); g.lineTo(S, S * 0.5); g.stroke();
+  grain(g, S, S, 10, 41);
+  const t = tex(c, 1); t.repeat.set(1, 1); return t;
 }
 
 /** Cargo crate face: recessed panel, rivets, hazard stripe, stencil + scuffs. Colour + roughness. */

@@ -20,7 +20,9 @@ export async function create(ctx) {
 
   // ---- render setup (restored on dispose)
   const prev = { bloomStrength: bloom.strength, bloomRadius: bloom.radius, bloomThreshold: bloom.threshold, exposure: renderer.toneMappingExposure, fov: camera.fov };
-  bloom.strength = 0.62; bloom.radius = 0.6; bloom.threshold = 0.76;
+  // Bloom is a tight, high-threshold accent: only genuinely hot pixels (lamp faces, bolt
+  // cores, ring filaments) glow, and only a little — the character must never disappear.
+  bloom.strength = 0.38; bloom.radius = 0.32; bloom.threshold = 0.92;
   renderer.toneMappingExposure = 0.94;
   camera.fov = 54; camera.near = 0.1; camera.far = 1200; camera.updateProjectionMatrix();
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -39,7 +41,10 @@ export async function create(ctx) {
   // ---- world
   const hangar = buildHangar(ctx);
   const fx = makeFx(scene);
-  const hud = makeHud(ui);
+  const opts = ctx.onfoot ?? ctx.opts?.onfoot ?? {};
+  const hud = makeHud(ui, { title: opts.hudTitle !== false && !ctx.embedded });
+  // completion promise for the integrator (also emitted on ctx.events as 'onfoot:complete')
+  let resolveComplete; const onComplete = new Promise((r) => { resolveComplete = r; });
   const pilot = buildPilot();
   scene.add(pilot.root);
 
@@ -111,7 +116,7 @@ export async function create(ctx) {
     } else P.pos.x = Math.max(-hx + 0.8, Math.min(hx - 0.8, P.pos.x));
   }
 
-  let lastMoveMag = 0, t0 = 0, doorOpened = false;
+  let lastMoveMag = 0, doorOpened = false, completed = false, doorT = 0;
   const angDiff = (a, b) => { let d = (b - a) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; };
 
   function update(dt, t) {
@@ -185,10 +190,17 @@ export async function create(ctx) {
     const doorPos = V.tmp.set(0, 0, -hz + 0.5); const dDoor = P.pos.distanceTo(doorPos);
     const canInteract = dDoor < 6.5 && !doorOpened;
     hud.setPrompt(canInteract ? 'OPEN BLAST DOOR' : '');
-    if (canInteract && (input.wasPressed('interact') || input.wasPressed('confirm'))) { doorOpened = true; hangar.door.target = 1; hud.flash('DOOR UNLOCKED — PROCEED TO BRIDGE'); fx.sparks(new THREE.Vector3(0, 5, -hz + 1), 20, 0x40ff80); }
+    if (canInteract && (input.wasPressed('interact') || input.wasPressed('confirm'))) {
+      doorOpened = true; hangar.door.target = 1; hud.flash('DOOR UNLOCKED — PROCEED TO BRIDGE'); fx.sparks(new THREE.Vector3(0, 5, -hz + 1), 20, 0x40ff80);
+      ctx.events?.emit?.('onfoot:door', { rings: fx.stats.rings, ringsTotal: fx.pickups.length });
+    }
+    if (doorOpened && !completed) { doorT += dt; if (doorT > 2.5 || P.pos.z < -hz) { completed = true; const s = { rings: fx.stats.rings, ringsTotal: fx.pickups.length, drones: fx.stats.drones }; ctx.events?.emit?.('onfoot:complete', s); resolveComplete(s); } }
 
     // --- FX / pickups
-    fx.update(dt, t, P.pos, hangar.colliders, (kind) => { if (kind === 'ring') hud.setRings(fx.stats.rings, fx.pickups.length); if (kind === 'drone') hud.setDrones(fx.stats.drones); });
+    fx.update(dt, t, P.pos, hangar.colliders, (kind) => {
+      if (kind === 'ring') { hud.setRings(fx.stats.rings, fx.pickups.length); ctx.events?.emit?.('onfoot:ring', { rings: fx.stats.rings, ringsTotal: fx.pickups.length }); }
+      if (kind === 'drone') { hud.setDrones(fx.stats.drones); ctx.events?.emit?.('onfoot:drone', { drones: fx.stats.drones }); }
+    });
 
     // --- pilot pose
     pilot.root.position.copy(P.pos);
@@ -203,7 +215,7 @@ export async function create(ctx) {
     // low, slightly-off-centre framing so the hangar (lamps, bay, Arwing) reads above the pilot
     const pitchT = firing ? 0.14 : 0.2 + (P.onGround ? 0 : -0.04) + P.speedN * 0.03;
     cam.pitch += (pitchT - cam.pitch) * Math.min(1, dt * 3);
-    const distT = firing ? 3.4 : 5.4 + P.speedN * 1.0;
+    const distT = firing ? 3.2 : 4.6 + P.speedN * 0.8;
     cam.dist += (distT - cam.dist) * Math.min(1, dt * 3);
     const lookT = V.tmp2.set(P.pos.x, P.pos.y * 0.6 + 1.55 + P.speedN * 0.15, P.pos.z);
     // shoulder offset: pilot sits left of centre (camera-right vector)
@@ -245,6 +257,14 @@ export async function create(ctx) {
 
   return {
     update,
+    onComplete,
+    get ringsCollected() { return fx.stats.rings; },
+    get ringsTotal() { return fx.pickups.length; },
+    get dronesDestroyed() { return fx.stats.drones; },
+    get doorUnlocked() { return doorOpened; },
+    get complete() { return completed; },
+    setHudVisible: (v) => hud.setVisible(v),
+    setTitle: (a, b) => hud.setTitle(a, b),
     dispose() {
       hangar.dispose(); fx.dispose(); hud.dispose();
       scene.remove(pilot.root); pilot.root.traverse((o) => { o.geometry?.dispose?.(); o.material?.dispose?.(); });
