@@ -20,13 +20,14 @@ const _a = new THREE.Vector3(), _b = new THREE.Vector3();
 export const FORMATIONS = ['v', 'snake', 'circle', 'line'];
 
 // ---- path templates (relative to player; player looks down -Z). x mirrored randomly.
+// Paths are pulled in close (60-260m) so the craft fill the frame; they cross the gun line and exit past the camera.
 const PATHS = {
-  swoop: [[110, 60, -420], [40, 28, -230], [-18, 8, -90], [-26, -4, 20], [-10, -12, 140]],
-  cross: [[-200, 36, -340], [-60, 20, -190], [40, 8, -95], [150, -4, -20], [280, -12, 70]],
-  dive: [[50, 200, -400], [22, 80, -210], [-10, 18, -95], [-28, 0, -15], [-40, -10, 120]],
-  strafe: [[22, -4, 60], [12, 4, -50], [-10, 12, -180], [-36, 36, -380], [-60, 70, -640]],
-  weave: [[-100, 18, -440], [36, 26, -290], [-34, 6, -160], [26, 10, -70], [-16, 0, 30], [-36, -8, 140]],
-  loop: [[0, 26, -400], [0, 18, -240], [0, 10, -150], [0, 62, -150], [0, 80, -210], [0, 26, -240], [0, -4, -110], [18, -10, 40], [40, -14, 130]],
+  swoop: [[90, 50, -300], [40, 26, -170], [-14, 10, -70], [-24, 0, 15], [-12, -8, 120]],
+  cross: [[-150, 34, -250], [-50, 20, -140], [30, 10, -70], [110, 2, -15], [220, -6, 60]],
+  dive: [[40, 150, -300], [20, 70, -160], [-8, 20, -70], [-24, 4, -10], [-36, -6, 110]],
+  strafe: [[20, -2, 50], [12, 6, -40], [-8, 14, -140], [-30, 34, -300], [-50, 60, -520]],
+  weave: [[-80, 20, -330], [30, 26, -220], [-28, 8, -125], [22, 12, -55], [-14, 2, 25], [-30, -6, 120]],
+  loop: [[0, 26, -300], [0, 18, -190], [0, 12, -120], [0, 56, -120], [0, 72, -170], [0, 26, -190], [0, 0, -90], [16, -6, 35], [36, -10, 120]],
 };
 
 function makePath(name, mirror, rng) {
@@ -40,9 +41,9 @@ function makePath(name, mirror, rng) {
 /** Formation offset (in path frame: x=right, y=up, z=along) + delay along path (world units). */
 function formationSlot(kind, i, n, t) {
   switch (kind) {
-    case 'v': { const k = Math.ceil(i / 2), side = i % 2 ? -1 : 1; return { off: new THREE.Vector3(side * 11 * k, -1.8 * k, 0), back: 9 * k }; }
-    case 'line': return { off: new THREE.Vector3((i - (n - 1) / 2) * 13, 0, 0), back: 0 };
-    case 'snake': return { off: new THREE.Vector3(0, 0, 0), back: 16 * i, wiggle: i };
+    case 'v': { const k = Math.ceil(i / 2), side = i % 2 ? -1 : 1; return { off: new THREE.Vector3(side * 19 * k, -3 * k, 0), back: 14 * k }; }
+    case 'line': return { off: new THREE.Vector3((i - (n - 1) / 2) * 22, 0, 0), back: 0 };
+    case 'snake': return { off: new THREE.Vector3(0, 0, 0), back: 24 * i, wiggle: i };
     case 'circle': { return { off: new THREE.Vector3(0, 0, 0), back: 0, ring: (i / n) * Math.PI * 2 }; }
     default: return { off: new THREE.Vector3(0, 0, 0), back: 0 };
   }
@@ -67,16 +68,16 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
     const n = o.count ?? (kind === 'circle' ? 6 : kind === 'v' ? 5 : kind === 'snake' ? 6 : 4);
     const speed = (o.speed ?? rng.range(75, 105)) * (craft === 'mantis' ? 0.8 : craft === 'vulture' ? 1.15 : 1);
     waveId++;
-    const wave = { id: waveId, kind, craft, path, n, speed, t0: time, ringR: craft === 'mantis' ? 18 : 13, ringW: rng.sign() * 1.6 };
+    const wave = { id: waveId, kind, craft, path, n, speed, t0: time, ringR: craft === 'mantis' ? 30 : 22, ringW: rng.sign() * 1.4 };
     for (let i = 0; i < n; i++) {
       const g = buildEnemyCraft(craft);
       const slot = formationSlot(kind, i, n, time);
       const e = {
         group: g, kind: craft, wave, slot, hp: g.userData.hp, radius: g.userData.radius,
-        dist: -slot.back - 2 * i, speed, state: 'fly', flash: 0, punch: 0, fireCd: rng.range(0.8, 2.4), age: 0, phase: rng.range(0, 6.28),
+        dist: -slot.back - 3 * i, speed, state: 'fly', flash: 0, punch: 0, fireCd: rng.range(0.8, 2.4), age: 0, phase: rng.range(0, 6.28),
         vel: new THREE.Vector3(), spin: new THREE.Vector3(), dieT: 0, smokeCd: 0, pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, 1),
         scaleIn: 0,
-        trails: g.userData.engines.map(() => new Trail(scene, g.userData.glowColor, { n: 14, width: craft === 'mantis' ? 0.6 : 0.45, opacity: 0.6 })),
+        trails: g.userData.engines.map(() => new Trail(scene, g.userData.glowColor, { n: 14, width: craft === 'mantis' ? 1.1 : 0.85, opacity: 0.6 })),
       };
       g.visible = false;
       scene.add(g); list.push(e); stats.spawned++;
@@ -101,10 +102,10 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
 
     // formation offsets
     const s = e.slot; let ox = s.off.x, oy = s.off.y;
-    if (s.wiggle !== undefined) { ox += Math.sin(e.dist * 0.05 + s.wiggle * 0.9) * 13; oy += Math.cos(e.dist * 0.05 + s.wiggle * 0.9) * 6; }
+    if (s.wiggle !== undefined) { ox += Math.sin(e.dist * 0.05 + s.wiggle * 0.9) * 18; oy += Math.cos(e.dist * 0.05 + s.wiggle * 0.9) * 8; }
     if (s.ring !== undefined) { const a = s.ring + (time - e.wave.t0) * e.wave.ringW; ox += Math.cos(a) * e.wave.ringR; oy += Math.sin(a) * e.wave.ringR; }
     // idle bob
-    oy += Math.sin(time * 2.1 + e.phase) * 0.35;
+    oy += Math.sin(time * 2.1 + e.phase) * 0.6;
     _p.addScaledVector(_r, ox).addScaledVector(_u, oy);
 
     e.group.position.copy(_p); e.pos.copy(_p); e.fwd.copy(_t);
@@ -120,7 +121,7 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
     e.fireCd -= dt; if (e.fireCd > 0) return;
     _a.copy(playerRef.position).sub(e.pos); const d = _a.length(); _a.divideScalar(d);
     const facing = _a.dot(e.fwd);
-    if (d < 45 || d > 420 || facing < 0.82) { e.fireCd = 0.25; return; }
+    if (d < 40 || d > 320 || facing < 0.82) { e.fireCd = 0.25; return; }
     e.fireCd = rng.range(1.1, 2.6);
     // twin burst from the wing pods / mandibles
     const burst = e.kind === 'mantis' ? 3 : 2;
@@ -145,7 +146,8 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
   function damage(e, n = 1, hitPos = e.pos) {
     if (e.state !== 'fly') return false;
     e.hp -= n; e.flash = 1; e.punch = 1;
-    for (let i = 0; i < 6; i++) sprites.emit({ p: hitPos, vel: new THREE.Vector3(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).multiplyScalar(18), size: 0.9, grow: -0.6, dur: 0.35, color: 0xfff0a0, additive: true, opacity: 1 });
+    for (let i = 0; i < 8; i++) sprites.emit({ p: hitPos, vel: new THREE.Vector3(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).multiplyScalar(26), size: 1.6, grow: -0.6, dur: 0.35, color: 0xfff0a0, additive: true, opacity: 1 });
+    sprites.emit({ p: hitPos, vel: new THREE.Vector3(), size: 5, grow: 1.2, dur: 0.18, color: 0xffffff, additive: true, opacity: 0.9 });
     events?.emit('enemy:hit', { enemy: e, position: hitPos.clone() });
     if (e.hp <= 0) kill(e);
     return true;
@@ -155,7 +157,7 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
     e.state = 'dying'; e.dieT = 0; e.dieDur = rng.range(0.7, 1.2);
     e.vel.copy(e.fwd).multiplyScalar(e.speed * 0.6).add(new THREE.Vector3(rng.range(-10, 10), rng.range(4, 12), rng.range(-10, 10)));
     e.spin.set(rng.range(-4, 4), rng.range(-2, 2), rng.sign() * rng.range(7, 12));
-    explosions.spawn(e.pos, 0.55);
+    explosions.spawn(e.pos, 0.7);
     stats.kills++;
     events?.emit('enemy:killed', { kind: e.kind, position: e.pos.clone(), wave: e.wave.kind });
   }
@@ -171,14 +173,17 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
     e.smokeCd -= dt;
     if (e.smokeCd <= 0) {
       e.smokeCd = 0.03;
-      sprites.emit({ p: e.pos, vel: new THREE.Vector3(rng.range(-3, 3), rng.range(0, 4), rng.range(-3, 3)), size: 2.2, grow: 2.5, dur: 1.1, color: 0x1a1a1e, opacity: 0.55 });
-      sprites.emit({ p: e.pos, vel: new THREE.Vector3(rng.range(-2, 2), rng.range(0, 2), rng.range(-2, 2)), size: 1.6, grow: 0.5, dur: 0.3, color: 0xff7a30, additive: true, opacity: 0.9 });
+      sprites.emit({ p: e.pos, vel: new THREE.Vector3(rng.range(-3, 3), rng.range(0, 4), rng.range(-3, 3)), size: 4, grow: 2.5, dur: 1.1, color: 0x26242a, opacity: 0.7, smoke: true });
+      sprites.emit({ p: e.pos, vel: new THREE.Vector3(rng.range(-2, 2), rng.range(0, 2), rng.range(-2, 2)), size: 3, grow: 0.5, dur: 0.3, color: 0xff7a30, additive: true, opacity: 0.9 });
     }
     // flicker glow
     setFlash(e, 0.4 + 0.6 * Math.random());
     if (e.dieT >= e.dieDur) {
-      explosions.spawn(e.pos, e.kind === 'mantis' ? 1.8 : 1.2);
-      for (let i = 0; i < 10; i++) sprites.emit({ p: e.pos, vel: new THREE.Vector3(rng.range(-1, 1), rng.range(-0.5, 1), rng.range(-1, 1)).multiplyScalar(22), size: 4, grow: 2.5, dur: 1.6, color: 0x15141a, opacity: 0.6 });
+      // shrink very-near bursts so a fly-past kill doesn't white out the whole frame
+      const dCam = e.pos.distanceTo(ctx.camera.position);
+      const near = THREE.MathUtils.clamp((dCam - 20) / 60, 0.35, 1);
+      explosions.spawn(e.pos, (e.kind === 'mantis' ? 2.4 : 1.7) * near);
+      for (let i = 0; i < 12; i++) sprites.emit({ p: e.pos, vel: new THREE.Vector3(rng.range(-1, 1), rng.range(-0.5, 1), rng.range(-1, 1)).multiplyScalar(26), size: 7, grow: 2.2, dur: 1.8, color: 0x2a2530, opacity: 0.75, smoke: true, delay: 0.12 });
       remove(e);
     }
   }
@@ -198,7 +203,7 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
     // enemy bolts vs player
     if (playerRef?.position) {
       for (const b of [...enemyBolts.bolts]) {
-        if (b.p.distanceTo(playerRef.position) < 5.5) {
+        if (b.p.distanceTo(playerRef.position) < 6.5) {
           enemyBolts.remove(b); stats.playerHits++;
           events?.emit('player:hit', { position: b.p.clone() });
           for (let i = 0; i < 8; i++) sprites.emit({ p: b.p, vel: new THREE.Vector3(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).multiplyScalar(12), size: 1.2, grow: 0.5, dur: 0.4, color: 0xff6a80, additive: true, opacity: 1 });

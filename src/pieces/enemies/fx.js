@@ -61,83 +61,138 @@ export class BoltPool {
 }
 
 // ---------------------------------------------------------------- explosions
+// Stylised multi-stage burst: white-hot core pop -> spiky cel-banded fireball that
+// erodes away by noise -> hot shards + sparks -> camera-facing shock ring.
+const NOISE3 = /* glsl */`
+  float hash(vec3 p){ return fract(sin(dot(p, vec3(12.9898,78.233,37.719))) * 43758.5453); }
+  float noise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+    return mix(mix(mix(hash(i),hash(i+vec3(1,0,0)),f.x),mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
+               mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z); }
+  float fbm(vec3 p){ return noise(p)*0.6 + noise(p*2.3+7.1)*0.28 + noise(p*5.1-3.3)*0.12; }
+`;
 const FIREBALL_SHADER = {
   vertexShader: /* glsl */`
-    uniform float uT; uniform float uSeed; varying float vFres; varying float vN;
-    float hash(vec3 p){ return fract(sin(dot(p, vec3(12.9898,78.233,37.719))) * 43758.5453); }
-    float noise(vec3 p){ vec3 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
-      return mix(mix(mix(hash(i),hash(i+vec3(1,0,0)),f.x),mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
-                 mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z); }
+    uniform float uT; uniform float uSeed; varying float vN; varying float vFres; varying vec3 vP;
+    ${NOISE3}
     void main(){
-      float n = noise(normal*2.2 + uSeed + uT*1.5) * 0.7 + noise(normal*5.0 - uSeed + uT*3.0) * 0.3;
+      vec3 dir = normalize(position);
+      float n = fbm(dir*1.9 + uSeed + uT*0.8);
+      float spikes = pow(noise(dir*4.5 + uSeed*3.0), 6.0) * 0.7;      // a few tongues of flame
       vN = n;
-      vec3 p = position * (0.75 + 0.55*n);
+      vec3 p = dir * (0.6 + 0.6*n + spikes*(1.0-uT*0.6));
+      vP = p;
       vec4 mv = modelViewMatrix * vec4(p,1.0);
       vec3 nv = normalize(normalMatrix * normal);
-      vFres = pow(1.0 - abs(dot(nv, normalize(-mv.xyz))), 1.5);
+      vFres = 1.0 - abs(dot(nv, normalize(-mv.xyz)));
       gl_Position = projectionMatrix * mv;
     }`,
   fragmentShader: /* glsl */`
-    uniform float uT; varying float vFres; varying float vN;
+    uniform float uT; uniform float uSeed; varying float vN; varying float vFres; varying vec3 vP;
+    ${NOISE3}
     void main(){
-      vec3 hot = vec3(6.0, 4.2, 2.0), mid = vec3(3.5, 1.1, 0.15), cool = vec3(0.35, 0.12, 0.08), smoke = vec3(0.08,0.07,0.08);
-      float k = clamp(uT*1.15 + vN*0.35 - 0.2, 0.0, 1.0);
-      vec3 c = mix(hot, mid, smoothstep(0.0, 0.35, k));
-      c = mix(c, cool, smoothstep(0.3, 0.7, k));
-      c = mix(c, smoke, smoothstep(0.6, 1.0, k));
-      float a = (1.0 - smoothstep(0.55, 1.0, uT)) * (0.75 + 0.25*vFres);
-      gl_FragColor = vec4(c, a);
+      // erosion: burn away from the noise edges (crisp cutout, no fog of alpha)
+      float n = fbm(vP*2.6 + uSeed*5.0 + uT*1.2);
+      float burn = smoothstep(0.15, 1.0, uT);
+      if (n < burn*1.05 - 0.05) discard;
+      // cel bands: white core -> yellow -> orange -> ember. Volume comes from the view-facing term
+      // (centre hot, silhouette cooler) plus the noise so it reads as a ball, not a cut-out.
+      float facing = 1.0 - vFres;
+      float heat = facing*facing*0.9 + (n - burn)*0.9 + vN*0.3 - uT*0.55;
+      vec3 c;
+      if (heat > 0.95)      c = vec3(2.6, 2.4, 2.0);
+      else if (heat > 0.65) c = vec3(2.4, 1.7, 0.45);
+      else if (heat > 0.3)  c = vec3(2.0, 0.72, 0.1);
+      else                  c = vec3(0.6, 0.14, 0.05);
+      // dark charred rim right at the erosion edge
+      float edge = smoothstep(0.0, 0.06, n - (burn*1.05 - 0.05));
+      c = mix(vec3(0.16, 0.06, 0.03), c, edge);
+      gl_FragColor = vec4(c, 1.0);
     }`,
 };
 
 class Explosion {
   constructor(scene) {
-    this.scene = scene; this.active = false; this.t = 0; this.dur = 1.3;
+    this.scene = scene; this.active = false; this.t = 0; this.dur = 1.25;
     this.group = new THREE.Group(); this.group.visible = false;
-    this.fire = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 4), new THREE.ShaderMaterial({
-      ...FIREBALL_SHADER, uniforms: { uT: { value: 0 }, uSeed: { value: 0 } }, transparent: true, depthWrite: false,
+    this.fire = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 5), new THREE.ShaderMaterial({
+      ...FIREBALL_SHADER, uniforms: { uT: { value: 0 }, uSeed: { value: 0 } }, transparent: false, depthWrite: false,
     }));
-    this.flash = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowSpriteTexture(), color: 0xfff1d0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false }));
-    this.ring = new THREE.Mesh(new THREE.RingGeometry(0.82, 1, 48), new THREE.MeshBasicMaterial({ color: 0xffb070, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
-    const N = 70; this.N = N;
+    this.fire.material.toneMapped = false;
+    // white-hot core: solid unlit sphere that pops first
+    this.core = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 2), new THREE.MeshBasicMaterial({ color: 0xfff6e0, toneMapped: false, transparent: true, depthWrite: false }));
+    this.flash = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowSpriteTexture(), color: 0xffe2b0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false }));
+    this.ring = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 64), new THREE.MeshBasicMaterial({ color: 0xffc080, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+    // hot shards (instanced tetrahedra)
+    const NS = 22; this.NS = NS;
+    this.shards = new THREE.InstancedMesh(new THREE.TetrahedronGeometry(1, 0), new THREE.MeshBasicMaterial({ color: 0xff9a40, toneMapped: false }), NS);
+    this.shards.frustumCulled = false;
+    this.shardV = new Float32Array(NS * 3); this.shardP = new Float32Array(NS * 3); this.shardR = new Float32Array(NS * 3); this.shardS = new Float32Array(NS);
+    const N = 80; this.N = N;
     const pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     this.sparks = new THREE.Points(g, new THREE.PointsMaterial({ size: 0.9, vertexColors: true, map: glowSpriteTexture(), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, toneMapped: false }));
     this.vel = new Float32Array(N * 3);
-    this.group.add(this.fire, this.flash, this.ring, this.sparks);
+    this.group.add(this.fire, this.core, this.flash, this.ring, this.shards, this.sparks);
     scene.add(this.group);
-    this.light = new THREE.PointLight(0xffa050, 0, 60, 1.6); this.group.add(this.light);
+    this.light = new THREE.PointLight(0xffa050, 0, 90, 1.6); this.group.add(this.light);
   }
   spawn(p, size = 1, seed = 0) {
     this.active = true; this.t = 0; this.size = size;
     this.group.visible = true; this.group.position.copy(p);
     this.fire.material.uniforms.uSeed.value = seed;
+    this.fire.rotation.set(Math.random() * 6, Math.random() * 6, 0);
     const pa = this.sparks.geometry.attributes.position.array, ca = this.sparks.geometry.attributes.color.array;
     for (let i = 0; i < this.N; i++) {
-      const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1), sp = (14 + Math.random() * 30) * size;
+      const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1), sp = (18 + Math.random() * 40) * size;
       this.vel[i * 3] = Math.sin(ph) * Math.cos(th) * sp; this.vel[i * 3 + 1] = Math.sin(ph) * Math.sin(th) * sp; this.vel[i * 3 + 2] = Math.cos(ph) * sp;
       pa[i * 3] = pa[i * 3 + 1] = pa[i * 3 + 2] = 0;
       const w = Math.random(); ca[i * 3] = 3; ca[i * 3 + 1] = 1.2 + w * 1.5; ca[i * 3 + 2] = 0.3 + w * 0.8;
     }
     this.sparks.geometry.attributes.position.needsUpdate = true; this.sparks.geometry.attributes.color.needsUpdate = true;
-    this.ring.quaternion.random();
+    for (let i = 0; i < this.NS; i++) {
+      const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1), sp = (16 + Math.random() * 34) * size;
+      this.shardV[i * 3] = Math.sin(ph) * Math.cos(th) * sp; this.shardV[i * 3 + 1] = Math.sin(ph) * Math.sin(th) * sp; this.shardV[i * 3 + 2] = Math.cos(ph) * sp;
+      this.shardP[i * 3] = this.shardP[i * 3 + 1] = this.shardP[i * 3 + 2] = 0;
+      this.shardR[i * 3] = Math.random() * 6; this.shardR[i * 3 + 1] = Math.random() * 6; this.shardR[i * 3 + 2] = Math.random() * 6;
+      this.shardS[i] = (0.35 + Math.random() * 0.7) * size;
+    }
   }
   update(dt, camera) {
     if (!this.active) return;
     this.t += dt; const u = this.t / this.dur, S = this.size;
     if (u >= 1) { this.active = false; this.group.visible = false; return; }
-    // fireball: fast pop with overshoot then slow drift
-    const pop = 1 - Math.pow(1 - Math.min(u * 2.2, 1), 3);
-    const r = (4.5 * pop + 2.5 * u) * S;
+    // fireball: fast pop with overshoot, then slow expansion while it erodes
+    const pop = 1 - Math.pow(1 - Math.min(u * 2.6, 1), 3);
+    const over = 1 + 0.18 * Math.sin(Math.min(u * 2.6, 1) * Math.PI);
+    const r = (3.4 * pop * over + 1.8 * u) * S;
     this.fire.scale.setScalar(r); this.fire.material.uniforms.uT.value = u;
-    // flash
-    const fl = Math.max(0, 1 - u * 5);
-    this.flash.scale.setScalar(26 * S * (0.4 + fl)); this.flash.material.opacity = fl;
-    // shockwave ring
-    const rr = u * 3; const ring = Math.min(rr, 1);
-    this.ring.scale.setScalar(2 + 30 * S * (1 - Math.pow(1 - ring, 2.5))); this.ring.material.opacity = 0.8 * (1 - ring);
+    this.fire.visible = u > 0.03;
+    // white core pops first and shrinks as the fireball overtakes it
+    const cu = Math.min(u / 0.22, 1);
+    const cr = (4.2 * Math.sin(cu * Math.PI * 0.5) * (1 - cu * 0.75)) * S;
+    this.core.scale.setScalar(Math.max(cr, 0.01)); this.core.material.opacity = 1 - cu; this.core.visible = cu < 1;
+    // flash: short, then gone (no lingering wash)
+    const fl = Math.max(0, 1 - u * 6);
+    this.flash.scale.setScalar(22 * S * (0.5 + fl)); this.flash.material.opacity = fl * 0.9; this.flash.visible = fl > 0;
+    // shock ring: thin, camera-facing, quick
+    const ring = Math.min(u * 2.8, 1);
+    this.ring.quaternion.copy(camera.quaternion);
+    this.ring.scale.setScalar(1 + 16 * S * (1 - Math.pow(1 - ring, 2.2))); this.ring.material.opacity = 0.7 * (1 - ring) * (1 - ring);
     this.ring.visible = ring < 1;
+    // shards
+    const heat = Math.max(0, 1 - u * 1.3);
+    this.shards.material.color.setRGB(0.25 + 2.4 * heat, 0.1 + 1.0 * heat * heat, 0.04 + 0.25 * heat * heat * heat);
+    for (let i = 0; i < this.NS; i++) {
+      this.shardV[i * 3 + 1] -= 22 * dt;
+      this.shardP[i * 3] += this.shardV[i * 3] * dt; this.shardP[i * 3 + 1] += this.shardV[i * 3 + 1] * dt; this.shardP[i * 3 + 2] += this.shardV[i * 3 + 2] * dt;
+      this.shardR[i * 3] += dt * 9; this.shardR[i * 3 + 1] += dt * 6;
+      _q.setFromEuler(new THREE.Euler(this.shardR[i * 3], this.shardR[i * 3 + 1], this.shardR[i * 3 + 2]));
+      const sc = this.shardS[i] * (1 - u * 0.6);
+      _m.compose(_v.set(this.shardP[i * 3], this.shardP[i * 3 + 1], this.shardP[i * 3 + 2]), _q, _s.set(sc, sc, sc * 2.2));
+      this.shards.setMatrixAt(i, _m);
+    }
+    this.shards.instanceMatrix.needsUpdate = true;
     // sparks
     const pa = this.sparks.geometry.attributes.position.array;
     for (let i = 0; i < this.N; i++) {
@@ -146,13 +201,14 @@ class Explosion {
       this.vel[i * 3] *= 0.985; this.vel[i * 3 + 1] *= 0.985; this.vel[i * 3 + 2] *= 0.985;
     }
     this.sparks.geometry.attributes.position.needsUpdate = true;
-    this.sparks.material.opacity = 1 - u * u; this.sparks.material.size = 0.9 * S * (1 - u * 0.5);
-    this.light.intensity = 400 * S * fl + 60 * S * (1 - u);
+    this.sparks.material.opacity = 1 - u * u; this.sparks.material.size = 1.1 * S * (1 - u * 0.5);
+    this.light.intensity = 260 * S * fl + 90 * S * heat;
   }
   dispose() {
     this.scene.remove(this.group);
-    this.fire.geometry.dispose(); this.fire.material.dispose(); this.flash.material.dispose();
+    this.fire.geometry.dispose(); this.fire.material.dispose(); this.flash.material.dispose(); this.core.geometry.dispose(); this.core.material.dispose();
     this.ring.geometry.dispose(); this.ring.material.dispose(); this.sparks.geometry.dispose(); this.sparks.material.dispose();
+    this.shards.geometry.dispose(); this.shards.material.dispose();
   }
 }
 
@@ -214,33 +270,59 @@ export class Trail {
 }
 
 // ---------------------------------------------------------------- smoke / hit sparks (sprite pool)
+let _smokeTex = null;
+/** Lumpy soft smoke puff (several overlapping blobs) so smoke does not read as a glow disc. */
+export function smokeTexture() {
+  if (_smokeTex) return _smokeTex;
+  const S = 128, c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d');
+  for (let i = 0; i < 9; i++) {
+    const a = (i / 9) * Math.PI * 2, rr = 18 + Math.random() * 12;
+    const x = 64 + Math.cos(a) * rr, y = 64 + Math.sin(a) * rr, r = 26 + Math.random() * 12;
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, 'rgba(255,255,255,0.55)'); gr.addColorStop(0.6, 'rgba(255,255,255,0.18)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, S, S);
+  }
+  const gr = g.createRadialGradient(64, 64, 0, 64, 64, 40);
+  gr.addColorStop(0, 'rgba(255,255,255,0.7)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, S, S);
+  _smokeTex = new THREE.CanvasTexture(c); _smokeTex.colorSpace = THREE.SRGBColorSpace;
+  return _smokeTex;
+}
+
 export class SpritePool {
   constructor(scene, n = 120) {
     this.scene = scene; this.items = [];
-    const tex = glowSpriteTexture();
+    this.glowTex = glowSpriteTexture(); this.smokeTex = smokeTexture();
     for (let i = 0; i < n; i++) {
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0 }));
-      sp.visible = false; sp.userData = { life: 0, dur: 1, vel: new THREE.Vector3(), grow: 0, s0: 1, a0: 1, additive: false };
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glowTex, transparent: true, depthWrite: false, opacity: 0 }));
+      sp.visible = false; sp.userData = { life: 0, dur: 1, vel: new THREE.Vector3(), grow: 0, s0: 1, a0: 1, additive: false, delay: 0, rot: 0 };
       scene.add(sp); this.items.push(sp);
     }
     this.i = 0;
   }
-  /** emit({p, vel, size, grow, dur, color, additive, opacity}) */
-  emit({ p, vel, size = 1, grow = 1.5, dur = 1, color = 0x222222, additive = false, opacity = 0.6 }) {
+  /** emit({p, vel, size, grow, dur, color, additive, opacity, smoke, delay}) */
+  emit({ p, vel, size = 1, grow = 1.5, dur = 1, color = 0x222222, additive = false, opacity = 0.6, smoke = false, delay = 0 }) {
     const sp = this.items[this.i++ % this.items.length];
-    sp.visible = true; sp.position.copy(p); sp.scale.setScalar(size);
-    const d = sp.userData; d.life = 0; d.dur = dur; d.vel.copy(vel); d.grow = grow; d.s0 = size; d.a0 = opacity;
-    sp.material.color.set(color); sp.material.opacity = opacity;
+    sp.visible = true; sp.position.copy(p); sp.scale.setScalar(delay > 0 ? 0.001 : size);
+    const d = sp.userData; d.life = -delay; d.dur = dur; d.vel.copy(vel); d.grow = grow; d.s0 = size; d.a0 = opacity;
+    d.rot = (Math.random() - 0.5) * 1.5;
+    sp.material.map = smoke ? this.smokeTex : this.glowTex;
+    sp.material.rotation = Math.random() * Math.PI * 2;
+    sp.material.color.set(color); sp.material.opacity = delay > 0 ? 0 : opacity;
     sp.material.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
     sp.material.needsUpdate = true;
   }
   update(dt) {
     for (const sp of this.items) {
       if (!sp.visible) continue;
-      const d = sp.userData; d.life += dt; const u = d.life / d.dur;
+      const d = sp.userData; d.life += dt;
+      if (d.life < 0) continue;
+      const u = d.life / d.dur;
       if (u >= 1) { sp.visible = false; continue; }
       sp.position.addScaledVector(d.vel, dt); d.vel.multiplyScalar(1 - 1.5 * dt);
       sp.scale.setScalar(d.s0 * (1 + d.grow * u));
+      sp.material.rotation += d.rot * dt;
       sp.material.opacity = d.a0 * (1 - u) * (1 - u);
     }
   }

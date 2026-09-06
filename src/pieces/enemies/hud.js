@@ -38,8 +38,12 @@ const CSS = `
 .en-title{position:absolute;left:36px;bottom:30px}
 .en-title small{display:block;font:700 11px/1 system-ui;letter-spacing:.34em;color:#ffb3c2}
 .en-title div{font:800 22px/1.2 "Segoe UI",Roboto,system-ui;letter-spacing:.2em;color:#fff;text-shadow:0 0 12px rgba(255,90,120,.5)}
-.en-bars{position:absolute;left:36px;top:28px;display:flex;gap:10px;align-items:flex-end}
-.en-bars b{display:block;width:6px;background:linear-gradient(#fff,#7cf2b0);box-shadow:0 0 8px rgba(124,242,176,.8);border-radius:2px}
+.en-bars{position:absolute;left:36px;top:28px;display:flex;gap:14px;align-items:center}
+.en-bars small{display:block;font:700 11px/1 system-ui;letter-spacing:.34em;color:#ffb3c2}
+.en-bars div{font:800 30px/1 "Segoe UI",Roboto,system-ui;letter-spacing:.06em;color:#fff;text-shadow:0 0 14px rgba(255,90,120,.6);font-variant-numeric:tabular-nums}
+.en-bars span{display:flex;gap:5px;align-items:flex-end;height:22px}
+.en-bars b{display:block;width:5px;background:linear-gradient(#fff,#ff6d8a);box-shadow:0 0 8px rgba(255,109,138,.8);border-radius:2px;transition:opacity .2s}
+.en-dot{position:absolute;left:0;top:0;width:8px;height:8px;margin:-4px;border:1.5px solid rgba(124,242,176,.55);transform:rotate(45deg);will-change:transform}
 `;
 
 export function createLockOnHud(ctx, em) {
@@ -53,7 +57,7 @@ export function createLockOnHud(ctx, em) {
   const call = mk('div', 'en-call', '<h1></h1><p></p>');
   const score = mk('div', 'en-score', '<small>SCORE</small><div>000000</div>');
   const title = mk('div', 'en-title', '<small>VENOM AIR WING</small><div>ENEMY SHOWCASE</div>');
-  const bars = mk('div', 'en-bars', Array.from({ length: 12 }, () => '<b></b>').join(''));
+  const bars = mk('div', 'en-bars', `<span>${Array.from({ length: 12 }, () => '<b></b>').join('')}</span><div>00</div><small>HOSTILES</small>`);
   root.append(retNear, retFar, call, score, title, bars);
   function mk(tag, cls, html) { const el = document.createElement(tag); el.className = cls; el.innerHTML = html; return el; }
 
@@ -65,7 +69,7 @@ export function createLockOnHud(ctx, em) {
 
   function announce(wave) {
     call.children[0].textContent = `${NAMES[wave.craft] ?? wave.craft} SQUADRON`;
-    call.children[1].textContent = `WAVE ${String(wave.id).padStart(2, '0')}  ·  ${FORM[wave.kind] ?? wave.kind}  ·  ${wave.n} CRAFT`;
+    call.children[1].textContent = `WAVE ${String(wave.id).padStart(2, '0')}  ·  ${FORM[wave.kind] ?? wave.kind}  ·  ${wave.n} INBOUND`;
     call.style.opacity = 1; callT = 2.2;
   }
 
@@ -76,40 +80,54 @@ export function createLockOnHud(ctx, em) {
     retFar.style.transform = `translate(${nx}px,${ny}px) translate(-50%,-50%)`;
     retNear.style.transform = `translate(${nx * 0.7 + W * 0.15}px,${ny * 0.7 + H * 0.15}px) translate(-50%,-50%) rotate(${Math.sin(t * 0.8) * 4}deg)`;
 
-    // markers
-    let best = null, bestD = 0.28;
-    const seen = new Set();
+    // markers: gather on-screen targets, then only bracket the 3 nearest to the reticle (rest get a tiny diamond)
+    const cands = [];
     for (const e of em.list) {
       if (e.state !== 'fly' || !e.group.visible) continue;
       _p.copy(e.pos).project(camera);
       if (_p.z > 1 || Math.abs(_p.x) > 1.05 || Math.abs(_p.y) > 1.05) continue;
       const d = e.pos.distanceTo(camera.position);
-      if (d > 260) continue;
-      seen.add(e);
+      if (d > 240) continue;
+      cands.push({ e, x: _p.x, y: _p.y, d, dd: Math.hypot(_p.x - aim.x, (_p.y - aim.y) * 0.8) });
+    }
+    cands.sort((a, b) => a.dd - b.dd);
+    let best = null;
+    if (cands.length && cands[0].dd < 0.3) best = { e: cands[0].e, ndc: new THREE.Vector2(cands[0].x, cands[0].y), d: cands[0].d };
+    const seen = new Set();
+    cands.forEach((c, i) => {
+      const { e, d } = c; seen.add(e);
+      const bracket = i < 3;
       let el = markers.get(e);
-      if (!el) { el = mk('div', 'en-mk', '<i></i><i></i><i></i><i></i><b></b>'); root.appendChild(el); markers.set(e, el); el.userData = { s: 0 }; }
-      const sizePx = THREE.MathUtils.clamp((e.radius * 2 * H) / (d * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.5, 34, 180);
-      el.userData.s = THREE.MathUtils.damp(el.userData.s, sizePx, 12, dt);
-      const sx = (_p.x * 0.5 + 0.5) * W, sy = (-_p.y * 0.5 + 0.5) * H;
-      el.style.transform = `translate(${sx}px,${sy}px) translate(-50%,-50%)`;
-      el.style.width = el.style.height = `${el.userData.s}px`;
-      el.style.opacity = THREE.MathUtils.clamp(1.4 - d / 260, 0.35, 1);
-      const dd = Math.hypot(_p.x - aim.x, _p.y - aim.y);
-      if (dd < bestD) { bestD = dd; best = { e, ndc: new THREE.Vector2(_p.x, _p.y), d }; }
-    }
-    for (const [e, el] of markers) {
-      if (!seen.has(e)) { root.removeChild(el); markers.delete(e); continue; }
-      el.classList.toggle('lock', best?.e === e);
-      if (best?.e === e) el.lastChild.textContent = `LOCK  ${Math.round(best.d)}m`;
-    }
+      if (el && el.userData.bracket !== bracket) { root.removeChild(el); markers.delete(e); el = null; }
+      if (!el) {
+        el = bracket ? mk('div', 'en-mk', '<i></i><i></i><i></i><i></i><b></b>') : mk('div', 'en-dot', '');
+        root.appendChild(el); markers.set(e, el); el.userData = { s: 0, bracket, age: 0 };
+      }
+      el.userData.age += dt;
+      const sx = (c.x * 0.5 + 0.5) * W, sy = (-c.y * 0.5 + 0.5) * H;
+      if (bracket) {
+        const sizePx = THREE.MathUtils.clamp((e.radius * 2 * H) / (d * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.15, 26, 200);
+        el.userData.s = THREE.MathUtils.damp(el.userData.s || sizePx * 1.6, sizePx, 14, dt);
+        el.style.transform = `translate(${sx}px,${sy}px) translate(-50%,-50%)`;
+        el.style.width = el.style.height = `${el.userData.s}px`;
+        el.style.opacity = Math.min(1, el.userData.age * 6) * THREE.MathUtils.clamp(1.5 - d / 240, 0.45, 1);
+        el.classList.toggle('lock', best?.e === e);
+        if (best?.e === e) el.lastChild.textContent = `LOCK  ${Math.round(d)}m`;
+      } else {
+        el.style.transform = `translate(${sx}px,${sy}px) rotate(45deg)`;
+        el.style.opacity = 0.7;
+      }
+    });
+    for (const [e, el] of markers) if (!seen.has(e)) { root.removeChild(el); markers.delete(e); }
     hud.locked = best;
 
     // call-out fade
     if (callT > 0) { callT -= dt; if (callT <= 0) call.style.opacity = 0; }
     score.lastChild.textContent = String(Math.round(scoreVal)).padStart(6, '0');
     // little threat meter: bars = alive enemies
-    const alive = em.list.filter((e) => e.state === 'fly').length;
-    [...bars.children].forEach((b, i) => { b.style.height = `${8 + ((i * 7) % 11)}px`; b.style.opacity = i < alive ? 1 : 0.18; });
+    const alive = em.list.filter((e) => e.state === 'fly' && e.group.visible).length;
+    [...bars.firstChild.children].forEach((b, i) => { b.style.height = `${8 + ((i * 7) % 11)}px`; b.style.opacity = i < alive ? 1 : 0.18; });
+    bars.children[1].textContent = String(alive).padStart(2, '0');
   }
 
   function dispose() { style.remove(); root.remove(); }

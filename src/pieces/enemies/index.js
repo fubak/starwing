@@ -38,10 +38,10 @@ export async function create(ctx) {
 
   // wave choreography: kicks off immediately so the first frames are busy
   const OPENING = [
-    { kind: 'v', craft: 'vulture', path: 'strafe', mirror: 1, startDist: 30, speed: 95 },        // roars past overhead from behind
-    { kind: 'snake', craft: 'hornet', path: 'swoop', mirror: -1, startDist: 240, speed: 90 },    // swoops in from the left at ~t=1.5
-    { kind: 'circle', craft: 'mantis', path: 'cross', mirror: 1, startDist: 250, speed: 70 },    // heavy ring crossing at ~t=2
-    { kind: 'line', craft: 'vulture', path: 'dive', mirror: -1, startDist: 120, speed: 100 },   // dive-bombers from above at ~t=3
+    { kind: 'v', craft: 'vulture', path: 'strafe', mirror: 1, startDist: 30, speed: 90 },        // roars past overhead from behind
+    { kind: 'snake', craft: 'hornet', path: 'swoop', mirror: -1, startDist: 170, speed: 85 },    // swoops in from the left at ~t=1.5
+    { kind: 'circle', craft: 'mantis', path: 'cross', mirror: 1, startDist: 150, speed: 65 },    // heavy ring crossing at ~t=2
+    { kind: 'line', craft: 'vulture', path: 'dive', mirror: -1, startDist: 70, speed: 95 },     // dive-bombers from above at ~t=3
   ];
   const ROTATION = [
     { kind: 'v', path: 'dive' }, { kind: 'line', path: 'strafe' }, { kind: 'snake', path: 'weave' },
@@ -56,15 +56,15 @@ export async function create(ctx) {
   OPENING.forEach(launch);
 
   events.on('player:hit', () => { shake = Math.max(shake, 1); flash = Math.max(flash, 0.35); });
-  events.on('enemy:killed', ({ position }) => { const d = position.distanceTo(camera.position); shake = Math.max(shake, THREE.MathUtils.clamp(1 - d / 120, 0, 0.7)); score += 100; });
+  events.on('enemy:killed', ({ position, kind }) => { const d = position.distanceTo(camera.position); shake = Math.max(shake, THREE.MathUtils.clamp(1 - d / 140, 0, 0.7)); score += kind === 'mantis' ? 300 : kind === 'vulture' ? 150 : 100; });
   events.on('enemy:hit', () => { score += 10; });
 
   // ---- autoplay script: chase the locked target with a little lag, fire in bursts, sweep the sky between targets
   const scriptAim = new THREE.Vector2();
   input.script = (tt) => {
     const L = hud.locked;
-    if (L) { scriptAim.lerp(L.ndc, 0.09); } else { scriptAim.lerp(new THREE.Vector2(Math.sin(tt * 0.6) * 0.45, Math.sin(tt * 0.9 + 1) * 0.25), 0.05); }
-    const burst = (tt % 1.6) < 1.1;
+    if (L) { scriptAim.lerp(L.ndc, 0.2); } else { scriptAim.lerp(new THREE.Vector2(Math.sin(tt * 0.6) * 0.45, Math.sin(tt * 0.9 + 1) * 0.25), 0.06); }
+    const burst = (tt % 1.6) < 1.2;
     return { x: THREE.MathUtils.clamp(scriptAim.x * 1.4, -1, 1), y: THREE.MathUtils.clamp(scriptAim.y * 1.4, -1, 1), buttons: burst || L ? ['fire'] : [] };
   };
 
@@ -84,7 +84,12 @@ export async function create(ctx) {
 
     // aim world point: along the reticle ray, or snapped to the lock target
     _v.set(aim.x, aim.y, 0.5).unproject(camera).sub(camera.position).normalize();
-    const target = hud.locked && hud.locked.ndc.distanceTo(aim) < 0.16 ? _w.copy(hud.locked.e.pos) : _w.copy(camera.position).addScaledVector(_v, 260);
+    // aim assist: when the reticle sits on the locked target, lead it by its flight time
+    let target;
+    if (hud.locked && hud.locked.ndc.distanceTo(aim) < 0.2) {
+      const e = hud.locked.e, tof = hud.locked.d / 460;
+      target = _w.copy(e.pos).addScaledVector(e.fwd, e.speed * tof * 0.9);
+    } else target = _w.copy(camera.position).addScaledVector(_v, 220);
 
     // player fire: twin cannons alternating below the camera
     fireCd -= dt;

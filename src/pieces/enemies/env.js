@@ -30,9 +30,9 @@ export const ENEMY_LOOK = {
   envIntensity: 0.75,
   bloom: { strength: 0.5, radius: 0.6, threshold: 0.86 },
   sun: { dir: [0.5, 0.3, -0.6], color: 0xffb870, intensity: 3.2, size: 0.035, glow: 0.6 },
-  hemi: { sky: 0x7a5cc0, ground: 0x1c2a34, intensity: 0.9 },
-  fill: { dir: [-0.55, 0.45, 0.7], color: 0xffa0b8, intensity: 2.3 },
-  fog: { color: 0xf09456, density: 0.0009 },
+  hemi: { sky: 0x8a6cd0, ground: 0x2a3a44, intensity: 1.0 },
+  fill: { dir: [-0.45, 0.4, 0.8], color: 0xd8c0ff, intensity: 2.0 },
+  fog: { color: 0xf09456, density: 0.0007 },
   sky: { zenith: 0x2a1a60, horizon: 0xff9a44, ground: 0x2a1a30, haze: 5.0, stars: 0.25, nebula: 0.3, nebulaA: 0x3a1e6a, nebulaB: 0xb0326e, milky: 0.0 },
   grade: { contrast: 1.1, saturation: 1.18, lift: 0x06020a, gain: 0xfff0e2, gamma: 1.0, vignette: 0.38, grain: 0.02 },
 };
@@ -136,9 +136,10 @@ export function createEnvironment(ctx) {
   ocean.rotation.x = -Math.PI / 2; ocean.position.y = -48;
   scene.add(ocean);
 
-  // planet rising on the left horizon (lookdev planet; own atmosphere)
-  const planet = makePlanet({ radius: 520, seed: 11, preset: look.preset });
-  planet.position.set(-1500, 110, -2600);
+  // moon hanging fully above the horizon haze on the left (so it reads as a sphere, not a dome)
+  const planet = makePlanet({ radius: 380, seed: 11, preset: look.preset });
+  planet.position.set(-1500, 640, -2800);
+  if (planet.lightDir) planet.lightDir.set(0.6, 0.35, -0.5).normalize();
   scene.add(planet);
 
   // low haze bank: a wide additive gradient card just above the horizon, sells depth
