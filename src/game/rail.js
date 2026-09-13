@@ -67,6 +67,7 @@ export async function createRail(ctx, game) {
   const { scene, camera, renderer, input, ui, rng, events, size } = ctx;
   const { hud, audio, overlay } = game;
   const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), tmp3 = new THREE.Vector3();
+  const tmpQuat = new THREE.Quaternion();
 
   // ---------- look: Corneria day, late-afternoon key over the left shoulder (same rig the world piece tunes for)
   const base = PRESETS.corneria;
@@ -321,7 +322,7 @@ export async function createRail(ctx, game) {
     underLight.target.position.copy(shipWorld); underLight.position.copy(shipWorld).add(tmp.set(0, -30, 8));
     boostLight.intensity = S.boost * 30;
     // afterburner + wingtip ribbons
-    const fwd = tmp2.set(0, 0, -1).applyQuaternion(arwing.rig.getWorldQuaternion(new THREE.Quaternion()));
+    const fwd = tmp2.set(0, 0, -1).applyQuaternion(arwing.rig.getWorldQuaternion(tmpQuat));
     trail.update(dt, arwing.rig.localToWorld(tmp.copy(arwing.nozzle)), fwd, S.boost);
     wingL.update(dt, arwing.rig.localToWorld(tmp.set(-2.75, -0.6, 1.3)), fwd, S.boost * 0.9 + Math.abs(S.bank) * 0.25);
     wingR.update(dt, arwing.rig.localToWorld(tmp.set(2.75, -0.6, 1.3)), fwd, S.boost * 0.9 + Math.abs(S.bank) * 0.25);

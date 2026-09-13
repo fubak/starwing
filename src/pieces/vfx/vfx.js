@@ -18,6 +18,7 @@ const V = () => new THREE.Vector3();
 const _a = V(), _b = V(), _c = V(), _q = new THREE.Quaternion();
 const _col = new THREE.Color(), _col2 = new THREE.Color();
 const UP = new THREE.Vector3(0, 1, 0);
+const DOWN = new THREE.Vector3(0, -1, 0);
 
 export const PALETTE = {
   playerLaser: new THREE.Color(0.35, 1.0, 0.45),
@@ -167,7 +168,7 @@ class BoostTrail {
     this.material.uniforms.uTime.value = this.time; this.material.uniforms.uIntensity.value = this.intensity;
     this.flame.position.copy(head);
     _q.setFromUnitVectors(UP, _a.copy(dir).negate().normalize()); // cone -y should point backward => cone's -y = -dir => +y = dir... set +y = -(-dir)
-    _q.setFromUnitVectors(new THREE.Vector3(0, -1, 0), _a.copy(dir).negate());
+    _q.setFromUnitVectors(DOWN, _a.copy(dir).negate());
     this.flame.quaternion.copy(_q);
     this.flameMat.uniforms.uTime.value = this.time; this.flameMat.uniforms.uIntensity.value = this.intensity;
     this.flame.visible = this.intensity > 0.02;

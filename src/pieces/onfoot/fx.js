@@ -87,22 +87,29 @@ export function makeFx(scene) {
   }
 
   // ---- pickups (rings) and drones
-  const pickups = [];
-  // Gold rings: polished metal body with a modest emissive so the torus keeps its specular
-  // highlight and silhouette; the glow comes from a thin hot inner filament + tiny sprite.
+  // Gold rings: polished metal body + hot inner filament + glow shell, drawn as three
+  // InstancedMeshes plus one Points batch for the halos (was 4 scene objects per ring).
   const ringMat = new THREE.MeshStandardMaterial({ color: 0xffc94a, emissive: 0xff9a14, emissiveIntensity: 0.55, roughness: 0.22, metalness: 0.95, envMapIntensity: 1.6 });
   const pickGeo = new THREE.TorusGeometry(0.42, 0.075, 12, 40);
   const innerGeo = new THREE.TorusGeometry(0.31, 0.014, 6, 40);
   const innerMat = new THREE.MeshBasicMaterial({ color: 0xfff1c0 });
   const innerGlowGeo = new THREE.TorusGeometry(0.31, 0.05, 6, 40);
   const innerGlowMat = new THREE.MeshBasicMaterial({ color: 0xffb040, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false });
+  const MAXPICK = 16;
+  const pickBodies = new THREE.InstancedMesh(pickGeo, ringMat, MAXPICK); pickBodies.castShadow = true; pickBodies.count = 0; group.add(pickBodies);
+  const pickInners = new THREE.InstancedMesh(innerGeo, innerMat, MAXPICK); pickInners.count = 0; group.add(pickInners);
+  const pickGlows = new THREE.InstancedMesh(innerGlowGeo, innerGlowMat, MAXPICK); pickGlows.count = 0; group.add(pickGlows);
+  const pickHaloGeo = new THREE.BufferGeometry();
+  const pickHaloPos = new Float32Array(MAXPICK * 3);
+  pickHaloGeo.setAttribute('position', new THREE.BufferAttribute(pickHaloPos, 3).setUsage(THREE.DynamicDrawUsage));
+  pickHaloGeo.setDrawRange(0, 0);
+  const pickHalos = new THREE.Points(pickHaloGeo, new THREE.PointsMaterial({ map: glowTex, color: 0xffa030, size: 1.3, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true }));
+  pickHalos.frustumCulled = false; group.add(pickHalos);
+  const pickups = [];
+  const _pm = new THREE.Matrix4(), _pq = new THREE.Quaternion(), _ps = new THREE.Vector3(1, 1, 1), _pp = new THREE.Vector3();
+  const _YUP = new THREE.Vector3(0, 1, 0);
   function addPickup(x, y, z) {
-    const g = new THREE.Group(); g.position.set(x, y, z);
-    const m = new THREE.Mesh(pickGeo, ringMat); m.castShadow = true; g.add(m);
-    g.add(new THREE.Mesh(innerGeo, innerMat));
-    g.add(new THREE.Mesh(innerGlowGeo, innerGlowMat));
-    const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffa030, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false })); spr.scale.setScalar(1.3); g.add(spr);
-    group.add(g); pickups.push({ g, base: y, alive: true, t: Math.random() * 6 });
+    pickups.push({ pos: new THREE.Vector3(x, y, z), x, y, z, base: y, alive: true, t: Math.random() * 6 });
   }
   const drones = [];
   const droneBody = new THREE.MeshStandardMaterial({ color: 0x8892a8, roughness: 0.3, metalness: 0.9, envMapIntensity: 1.2 });
@@ -162,12 +169,24 @@ export function makeFx(scene) {
       const e = 1 - Math.pow(1 - k, 3); r.m.scale.setScalar(0.2 + e * r.maxR); r.m.material.opacity = (1 - k) * r.peak;
     }
 
-    // pickups
-    for (const pk of pickups) {
-      if (!pk.alive) continue;
-      pk.t += dt; pk.g.rotation.y = pk.t * 2.2; pk.g.position.y = pk.base + Math.sin(pk.t * 2.5) * 0.12;
-      const dx = pk.g.position.x - player.x, dz = pk.g.position.z - player.z, dy = pk.g.position.y - (player.y + 0.9);
-      if (dx * dx + dz * dz < 1.1 && Math.abs(dy) < 1.4) { pk.alive = false; pk.g.visible = false; collectBurst(pk.g.position, 0xffb838); stats.rings++; onEvent?.('ring'); }
+    // pickups: write per-instance matrices (spin + bob); dead ones collapse to zero scale
+    {
+      let k = 0;
+      for (const pk of pickups) {
+        if (!pk.alive) continue;
+        pk.t += dt; pk.pos.y = pk.base + Math.sin(pk.t * 2.5) * 0.12;
+        _pq.setFromAxisAngle(_YUP, pk.t * 2.2);
+        _pp.set(pk.pos.x, pk.pos.y, pk.pos.z);
+        _pm.compose(_pp, _pq, _ps);
+        pickBodies.setMatrixAt(k, _pm); pickInners.setMatrixAt(k, _pm); pickGlows.setMatrixAt(k, _pm);
+        pickHaloPos[k * 3] = pk.pos.x; pickHaloPos[k * 3 + 1] = pk.pos.y; pickHaloPos[k * 3 + 2] = pk.pos.z;
+        k++;
+        const dx = pk.pos.x - player.x, dz = pk.pos.z - player.z, dy = pk.pos.y - (player.y + 0.9);
+        if (dx * dx + dz * dz < 1.1 && Math.abs(dy) < 1.4) { pk.alive = false; collectBurst(pk.pos, 0xffb838); stats.rings++; onEvent?.('ring'); }
+      }
+      pickBodies.count = pickInners.count = pickGlows.count = k;
+      pickBodies.instanceMatrix.needsUpdate = pickInners.instanceMatrix.needsUpdate = pickGlows.instanceMatrix.needsUpdate = true;
+      pickHaloGeo.setDrawRange(0, k); pickHaloGeo.attributes.position.needsUpdate = true;
     }
     // drones
     for (const d of drones) {

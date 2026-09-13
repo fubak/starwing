@@ -7,6 +7,7 @@ import { Input } from './input.js';
 import { Rng } from './rng.js';
 import { AudioBus } from './audio.js';
 import { Events } from './events.js';
+import { Stats } from './stats.js';
 
 /**
  * Engine: owns renderer, post-processing chain, input, audio, fixed/variable
@@ -26,7 +27,9 @@ export class Engine {
     this.events = new Events();
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    this.basePixelRatio = Math.min(devicePixelRatio || 1, 1.5); // cap DPR: 2x+ is pure fill cost
+    this.renderScale = 1;                                     // adaptive resolution scaler [0.6, 1]
+    this.renderer.setPixelRatio(this.basePixelRatio);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
@@ -49,6 +52,12 @@ export class Engine {
     this.input = new Input(autoplay);
     this.audio = new AudioBus();
     this.size = new THREE.Vector2();
+    this.stats = new Stats(this);
+
+    // adaptive resolution scaling state
+    this._slowAcc = 0;   // seconds spent above the slow threshold
+    this._fastAcc = 0;   // seconds spent comfortably fast
+    this._scaleCooldown = 0;
 
     this.time = 0;
     this.frame = 0;
@@ -78,12 +87,50 @@ export class Engine {
     };
   }
 
+  /** Apply basePixelRatio * renderScale to renderer + composer buffers. */
+  _applyPixelRatio() {
+    const pr = this.basePixelRatio * this.renderScale;
+    this.renderer.setPixelRatio(pr);
+    if (this.composer.setPixelRatio) this.composer.setPixelRatio(pr);
+    const w = this.size.x || this.container.clientWidth || innerWidth;
+    const h = this.size.y || this.container.clientHeight || innerHeight;
+    this.renderer.setSize(w, h);
+    this.composer.setSize(w, h);
+  }
+
+  /**
+   * Adaptive resolution: sustained frame time > ~30 ms steps the render scale
+   * down (to a 0.6 floor); sustained comfort (< ~18 ms) steps it back up.
+   */
+  /** Test/probe hook: freeze the adaptive scaler at a fixed scale (or null to re-enable). */
+  pinScale(v) {
+    this._scalePinned = v != null;
+    if (v != null) { this.renderScale = v; this._applyPixelRatio(); }
+  }
+
+  _adaptiveScale(dt, frameMs) {
+    if (this._scalePinned) return;
+    this._scaleCooldown = Math.max(0, this._scaleCooldown - dt);
+    if (frameMs > 30) { this._slowAcc += dt; this._fastAcc = 0; }
+    else if (frameMs < 18) { this._fastAcc += dt; this._slowAcc = 0; }
+    else { this._slowAcc = Math.max(0, this._slowAcc - dt); this._fastAcc = 0; }
+    if (this._scaleCooldown > 0) return;
+    if (this._slowAcc >= 1 && this.renderScale > 0.6) {
+      this.renderScale = Math.max(0.6, +(this.renderScale - 0.1).toFixed(2));
+      this._applyPixelRatio();
+      this._slowAcc = 0; this._scaleCooldown = 1;
+    } else if (this._fastAcc >= 2 && this.renderScale < 1) {
+      this.renderScale = Math.min(1, +(this.renderScale + 0.1).toFixed(2));
+      this._applyPixelRatio();
+      this._fastAcc = 0; this._scaleCooldown = 1;
+    }
+  }
+
   resize() {
     const w = this.container.clientWidth || innerWidth;
     const h = this.container.clientHeight || innerHeight;
     this.size.set(w, h);
-    this.renderer.setSize(w, h);
-    this.composer.setSize(w, h);
+    this._applyPixelRatio();
     const cam = this.piece?.camera ?? this.camera;
     cam.aspect = w / h;
     cam.updateProjectionMatrix();
@@ -115,7 +162,11 @@ export class Engine {
     this.input.update(dt, this.time);
     this.piece?.update(dt, this.time);
     this.audio.update(dt);
+    const r0 = performance.now();
     this.composer.render(dt);
+    const r1 = performance.now();
+    this.stats.update();
+    this._adaptiveScale(dt, this.fixedStep ? r1 - r0 : (this.stats._ms || 16));
     this.input.endFrame();
   }
 
@@ -130,5 +181,13 @@ export class Engine {
     this.piece?.dispose?.();
     this.piece = null;
     this.renderPass.camera = this.camera;
+  }
+
+  dispose() {
+    this.stop();
+    removeEventListener('resize', this._resize);
+    this.stats.dispose();
+    this.composer.dispose?.();
+    this.renderer.dispose();
   }
 }

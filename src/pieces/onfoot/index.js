@@ -19,7 +19,11 @@ export async function create(ctx) {
   const { scene, camera, renderer, bloom, input, ui, composer } = ctx;
 
   // ---- render setup (restored on dispose)
-  const prev = { bloomStrength: bloom.strength, bloomRadius: bloom.radius, bloomThreshold: bloom.threshold, exposure: renderer.toneMappingExposure, fov: camera.fov };
+  const prev = { bloomStrength: bloom.strength, bloomRadius: bloom.radius, bloomThreshold: bloom.threshold, exposure: renderer.toneMappingExposure, fov: camera.fov, shadowAuto: renderer.shadowMap.autoUpdate };
+  // Shadow pass at half rate: one spot shadow map covers ~300 casters; updating it on
+  // alternate frames halves the shadow draw calls while the follow-light lag stays sub-pixel.
+  renderer.shadowMap.autoUpdate = false;
+  let shadowTick = 0;
   // Bloom is a tight, high-threshold accent: only genuinely hot pixels (lamp faces, bolt
   // cores, ring filaments) glow, and only a little — the character must never disappear.
   bloom.strength = 0.38; bloom.radius = 0.32; bloom.threshold = 0.92;
@@ -121,6 +125,7 @@ export async function create(ctx) {
 
   function update(dt, t) {
     dt = Math.min(dt, 1 / 30);
+    renderer.shadowMap.needsUpdate = (shadowTick++ & 1) === 0;
     hangar.update(dt, t);
 
     // --- input → desired move in camera space
@@ -266,6 +271,7 @@ export async function create(ctx) {
     setHudVisible: (v) => hud.setVisible(v),
     setTitle: (a, b) => hud.setTitle(a, b),
     dispose() {
+      renderer.shadowMap.autoUpdate = prev.shadowAuto; renderer.shadowMap.needsUpdate = true;
       hangar.dispose(); fx.dispose(); hud.dispose();
       scene.remove(pilot.root); pilot.root.traverse((o) => { o.geometry?.dispose?.(); o.material?.dispose?.(); });
       scene.environment = null; env.dispose(); scene.background = null;

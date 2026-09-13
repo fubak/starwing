@@ -77,6 +77,11 @@ class Stage {
     this.rig = { pos: new THREE.Vector3(0, 2, 10), look: new THREE.Vector3(0, 0, 0), fov: 50, roll: 0, shake: 0, lambda: 0, cut: true };
     this._p = new THREE.Vector3(); this._l = new THREE.Vector3(); this._dt = 1 / 60;
     this.time = 0;
+    // Shadow pass at half rate: the hero-framed shadow frustum re-renders all in-frustum
+    // casters each frame; at 30 Hz the lag is invisible on cinematic moves.
+    this._shadowAuto0 = ctx.renderer.shadowMap.autoUpdate;
+    ctx.renderer.shadowMap.autoUpdate = false;
+    this._shadowTick = 0;
 
     // post
     const { bloom } = ctx;
@@ -110,6 +115,7 @@ class Stage {
 
   update(dt, t) {
     this._dt = dt; this.time = t;
+    this.ctx.renderer.shadowMap.needsUpdate = (this._shadowTick++ & 1) === 0;
     // Harness (fixed-step) mode: force a GPU sync per frame so the post-process work of
     // stepped frames is paid inside stepFrames() rather than piling up into the screenshot.
     if (this.ctx.engine?.fixedStep) {
@@ -135,6 +141,7 @@ class Stage {
 
   dispose() {
     const { bloom, scene, renderer } = this.ctx;
+    renderer.shadowMap.autoUpdate = this._shadowAuto0; renderer.shadowMap.needsUpdate = true;
     bloom.strength = this._bloom.s; bloom.radius = this._bloom.r; bloom.threshold = this._bloom.t;
     renderer.toneMappingExposure = 1;
     // Only tear down what this stage created: lookdev look (lights/env/sky/grade), the planet,

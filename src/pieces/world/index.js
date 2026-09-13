@@ -114,8 +114,13 @@ export function createWorld(ctx, opts = {}) {
   let dist = 0, time = 0, reflFresh = false;
   const camPos = new THREE.Vector3();
   const prevShadowAuto = renderer.shadowMap.autoUpdate;
+  let reflTick = 0;
   const doReflection = () => {
     if (!useReflection) return;
+    // Reflection runs at half frame rate: the 640x360 mirror is heavily ripple-distorted
+    // so one frame of lag is invisible, and this halves the mirrored scene's draw calls
+    // (the mirror pass is also what re-renders the shadow maps, so they update at 30 Hz).
+    if (reflTick++ & 1) { reflFresh = true; return; }
     water.renderReflection(renderer, scene, camera, [motes.mesh]);
     reflFresh = true;
   };
@@ -140,6 +145,8 @@ export function createWorld(ctx, opts = {}) {
     spawnZone(name) { schedule.spawn(name, dist); },
     /** Render the water reflection for the camera's current pose. Call after posing the camera. */
     preRender() { doReflection(); },
+    /** Let callers force a fresh reflection next frame (e.g. after a camera cut). */
+    refreshReflection() { reflTick = 0; reflFresh = false; },
     update(dt, speed) {
       // lazy fallback: caller didn't preRender() last frame -> reflect with the previous pose
       if (!reflFresh) doReflection();
