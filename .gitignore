@@ -2,3 +2,9 @@ node_modules
 dist
 shots/**/*.webm
 .vite
+shots/**/probe*
+shots/.probe*
+shots/_*.mjs
+shots/_*.sh
+shots/*.log
+shots/*_probe/
