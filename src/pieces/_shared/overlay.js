@@ -52,6 +52,7 @@ export function createGameOverlay(ui) {
   ui.appendChild(root);
 
   const st = { fade: 1, fadeTarget: 1, fadeSpeed: 1.6, letter: 0, letterTarget: 0, capT: -1, capDur: 0, objT: 0, hintT: 0, hintTimer: 0, paused: false };
+  let lastWall = 0;
 
   const api = {
     root,
@@ -78,6 +79,13 @@ export function createGameOverlay(ui) {
     gameOver(sub) { if (sub == null || sub === false) { over.style.opacity = '0'; return; } over.querySelector('.s').textContent = sub; over.style.opacity = '1'; },
     vignette(a) { vig.style.opacity = String(clamp01(a)); },
     update(dt) {
+      // Wall-clock floor: under software GL a rendered frame can take ~1 s while sim dt is
+      // clamped to 0.05 s, which would stretch fades/captions over many wall-seconds of black.
+      // Use the larger of sim dt and (capped) real elapsed time so chrome always feels snappy.
+      const now = performance.now();
+      const wdt = lastWall ? Math.min(0.6, (now - lastWall) / 1000) : dt;
+      lastWall = now;
+      dt = Math.max(dt, wdt);
       // fade
       const d = st.fadeTarget - st.fade;
       if (Math.abs(d) > 0.0005) { const step = st.fadeSpeed * dt; st.fade += Math.abs(d) <= step ? d : Math.sign(d) * step; fade.style.opacity = st.fade.toFixed(3); }

@@ -117,10 +117,10 @@ export function createWorld(ctx, opts = {}) {
   let reflTick = 0;
   const doReflection = () => {
     if (!useReflection) return;
-    // Reflection runs at half frame rate: the 640x360 mirror is heavily ripple-distorted
-    // so one frame of lag is invisible, and this halves the mirrored scene's draw calls
-    // (the mirror pass is also what re-renders the shadow maps, so they update at 30 Hz).
-    if (reflTick++ & 1) { reflFresh = true; return; }
+    // Reflection runs at third frame rate: the 640x360 mirror is heavily ripple-distorted
+    // so two frames of lag are invisible, and this cuts the mirrored scene's draw calls
+    // (the mirror pass is also what re-renders the shadow maps, so they update at 20 Hz).
+    if (reflTick++ % 3) { reflFresh = true; return; }
     water.renderReflection(renderer, scene, camera, [motes.mesh]);
     reflFresh = true;
   };

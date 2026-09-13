@@ -16,6 +16,8 @@ class Pool {
     this.free = [];
     for (let i = capacity - 1; i >= 0; i--) { this.free.push(i); this.mesh.setMatrixAt(i, ZERO); }
     this.mesh.instanceMatrix.needsUpdate = true;
+    this.hi = 0;                 // high-water mark: mesh.count is clamped to live range in flush()
+    this.mesh.count = 0;         // nothing live yet -> zero instanced triangles drawn/counted
     if (extras) {
       this.seed = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
       this.accent = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
@@ -26,6 +28,7 @@ class Pool {
   claim(x, y, z, ry, sx, sy, sz, tint, rx = 0, rz = 0) {
     if (!this.free.length) return -1;
     const i = this.free.pop();
+    if (i + 1 > this.hi) this.hi = i + 1;
     _e.set(rx, ry, rz); _q.setFromEuler(_e);
     _m.compose(_p.set(x, y, z), _q, _s.set(sx, sy, sz));
     this.mesh.setMatrixAt(i, _m);
@@ -41,6 +44,9 @@ class Pool {
   }
   release(i) { this.mesh.setMatrixAt(i, ZERO); this.free.push(i); this.dirty = true; }
   flush() {
+    // shrink the drawn range to the highest live slot (dead capacity would still be
+    // rasterised as degenerate tris and counted by renderer.info on every pass)
+    this.mesh.count = this.hi;
     if (!this.dirty) return;
     this.mesh.instanceMatrix.needsUpdate = true;
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
@@ -175,7 +181,7 @@ function buildingGeometries() {
   // 2 twin towers with skybridge
   list.push(mergeGeometries([bx(0.42, 1, 0.5, -0.29, 0, 0), bx(0.42, 0.82, 0.5, 0.29, 0, 0), bx(0.3, 0.07, 0.3, 0, 0.6, 0), bx(0.3, 0.05, 0.36, -0.29, 1, 0)], false));
   // 3 drum (cylindrical) tower with flared cap
-  list.push(mergeGeometries([(() => { const c = new THREE.CylinderGeometry(0.5, 0.5, 1, 24, 1); c.translate(0, 0.5, 0); return c; })(), (() => { const c = new THREE.CylinderGeometry(0.56, 0.5, 0.06, 24, 1); c.translate(0, 1.03, 0); return c; })(), (() => { const c = new THREE.CylinderGeometry(0.3, 0.42, 0.06, 24, 1); c.translate(0, 1.09, 0); return c; })()], false));
+  list.push(mergeGeometries([(() => { const c = new THREE.CylinderGeometry(0.5, 0.5, 1, 16, 1); c.translate(0, 0.5, 0); return c; })(), (() => { const c = new THREE.CylinderGeometry(0.56, 0.5, 0.06, 16, 1); c.translate(0, 1.03, 0); return c; })(), (() => { const c = new THREE.CylinderGeometry(0.3, 0.42, 0.06, 16, 1); c.translate(0, 1.09, 0); return c; })()], false));
   // 4 podium + slender tower (offset)
   list.push(mergeGeometries([bx(1, 0.14, 1, 0, 0, 0), bx(0.46, 1, 0.56, 0.12, 0.14, -0.1), bx(0.3, 0.05, 0.3, 0.12, 1.14, -0.1)], false));
   // 5 wide slab with fins (short-wide massing)
@@ -189,7 +195,7 @@ function blockGeometry() {
 }
 function spireGeometry(rng) {
   // tapered, twisted rock needle with strata vertex colours (flat-shaded)
-  const g = new THREE.ConeGeometry(1, 1, 14, 12, false);
+  const g = new THREE.ConeGeometry(1, 1, 12, 7, false);
   g.translate(0, 0.5, 0);
   const pos = g.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -259,7 +265,7 @@ function broadleafGeometry() {
   const trunk = new THREE.CylinderGeometry(0.07, 0.13, 0.7, 5).toNonIndexed(); trunk.translate(0, 0.35, 0);
   const blobs = [[0, 1.05, 0, 0.55], [0.3, 0.9, 0.1, 0.36], [-0.3, 0.95, -0.1, 0.38], [0.05, 1.3, -0.25, 0.3], [-0.05, 1.25, 0.28, 0.3]];
   const parts = [trunk];
-  for (const [x, y, z, r] of blobs) { const b = new THREE.IcosahedronGeometry(r, 1); b.translate(x, y, z); parts.push(b); }
+  for (const [x, y, z, r] of blobs) { const b = new THREE.IcosahedronGeometry(r, 0); b.translate(x, y, z); parts.push(b); }   // det 0: 20 tri blobs read chunky-Stylised at range
   const g = mergeGeometries(parts, false);
   return paintTree(g, trunk.attributes.position.count, 0x3d7d2a, 0xa8d24a, 1.0);
 }
@@ -270,7 +276,7 @@ function cypressGeometry() {
   return paintTree(g, trunk.attributes.position.count, 0x1d5c3d, 0x4f9a55, 1.4);
 }
 function archGeometry() {
-  const arc = new THREE.TorusGeometry(1, 0.05, 10, 56, Math.PI);
+  const arc = new THREE.TorusGeometry(1, 0.05, 8, 40, Math.PI);
   // pylons: the ring stands on two flared piers rising out of the water
   const pillarL = new THREE.CylinderGeometry(0.07, 0.12, 0.6, 10); pillarL.translate(-1, -0.28, 0);
   const pillarR = pillarL.clone(); pillarR.translate(2, 0, 0);
@@ -320,7 +326,9 @@ export class Props {
     this.pines = new Pool(pineGeometry(), this.treeMat, 700);
     this.broad = new Pool(broadleafGeometry(), this.treeMat, 500);
     this.cypress = new Pool(cypressGeometry(), this.treeMat, 300);
-    for (const p of [this.pines, this.broad, this.cypress]) p.mesh.receiveShadow = false;
+    // trees neither cast nor receive shadows: thousands of instanced tris per shadow pass
+    // are invisible from the rail altitude anyway (sun is low, canopies are rounded)
+    for (const p of [this.pines, this.broad, this.cypress]) { p.mesh.receiveShadow = false; p.mesh.castShadow = false; }
     this.arches = new Pool(archGeometry(), this.archMat, 24);
     this.beacons = new Pool(new THREE.SphereGeometry(1, 8, 6), this.beaconMat, 220, { shadow: false });
     this.pools = [...this.buildings, this.blocks, this.spires, this.rocks, this.pines, this.broad, this.cypress, this.arches, this.beacons];
@@ -446,5 +454,10 @@ export class Props {
     this.chunkClaims.set(i, claims);
   }
 
-  flush() { for (const p of this.pools) p.flush(); }
+  flush() {
+    // recompute the high-water mark per pool from live claims so released tail slots drop out
+    const hi = new Map();
+    for (const arr of this.chunkClaims.values()) for (const { pool, id } of arr) { const m = hi.get(pool) ?? 0; if (id + 1 > m) hi.set(pool, id + 1); }
+    for (const p of this.pools) { p.hi = hi.get(p) ?? 0; p.flush(); }
+  }
 }

@@ -124,11 +124,11 @@ export async function create(ctx) {
       const piece = await mod.create(ctx, { embedded: true, hudTop: 70 });
       overlay.raise();
       overlay.caption('MISSION 1 · CORNERIA', 'GORGON', 'VENOMIAN DREADNOUGHT', 3.4);
-      overlay.objective('OBJECTIVE', 'DESTROY THE GORGON');
       let won = -1, dead = false;
       return {
         update(dt, t) {
           piece.update(dt, t);
+          // (no overlay objective here: the boss HUD already draws the name + gauge at top-centre)
           const S = piece.debug?.S;
           if ((S?.won || S?.destruct?.won) && won < 0) { won = 0; overlay.objective('', ''); mergeStats({ score: 8000 + Math.round(S.score ?? 0), hits: 1 + (S.hits ?? 0), shots: S.hits ?? 0, landed: S.hits ?? 0 }); }
           if (won >= 0) { won += dt; if (won > 5.2 && !dead) { dead = true; game.next(); } }
@@ -143,9 +143,10 @@ export async function create(ctx) {
       audio?.playMusic?.('battle');
       const piece = await mod.create(ctx, { respawn: false });
       piece.setRespawn?.(false);
+      if (typeof window !== 'undefined') window.__space = piece; // probe hook
       overlay.raise();
       overlay.caption('MISSION 2 · METEO', 'ASTEROID BELT', 'ALL-RANGE MODE', 3.4);
-      overlay.hint('<b>WASD</b> PITCH / ROLL &nbsp; <b>SPACE</b> FIRE &nbsp; <b>SHIFT</b> BOOST &nbsp; <b>CTRL</b> BRAKE &nbsp; <b>Q/E</b> ROLL', 9);
+      // (piece draws its own control strip — no overlay hint here)
       const LIMIT = 180; // hard cap so the campaign can never stall here
       let ended = false, doneT = -1, lastLeft = -1;
       return {
@@ -153,7 +154,8 @@ export async function create(ctx) {
           piece.update(dt, t);
           const left = piece.dronesRemaining ?? 0;
           if (doneT < 0) {
-            if (left !== lastLeft) { lastLeft = left; overlay.objective('DESTROY THE DRONES · REMAINING', `${left}`); }
+            // hold the objective line until the entry caption has cleared
+            if (stageT > 4.0 && left !== lastLeft) { lastLeft = left; overlay.objective('DESTROY THE DRONES · REMAINING', `${left}`); }
             if (left === 0 || piece.complete) { doneT = 0; overlay.objective('', ''); }
           } else doneT += dt;
           if (((doneT > 3.4) || stageT > LIMIT) && !ended) { ended = true; mergeStats({ score: piece.score ?? 0, hits: piece.kills ?? 0, shots: (piece.kills ?? 0) * 4, landed: (piece.kills ?? 0) * 3 }); game.next(); }
@@ -164,15 +166,16 @@ export async function create(ctx) {
     async onfoot() {
       const mod = mods.onfoot; if (!mod?.create) return null;
       audio?.playMusic?.('main');
+      ctx.onfoot = { hudTitle: false };          // the campaign caption does the title card
       const piece = await mod.create(ctx);
       overlay.raise();
       overlay.caption('MISSION 3 · VENOM OUTPOST', 'THE HANGAR', 'ON FOOT', 3.4);
-      overlay.objective('OBJECTIVE', 'REACH THE BLAST DOOR');
-      overlay.hint('<b>WASD</b> RUN &nbsp; <b>SPACE</b> JUMP &nbsp; <b>J</b> BLASTER &nbsp; <b>Q/E</b> ROLL &nbsp; <b>F / ENTER</b> OPEN DOOR', 9);
-      let ended = false, doneT = -1;
+      // (piece draws its own control strip — no overlay hint here)
+      let ended = false, doneT = -1, objSet = false;
       return {
         update(dt, t) {
           piece.update(dt, t);
+          if (!objSet && stageT > 4.0) { objSet = true; overlay.objective('OBJECTIVE', 'REACH THE BLAST DOOR'); }
           if (doneT < 0 && (piece.doorUnlocked || piece.complete)) { doneT = 0; overlay.objective('', ''); }
           if (doneT >= 0) doneT += dt;
           if (((doneT > 3.5) || stageT > 180) && !ended) { ended = true; mergeStats({ score: 2500 + (piece.ringsCollected ?? 0) * 200 + (piece.dronesDestroyed ?? 0) * 300, hits: piece.dronesDestroyed ?? 0 }); game.next(); }

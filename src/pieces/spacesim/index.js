@@ -125,8 +125,8 @@ export async function create(ctx, opts = {}) {
     const g = droneKit.make();
     scene.add(g);
     drones.push({
-      obj: g, name: droneNames[i], phase: rng.range(0, 6.28), r: rng.range(90, 240), spd: rng.range(0.14, 0.3) * rng.sign(),
-      tilt: rng.range(-0.6, 0.6), hp: 3, dead: 0, prev: new THREE.Vector3(), hit: 0,
+      obj: g, name: droneNames[i], phase: rng.range(0, 6.28), r: rng.range(70, 180), spd: rng.range(0.08, 0.17) * rng.sign(),
+      tilt: rng.range(-0.6, 0.6), hp: 1, dead: 0, prev: new THREE.Vector3(), hit: 0,
     });
   }
 
@@ -375,11 +375,25 @@ export async function create(ctx, opts = {}) {
     if (input.isHeld('fire') && ship.fireCd <= 0 && !(m && m.type !== 'barrel')) { fire(); ship.fireCd = 0.13; }
     for (const b of bolts) {
       if (!b.mesh.visible) continue;
-      b.life -= dt; b.mesh.position.addScaledVector(b.vel, dt);
+      b.life -= dt;
+      // gentle homing: player bolts curve toward the locked drone while roughly inbound
+      {
+        const d = drones[lockedIdx];
+        if (d && d.dead <= 0) {
+          _v.copy(d.obj.position).sub(b.mesh.position);
+          const dist = _v.length();
+          if (dist < 460 && dist > 4) {
+            const sp = b.vel.length();
+            _v.divideScalar(dist);
+            if (_v.dot(b.vel) > 0) { b.vel.lerp(_v.multiplyScalar(sp), Math.min(0.16, 3.5 * dt)).normalize().multiplyScalar(sp); }
+          }
+        }
+      }
+      b.mesh.position.addScaledVector(b.vel, dt);
       if (b.life <= 0) { b.mesh.visible = false; continue; }
       for (const d of drones) {
         if (d.dead > 0) continue;
-        if (b.mesh.position.distanceToSquared(d.obj.position) < 8 * 8) {
+        if (b.mesh.position.distanceToSquared(d.obj.position) < 14 * 14) {
           b.mesh.visible = false; d.hp--; d.hit = 1; look.flash(0.12);
           explode(b.mesh.position, 0.35);
           if (d.hp <= 0) {
@@ -404,17 +418,23 @@ export async function create(ctx, opts = {}) {
     }
 
     // ---- drones
-    anchor.lerp(ship.pos, damp(0.35, dt));
+    // the swarm anchors ahead of the ship's nose (all-range convention: targets live in the
+    // forward hemisphere so attack runs actually cross the reticle instead of orbiting behind)
+    _v.copy(FWD).applyQuaternion(ship.quat).multiplyScalar(150).add(ship.pos);
+    anchor.lerp(_v, damp(0.45, dt));
     // next wave (standalone demo only; the campaign should listen for onComplete instead)
     if (mission.complete && mission.respawn && t - mission.completeAt > 3.2) {
       mission.complete = false; mission.completeAt = -1; mission.wave++;
-      for (const d of drones) { d.dead = 0; d.hp = 3; d.obj.visible = true; d.phase += 2.3; d.r = rng.range(90, 240); }
+      for (const d of drones) { d.dead = 0; d.hp = 1; d.obj.visible = true; d.phase += 2.3; d.r = rng.range(70, 180); }
       hud.callout(`WAVE ${mission.wave}`, 1.6);
     }
     for (const d of drones) {
       const a = d.phase + t * d.spd;
       d.prev.copy(d.obj.position);
-      d.obj.position.set(anchor.x + Math.cos(a) * d.r, anchor.y + Math.sin(a * 1.7 + d.tilt) * 55, anchor.z + Math.sin(a) * d.r * 0.85);
+      // attack runs: the orbit radius breathes so each drone periodically sweeps across the
+      // player's nose instead of circling at max range forever (keeps the objective killable)
+      const rr = d.r * (0.38 + 0.62 * (0.5 + 0.5 * Math.sin(t * 0.26 + d.phase * 1.7)));
+      d.obj.position.set(anchor.x + Math.cos(a) * rr, anchor.y + Math.sin(a * 1.7 + d.tilt) * 55, anchor.z + Math.sin(a) * rr * 0.85);
       _v.copy(d.obj.position).sub(d.prev);
       if (_v.lengthSq() > 1e-6 && dt > 0) { _v2.copy(d.obj.position).add(_v); d.obj.lookAt(_v2); d.obj.rotateZ(Math.sin(a * 3) * 0.4); }
       d.hit *= 1 - damp(8, dt);
@@ -529,5 +549,6 @@ export async function create(ctx, opts = {}) {
     onComplete(fn) { completeListeners.push(fn); return () => { const i = completeListeners.indexOf(fn); if (i >= 0) completeListeners.splice(i, 1); }; },
     /** Integrator: set false so a cleared sector stays cleared (no wave respawn). */
     setRespawn(v) { mission.respawn = !!v; },
+    _dbg: { drones, bolts, ship, get locked() { return lockedIdx; } },
   };
 }
