@@ -1,6 +1,6 @@
 {
  "started": "2026-09-06T11:14:08.452495+00:00",
- "updated": 1789328423,
+ "updated": 1789339192,
  "wave": 2,
  "phase": "finished",
  "pieces": {
@@ -114,10 +114,6 @@
   }
  },
  "log": [
-  "11:14:08 lookdev: builder round 1 start",
-  "11:14:08 ship: builder round 1 start",
-  "11:14:08 flight: builder round 1 start",
-  "11:14:08 world: builder round 1 start",
   "11:14:08 enemies: builder round 1 start",
   "11:14:08 vfx: builder round 1 start",
   "11:14:08 hud: builder round 1 start",
@@ -313,7 +309,11 @@
   "18:58:49 playtest 3 start",
   "19:40:23 playtest 3: fully_playable=True \u2014 Full campaign completed end-to-end in one continuous run: title -> intro -> rail (Corneria, ~82s) -> GORGON boss -> all-range asteroid belt -> on-foot hangar ->",
   "19:40:23 playtest 3 blockers: Minor perf concern only: the 'complete' (mission-complete) stage renders ~423 draw calls at 1920x1080 (?stage=complete measured via shots/perf_probe.mjs, shots/perf.json), slightly over the 400-call guideline \u2014 likely per-mesh stat screens; all other stages are 120-340 calls and all stages are well ",
-  "19:40:23 finish workflow done"
+  "19:40:23 finish workflow done",
+  "20:38:26 === PERF PASS 2: 60fps target + seamless transitions ===",
+  "22:39:52 perf2-1 done \u2014 Perf pass 2 committed (cca4ed8). Core win: seamless stage transitions via (a) a shared cinematic Director kept alive across title/intro/complete and parked duri",
+  "22:39:52 perf2-2 done \u2014 Perf pass 2 committed (cca4ed8). Core win: seamless stage transitions via (a) a shared cinematic Director kept alive across title/intro/complete and parked duri",
+  "22:39:52 perf pass 2 workflow done"
  ],
  "playtest": {
   "round": 3,
