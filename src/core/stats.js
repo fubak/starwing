@@ -18,7 +18,9 @@ export class Stats {
 
     this._frames = 0;
     this._acc = 0;      // accumulated frame ms
-    this._max = 0;
+    this._max = 0;      // worst frame in the current 250ms window
+    this._maxSeen = 0;  // worst frame of the last ~10 windows (sticky hitch meter)
+    this._maxSeenN = 0;
     this._last = performance.now();
     this._fps = 0;
     this._ms = 0;
@@ -43,6 +45,7 @@ export class Stats {
     if (this._acc >= 250) { // refresh ~4x/sec
       this._fps = 1000 * this._frames / this._acc;
       this._ms = this._acc / this._frames;
+      this._maxSeen = Math.max(this._max, this._maxSeen * 0.8); // sticky, decays ~4s
       this._frames = 0; this._acc = 0;
       if (this.visible) this._draw();
       this._max = 0;
@@ -52,11 +55,14 @@ export class Stats {
   _draw() {
     const info = this.engine.renderer.info;
     const scale = this.engine.renderScale ?? 1;
+    const camp = typeof window !== 'undefined' ? window.__campaign : null;
+    const warm = camp?.warm;
     this.el.textContent =
-      `${this._fps.toFixed(0).padStart(3)} fps  ${this._ms.toFixed(1)} ms\n` +
+      `${this._fps.toFixed(0).padStart(3)} fps  ${this._ms.toFixed(1)} ms  worst ${this._maxSeen.toFixed(0)}\n` +
       `calls ${info.render.calls}  tris ${(info.render.triangles / 1e3).toFixed(0)}k\n` +
       `geo ${info.memory.geometries}  tex ${info.memory.textures}\n` +
-      `scale ${(scale * 100).toFixed(0)}%`;
+      `scale ${(scale * 100).toFixed(0)}%` +
+      (camp ? `\nstage ${camp.stage}${warm ? `  warm ${warm.name}:${warm.done ? 'done' : warm.remaining}` : ''}` : '');
   }
 
   dispose() {

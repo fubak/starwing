@@ -1,72 +1,9 @@
 [
-  {
-    "stage": "title",
-    "ms": 1021.8,
-    "calls": 120,
-    "tris": 68646,
-    "geo": 83,
-    "tex": 24,
-    "scale": 1,
-    "errs": 0
-  },
-  {
-    "stage": "intro",
-    "ms": 777.1,
-    "calls": 263,
-    "tris": 40997,
-    "geo": 184,
-    "tex": 25,
-    "scale": 1,
-    "errs": 0
-  },
-  {
-    "stage": "rail",
-    "ms": 1177.2,
-    "calls": 163,
-    "tris": 210719,
-    "geo": 125,
-    "tex": 26,
-    "scale": 1,
-    "errs": 0
-  },
-  {
-    "stage": "boss",
-    "ms": 938.2,
-    "calls": 220,
-    "tris": 90177,
-    "geo": 183,
-    "tex": 24,
-    "scale": 1,
-    "errs": 0
-  },
-  {
-    "stage": "space",
-    "ms": 1732.8,
-    "calls": 192,
-    "tris": 205052,
-    "geo": 111,
-    "tex": 29,
-    "scale": 1,
-    "errs": 0
-  },
-  {
-    "stage": "onfoot",
-    "ms": 919.3,
-    "calls": 340,
-    "tris": 66776,
-    "geo": 239,
-    "tex": 42,
-    "scale": 1,
-    "errs": 0
-  },
-  {
-    "stage": "complete",
-    "ms": 643.7,
-    "calls": 423,
-    "tris": 95282,
-    "geo": 281,
-    "tex": 39,
-    "scale": 1,
-    "errs": 0
-  }
+  { "stage": "title",    "ms": 403.5,  "calls": 69,  "tris": 68646,  "geo": 134, "tex": 27, "scale": 1, "errs": 0 },
+  { "stage": "intro",    "ms": 453.2,  "calls": 264, "tris": 41026,  "geo": 187, "tex": 27, "scale": 1, "errs": 0 },
+  { "stage": "rail",     "ms": 609.2,  "calls": 118, "tris": 210447, "geo": 94,  "tex": 26, "scale": 1, "errs": 0 },
+  { "stage": "boss",     "ms": 488.6,  "calls": 220, "tris": 90177,  "geo": 218, "tex": 29, "scale": 1, "errs": 0 },
+  { "stage": "space",    "ms": 1085.8, "calls": 124, "tris": 205032, "geo": 82,  "tex": 29, "scale": 1, "errs": 0 },
+  { "stage": "onfoot",   "ms": 531.1,  "calls": 289, "tris": 66776,  "geo": 208, "tex": 42, "scale": 1, "errs": 0 },
+  { "stage": "complete", "ms": 373.2,  "calls": 219, "tris": 95276,  "geo": 157, "tex": 39, "scale": 1, "errs": 0 }
 ]

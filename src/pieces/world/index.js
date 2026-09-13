@@ -38,6 +38,19 @@ const SUN_DIST = 1400;
  * water reflection matches the camera; if omitted it is rendered lazily one frame late.
  */
 export function createWorld(ctx, opts = {}) {
+  const b = beginWorld(ctx, opts);
+  while (!b.done) b.step();
+  return b.world;
+}
+
+/**
+ * Incremental createWorld: returns { world, step(), done }. Every step builds one
+ * unit (a backdrop, or one terrain chunk + its props) so a stage transition can
+ * spread construction across frames; rng consumption order matches createWorld's
+ * exactly, so warmed and synchronous builds produce identical worlds. `world` is
+ * safe to use only once `done` is true.
+ */
+export function beginWorld(ctx, opts = {}) {
   const { scene, camera, renderer } = ctx;
   const rng = ctx.rng;
   const group = new THREE.Group();          // scrolling content (terrain + props)
@@ -46,15 +59,19 @@ export function createWorld(ctx, opts = {}) {
   root.add(group, statics);
   const atmosphere = opts.atmosphere !== false;
 
-  // ---- atmosphere
-  if (atmosphere) {
-    scene.fog = new THREE.FogExp2(PALETTE.fog.clone(), FOG_DENSITY);
-    scene.background = PALETTE.fog.clone();
-  }
-  if (!opts.look && atmosphere) {
-    renderer.toneMappingExposure = 1.05;
-    if (ctx.bloom) { ctx.bloom.strength = 0.45; ctx.bloom.radius = 0.6; ctx.bloom.threshold = 0.85; }
-  }
+  // ---- atmosphere (opts.defer: postponed to world.install() so a prebuild that
+  // runs while the previous stage is still live doesn't hijack its fog/background)
+  const applyAtmosphere = () => {
+    if (atmosphere) {
+      scene.fog = new THREE.FogExp2(PALETTE.fog.clone(), FOG_DENSITY);
+      scene.background = PALETTE.fog.clone();
+    }
+    if (!opts.look && atmosphere) {
+      renderer.toneMappingExposure = 1.05;
+      if (ctx.bloom) { ctx.bloom.strength = 0.45; ctx.bloom.radius = 0.6; ctx.bloom.threshold = 0.85; }
+    }
+  };
+  if (!opts.defer) applyAtmosphere();
 
   // ---- lights (own rig unless a lookdev sun is supplied)
   let sun, sunTarget, ownLights = [];
@@ -82,41 +99,53 @@ export function createWorld(ctx, opts = {}) {
   sun.shadow.camera.updateProjectionMatrix();
   sun.shadow.needsUpdate = true;
 
-  // ---- backdrop
-  const sky = createSky();
-  const mountains = createMountains(rng);
-  const [rw, rh] = opts.reflectionSize ?? [640, 360];
-  const water = createWater({ width: rw, height: rh });
-  const useReflection = opts.reflection !== false;
-  water.uniforms.uReflOn.value = useReflection ? 1 : 0;
-  water.uniforms.uFogDensity.value = FOG_DENSITY;
-  const clouds = createClouds(rng);
-  clouds.uniforms.uFogDensity.value = FOG_DENSITY * 0.8;
-  const motes = createMotes(rng);
-  if (opts.sky !== false) statics.add(sky.mesh);
-  statics.add(mountains, water.mesh, clouds.mesh, motes.mesh);
-
-  // ---- terrain & props
+  // ---- incremental build: same rng consumption order as the old synchronous loop
   const schedule = new ZoneSchedule({ list: opts.schedule, offset: opts.zoneOffset, blend: opts.blend });
   const terrainMat = createTerrainMaterial();
   const chunks = [];
   const props = new Props(rng);
   group.add(props.group);
-  for (let i = 0; i < NUM_CHUNKS; i++) {
-    const c = new TerrainChunk(terrainMat);
-    c.build(i - 1, schedule, rng);   // one chunk behind the start so the ground under the camera exists
-    props.populate(i - 1, schedule);
-    chunks.push(c); group.add(c.mesh);
-  }
-  props.flush();
-  let nextIndex = NUM_CHUNKS - 2;
+  const [rw, rh] = opts.reflectionSize ?? [640, 360];
+  const useReflection = opts.reflection !== false;
+  let sky = null, mountains = null, water = null, clouds = null, motes = null;
 
+  const steps = [
+    () => { sky = createSky(); if (opts.sky !== false) statics.add(sky.mesh); },
+    () => { mountains = createMountains(rng); statics.add(mountains); },
+    () => {
+      water = createWater({ width: rw, height: rh });
+      water.uniforms.uReflOn.value = useReflection ? 1 : 0;
+      water.uniforms.uFogDensity.value = FOG_DENSITY;
+      statics.add(water.mesh);
+    },
+    () => {
+      clouds = createClouds(rng);
+      clouds.uniforms.uFogDensity.value = FOG_DENSITY * 0.8;
+      motes = createMotes(rng);
+      statics.add(clouds.mesh, motes.mesh);
+    },
+  ];
+  for (let i = 0; i < NUM_CHUNKS; i++) {
+    const idx = i - 1;
+    steps.push(() => {
+      const c = new TerrainChunk(terrainMat);
+      c.build(idx, schedule, rng);   // one chunk behind the start so the ground under the camera exists
+      props.populate(idx, schedule);
+      chunks.push(c); group.add(c.mesh);
+    });
+  }
+  steps.push(() => { props.flush(); });
+
+  let stepI = 0;
+  let nextIndex = NUM_CHUNKS - 2;
   let dist = 0, time = 0, reflFresh = false;
   const camPos = new THREE.Vector3();
-  const prevShadowAuto = renderer.shadowMap.autoUpdate;
+  // deferred builds re-capture at install() — while warming, the live stage's
+  // half-rate shadow setting (autoUpdate=false) is still in effect
+  let prevShadowAuto = renderer.shadowMap.autoUpdate;
   let reflTick = 0;
   const doReflection = () => {
-    if (!useReflection) return;
+    if (!useReflection || !water) return;
     // Reflection runs at third frame rate: the 640x360 mirror is heavily ripple-distorted
     // so two frames of lag are invisible, and this cuts the mirrored scene's draw calls
     // (the mirror pass is also what re-renders the shadow maps, so they update at 20 Hz).
@@ -143,6 +172,8 @@ export function createWorld(ctx, opts = {}) {
     /** zone that starts next and how far ahead it is (for HUD / director) */
     nextZone() { const n = schedule.list.find((z) => z.start > dist); return n ? { name: n.name, ahead: n.start - dist } : null; },
     spawnZone(name) { schedule.spawn(name, dist); },
+    /** Deferred builds only: apply fog/background/exposure when the stage goes live. */
+    install() { prevShadowAuto = renderer.shadowMap.autoUpdate; applyAtmosphere(); },
     /** Render the water reflection for the camera's current pose. Call after posing the camera. */
     preRender() { doReflection(); },
     /** Let callers force a fresh reflection next frame (e.g. after a camera cut). */
@@ -189,16 +220,22 @@ export function createWorld(ctx, opts = {}) {
       terrainMat.dispose();
       for (const c of chunks) c.geometry.dispose();
       for (const p of props.pools) { p.mesh.geometry.dispose(); p.mesh.material.dispose(); }
-      sky.mesh.geometry.dispose(); sky.mesh.material.dispose();
-      water.dispose();
-      clouds.mesh.geometry.dispose(); clouds.mesh.material.dispose();
-      motes.mesh.geometry.dispose(); motes.mesh.material.dispose();
-      mountains.userData.dispose?.();
+      if (sky) { sky.mesh.geometry.dispose(); sky.mesh.material.dispose(); }
+      water?.dispose();
+      if (clouds) { clouds.mesh.geometry.dispose(); clouds.mesh.material.dispose(); }
+      if (motes) { motes.mesh.geometry.dispose(); motes.mesh.material.dispose(); }
+      mountains?.userData.dispose?.();
     },
   };
-  world._dbg = { sky: sky.mesh, mountains, water: water.mesh, clouds: clouds.mesh, motes: motes.mesh, props: props.group, chunks, sun };
+  world._dbg = { get sky() { return sky?.mesh; }, get mountains() { return mountains; }, get water() { return water?.mesh; }, get clouds() { return clouds?.mesh; }, get motes() { return motes?.mesh; }, props: props.group, chunks, sun };
   if (typeof window !== 'undefined') window.__world = world;
-  return world;
+  return {
+    world,
+    get done() { return stepI >= steps.length; },
+    /** Build one unit (a backdrop or one terrain chunk + props). Returns done. */
+    step() { if (stepI < steps.length) steps[stepI++](); if (this.done && typeof window !== 'undefined') window.__world = world; return this.done; },
+    get remaining() { return steps.length - stepI; },
+  };
 }
 
 // ---------------------------------------------------------------- standalone showcase

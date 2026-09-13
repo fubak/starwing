@@ -113,6 +113,28 @@ class Stage {
   }
   hideAll() { this.arwings.forEach((a) => { a.visible = false; a.rotation.set(0, 0, 0); a.scale.setScalar(1); a.userData.api.setHover(0); a.userData.api.flap(0); a.userData.api.setBank(0); }); this.greatFox.visible = false; this.hangar.visible = false; this.planet.visible = true; }
 
+  /** Detach every scene object we own (keeps all GPU assets) so gameplay stages
+   *  can run while this stage sits parked. unpark() reattaches instantly. */
+  park() {
+    if (this._parked) return;
+    const L = this.look;
+    const objs = [...this.own, L?.sun, L?.sun?.target, L?.hemi, L?.fill, L?.fill?.target, L?.rim, L?.rim?.target, L?.sky].filter(Boolean);
+    for (const o of objs) if (o.parent === this.scene) this.scene.remove(o);
+    this._parked = objs;
+    if (L) { L.grade.enabled = false; if (this.scene.userData.look === L) delete this.scene.userData.look; }
+    this.ctx.renderer.shadowMap.autoUpdate = this._shadowAuto0;
+    if (window.__stage === this) delete window.__stage;
+  }
+  unpark() {
+    const objs = this._parked; if (!objs) return;
+    this._parked = null;
+    for (const o of objs) if (!o.parent) this.scene.add(o);
+    this.camera.near = 0.1; this.camera.far = 6000; this.camera.updateProjectionMatrix();
+    this.look.reapply?.();
+    this.ctx.renderer.shadowMap.autoUpdate = false; this._shadowTick = 0;
+    window.__stage = this;
+  }
+
   update(dt, t) {
     this._dt = dt; this.time = t;
     this.ctx.renderer.shadowMap.needsUpdate = (this._shadowTick++ & 1) === 0;
@@ -421,6 +443,14 @@ class Director {
     this.seq = null; this.seqT = 0; this._resolve = null;
     this.queue = [];
   }
+  /** Scene children + DOM roots this director owns (so a campaign sweep can leave them mounted). */
+  keepSet() {
+    const s = new Set(this.stage.own);
+    const L = this.stage.look;
+    if (L) for (const o of [L.sun, L.sun?.target, L.hemi, L.fill, L.fill?.target, L.rim, L.rim?.target, L.sky]) if (o) s.add(o);
+    s.add(this.overlay.root);
+    return s;
+  }
   /** Run a sequence; resolves when it finishes. Chained synchronously via queue for determinism. */
   run(seq) {
     return new Promise((resolve) => { this.queue.push({ seq, resolve }); if (!this.seq) this._next(); });
@@ -452,11 +482,17 @@ class Director {
     }
     this.stage.update(dt, t);
   }
+  unpark() {
+    if (!this.parked) return;
+    this.parked = false;
+    this.stage.unpark();
+    if (!this.overlay.root.parentNode) this.ctx.ui.appendChild(this.overlay.root);
+  }
   dispose() { this.overlay.dispose(); this.stage.dispose(); }
 }
 
 let director = null;
-function getDirector(ctx) { return director ?? (director = new Director(ctx)); }
+function getDirector(ctx) { if (director?.parked) director.unpark(); return director ?? (director = new Director(ctx)); }
 
 /** Title screen; resolves when the player confirms and the flash-out finishes.
  *  opts: { skipAfter?: seconds (auto-confirm), auto?: boolean (= skipAfter 3.4), onConfirm?: () => void }. */
@@ -467,6 +503,18 @@ export function playIntro(ctx) { return getDirector(ctx).run(introSeq(director.s
 export function playComplete(ctx, stats) { return getDirector(ctx).run(completeSeq(director.stage, director.overlay, stats)); }
 /** Tear down the shared cinematic stage (call when leaving cinematics for gameplay). */
 export function disposeCinematics() { director?.dispose(); director = null; }
+/**
+ * Park the cinematic stage: detach its scene objects + DOM overlay but keep every
+ * GPU resource (textures, geometry, PMREM env, shader programs). The next cinematic
+ * then reattaches instantly instead of rebuilding ~800 meshes / recompiling shaders.
+ */
+export function parkCinematics() {
+  const d = director; if (!d || d.parked) return;
+  d.parked = true;
+  d.stage.park();
+  d.overlay.root.remove();
+}
+export function unparkCinematics() { director?.parked && director.unpark(); }
 /** The shared director (created on demand); the integrator drives `director.update(dt, t)` each frame. */
 export function getCinematics(ctx) { return getDirector(ctx); }
 

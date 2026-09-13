@@ -8,6 +8,7 @@
 //   scene.add(ship.group);
 //   ship.update(dt, t, camera); ship.setThrust(0..1); ship.setBank(-1..1); ship.flap(-1..1)
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 // ---------------------------------------------------------------------------
 // Livery / panel-line textures (canvas)
@@ -417,6 +418,50 @@ const discFrag = /* glsl */`
 const discVert = /* glsl */`varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`;
 
 // ---------------------------------------------------------------------------
+// Static merge: the Arwing ships ~70 meshes for 30-odd PBR parts that share a
+// handful of materials. Bucket every static child of `root` by material and
+// merge each bucket into a single mesh (baking world transforms into geometry)
+// so the ship draws in ~10 calls instead of ~70 — and the half-rate shadow pass
+// re-renders ~10 casters instead of ~60. Animated sub-trees (flap pivots),
+// shader/transparent/billboard meshes and unique materials are left alone.
+// ---------------------------------------------------------------------------
+const _bakeM = new THREE.Matrix4();
+function bakeGeom(o, root) {
+  _bakeM.copy(root.matrixWorld).invert().multiply(o.matrixWorld);
+  const g = (o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone());
+  g.applyMatrix4(_bakeM);
+  // keep only the attribute set every source geometry shares, or mergeGeometries refuses
+  for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal' && name !== 'uv') g.deleteAttribute(name);
+  if (!g.attributes.normal) g.computeVertexNormals();
+  if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+  return g;
+}
+function mergeStaticByMaterial(root, mats, { deep = false } = {}) {
+  root.updateWorldMatrix(true, true);
+  const buckets = new Map();
+  const visit = (o) => {
+    if (!o.isMesh) return;
+    const m = o.material;
+    if (!m || Array.isArray(m) || m.isShaderMaterial || m.transparent || !mats.has(m)) return;
+    let list = buckets.get(m); if (!list) buckets.set(m, list = []);
+    list.push(o);
+  };
+  // deep=false: direct children only (a pivot's parts must keep their hinge);
+  // deep=true:  the whole subtree (safe once the pivot itself is the merge root)
+  if (deep) root.traverse(visit); else for (const c of root.children) visit(c);
+  for (const [m, list] of buckets) {
+    if (list.length < 2) continue;
+    const baked = list.map((o) => bakeGeom(o, root));
+    const merged = mergeGeometries(baked, false);
+    baked.forEach((g) => g.dispose());
+    for (const o of list) { o.removeFromParent(); o.geometry.dispose(); }
+    const mesh = new THREE.Mesh(merged, m);
+    mesh.name = `merged-${list[0].name || 'part'}x${list.length}`;
+    root.add(mesh);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Build
 // ---------------------------------------------------------------------------
 /**
@@ -672,6 +717,11 @@ export function buildArwing(opts = {}) {
   // point lights for local bounce (engine + diffusers)
   const engineLight = new THREE.PointLight(0x5a9aff, 1.2, 6, 2); engineLight.position.set(0, 0, 4.6); rig.add(engineLight);
   const gdLight = new THREE.PointLight(0xff7a2a, 1.0, 5, 2); gdLight.position.set(0, PODY, PODZ + 2.7); rig.add(gdLight);
+
+  // ---- merge static parts by material: ~70 meshes -> ~30 (draw calls + shadow casters)
+  const pbrMats = new Set([matHull, matWing, matBlue, matBlueDeep, matGrey, matDark, matRed]);
+  mergeStaticByMaterial(rig, pbrMats);
+  for (const pivot of flapPivots) mergeStaticByMaterial(pivot, pbrMats, { deep: true });
 
   // shadows
   rig.traverse((o) => { if (o.isMesh && !(o.material.isShaderMaterial) && o.material.transparent !== true) { o.castShadow = true; o.receiveShadow = true; } });

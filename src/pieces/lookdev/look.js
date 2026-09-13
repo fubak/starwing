@@ -21,10 +21,11 @@ import { makeGradePass, applyGradePreset } from './grade.js';
  */
 export function applyLook(ctx, preset = 'space', opts = {}) {
   const { scene, renderer, composer, bloom, camera } = ctx;
-  const { shadowSize = 24, shadowMap = 1024, sky: wantSky = true } = opts;
+  const { shadowSize = 24, shadowMap = 1024, sky: wantSky = true, defer = false } = opts;
 
-  // Tear down an existing rig on this scene.
-  scene.userData.look?.dispose?.();
+  // Tear down an existing rig on this scene (unless we're building detached for a
+  // later install() — the live rig keeps rendering while we prebuild).
+  if (!defer) scene.userData.look?.dispose?.();
 
   const target = resolvePreset(THREE, preset);
   const cur = resolvePreset(THREE, preset);
@@ -33,6 +34,10 @@ export function applyLook(ctx, preset = 'space', opts = {}) {
   const FADE = opts.fade ?? 0.9;
 
   // ---- lights
+  const adds = []; // deferred mode: scene children we mount on install()
+  const addToScene = (...os) => { if (defer) adds.push(...os); else scene.add(...os); };
+  let installed = !defer;
+
   const sun = new THREE.DirectionalLight(0xffffff, 3);
   sun.name = 'look-sun';
   sun.castShadow = true;
@@ -44,7 +49,7 @@ export function applyLook(ctx, preset = 'space', opts = {}) {
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.03;
   sun.shadow.radius = 3;
-  scene.add(sun, sun.target);
+  addToScene(sun, sun.target);
 
   const hemi = new THREE.HemisphereLight(0xffffff, 0x000000, 0.5);
   hemi.name = 'look-hemi';
@@ -54,13 +59,13 @@ export function applyLook(ctx, preset = 'space', opts = {}) {
   // specular edge that separates them from the sky (Star Fox Zero ocean bounce)
   const rim = new THREE.DirectionalLight(0xffffff, 0.6);
   rim.name = 'look-rim';
-  scene.add(hemi, fill, fill.target, rim, rim.target);
+  addToScene(hemi, fill, fill.target, rim, rim.target);
 
   // ---- sky
   let sky = null;
   if (wantSky) {
     sky = wantSky instanceof THREE.Mesh ? wantSky : makeSky(cur);
-    if (!sky.parent) scene.add(sky);
+    if (!sky.parent) addToScene(sky);
   }
 
   // ---- environment (PMREM of the sky at the *target* preset)
@@ -81,18 +86,21 @@ export function applyLook(ctx, preset = 'space', opts = {}) {
     const rt = pmrem.fromScene(envScene, 0.035);
     envRT?.dispose();
     envRT = rt;
-    scene.environment = rt.texture;
+    if (installed) scene.environment = rt.texture;
   };
-  buildEnv(target);
+  // Deferred rigs postpone the PMREM bake to install() — it lands under the
+  // transition fade instead of hitching whatever stage is currently playing.
+  if (!defer) buildEnv(target);
 
-  // ---- grade pass (append after OutputPass; composer handles renderToScreen)
+  // ---- grade pass (append after OutputPass; composer handles renderToScreen).
+  // The pass is shared/reused across looks: dispose() only disables it, so a
+  // parked look's grade handle stays valid for reapply().
   let grade = composer.passes.find((p) => p.isLookGrade);
   if (!grade) {
     grade = makeGradePass();
-    composer.addPass(grade);
+    if (!defer) composer.addPass(grade);
   }
-  grade.enabled = true;
-  grade.uniforms.uAspect.value = (ctx.size?.x || 16) / (ctx.size?.y || 9);
+  if (!defer) { grade.enabled = true; grade.uniforms.uAspect.value = (ctx.size?.x || 16) / (ctx.size?.y || 9); }
 
   const fog = new THREE.FogExp2(0x000000, 0);
   const _dir = new THREE.Vector3();
@@ -115,11 +123,32 @@ export function applyLook(ctx, preset = 'space', opts = {}) {
     if (sky) sky.setPreset(p);
     applyGradePreset(grade, p);
   };
-  push(cur);
+  if (!defer) push(cur);
 
   let flashAmt = 0;
   const look = {
     sun, hemi, fill, rim, sky, grade, envScene,
+    /** Deferred builds only: mount lights/sky, env map, grade pass and globals. Idempotent. */
+    install() {
+      if (installed) return;
+      installed = true;
+      scene.userData.look?.dispose?.(); // replace whatever rig is live now
+      for (const o of adds) scene.add(o);
+      adds.length = 0;
+      if (!envRT) buildEnv(target); else scene.environment = envRT.texture;
+      if (!composer.passes.includes(grade)) composer.addPass(grade);
+      grade.enabled = true;
+      push(cur);
+      scene.userData.look = look;
+    },
+    /** Re-assert globals (env/exposure/fog/grade) after the rig was parked by another stage. */
+    reapply() {
+      if (envRT) scene.environment = envRT.texture;
+      if (!composer.passes.includes(grade)) composer.addPass(grade);
+      grade.enabled = true;
+      push(cur);
+      if (!scene.userData.look) scene.userData.look = look;
+    },
     get preset() { return cur; },
     get target() { return target; },
     name: typeof preset === 'string' ? preset : preset.name ?? 'custom',
@@ -152,16 +181,18 @@ export function applyLook(ctx, preset = 'space', opts = {}) {
     },
     dispose() {
       scene.remove(sun, sun.target, hemi, fill, fill.target, rim, rim.target);
+      for (const o of adds) scene.remove(o); // never-installed deferred rigs
       if (sky) { scene.remove(sky); sky.disposeSky?.(); }
       envRT?.dispose(); envMat.dispose(); envMesh.geometry.dispose(); pmrem.dispose();
-      scene.environment = null; scene.fog = null;
-      // remove (not just disable) so the composer pass list is stable across stage switches
-      if (composer.passes.includes(grade)) composer.removePass(grade);
-      grade.dispose?.();
+      if (scene.environment) scene.environment = null;
+      scene.fog = null;
+      // the grade pass is shared between looks — disable, don't destroy, so other
+      // looks (or a parked rig being reattached) can reuse the same object
+      grade.enabled = false;
       if (scene.userData.look === look) delete scene.userData.look;
     },
   };
-  scene.userData.look = look;
+  if (!defer) scene.userData.look = look;
   return look;
 }
 

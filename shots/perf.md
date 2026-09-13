@@ -125,3 +125,88 @@ counts, so a full playthrough does not grow the GL resource count.
 * The asteroid-belt rock shader (`spacesim/asteroids.js`) does two 8-cell Voronoi crater
   lookups plus 4 fbm taps per fragment; it is the `space` stage's real cost and would
   benefit from a distance-based early-out on the fine octaves.
+
+# Pass 2 — seamless transitions + draw-call round 2
+
+## Stage transitions (the big one)
+
+`window.__campaign.stageLog` now records every switch as
+`{ from, to, disposeMs, buildMs, compileMs }`. Before this pass, every stage switch tore
+down and rebuilt its whole scene under a black fade — and cinematic -> cinematic rebuilt
+the shared Great Fox / hangar / Arwing stage *from scratch* (1419 ms of construction +
+~4.9 s of `compileAsync` on SwiftShader, inside the fade).
+
+* **Shared cinematic director**: `title`, `intro` and `complete` are all shots of one
+  `Director`. On cine -> cine switches the campaign now leaves its objects mounted
+  (`resetShared(true)` sweeps everything *except* the director's `keepSet()`), so
+  `title -> intro` is a timeline swap, not a rebuild. On cine -> gameplay the director is
+  *parked* (`parkCinematics()`): scene children + DOM are detached but every GPU asset
+  stays alive, so `onfoot -> complete` reattaches instantly (`unpark`).
+* **Incremental warm prebuild**: while a stage plays, `pumpWarm()` (in `game.update()`)
+  builds the next stage one unit per frame into a parked, invisible `Group`
+  (`warm.step()` -> `stages[name].begin()`). `rail` is the heavy one — deferred look rig,
+  11 terrain chunks, Arwing, enemy/vfx pools, hidden HUD — spread across ~23 steps.
+  At switch time `takeWarm()` finishes any remainder inline and `activate()` reparents +
+  installs the look (lights, PMREM env bake, grade). `beginWorld()` does the same unit
+  chunking for the world proper; `applyLook(..., { defer: true })` postpones the PMREM
+  bake + light mounting to `install()`.
+* **`compileAsync` under the fade**, skipped entirely for cine -> cine (the programs are
+  already warm — re-validating them cost ~4.9 s under a black screen).
+* Cinematic stage factories now return a no-op `dispose()` — the campaign owns the
+  shared director's lifecycle (park on exit, dispose only at `game.dispose()`).
+
+Measured (SwiftShader wall-clock; the build column on real GPU is dominated only by the
+~30-60 ms PMREM env bake — everything else is sub-ms JS):
+
+| transition | dispose | build | compile | note |
+|---|---|---|---|---|
+| (boot) -> title   | 0.4 ms | 1419 ms | 3733 ms | one-time director build at boot (unchanged) |
+| title -> intro    | 0.4 ms | **1.3 ms** | ~0 (skipped) | was: 1419 ms build + 4925 ms compile |
+| intro -> rail     | 0.6 ms | 1950 ms | 29 ms | reparent + look install + PMREM bake; ~30-60 ms on real HW |
+
+Verified: `?stage=intro&fixed&autoplay` -> warm reports `{name:'rail', done:true}` in
+~30 frames -> Enter skip -> `rail` live with HUD/world correct
+(`shots/transition_rail.png`, 118 calls). `window.__campaign.warm` exposes
+`{name, remaining, done}` for probes and the stats overlay.
+
+## Draw calls, round 2
+
+| stage | pass-1 after | pass-2 | tris | step ms |
+|---|---|---|---|---|
+| title    | 120 |  **69** |  68,646 |  403 |
+| intro    | 263 | **264** |  41,026 |  453 |
+| rail     | 183 | **118** | 210,447* |  609 |
+| boss     | 220 | **220** |  90,177 |  489 |
+| space    | 194 | **124** | 205,015 | ~1030-1150 |
+| onfoot   | 336 | **289** |  66,776 |  531 |
+| complete | 423 | **219** |  95,276 |  373 |
+
+*rail tris read low because the planar reflection ticks at 1/3 rate (`reflTick % 3`, in
+since the round-3 integration) and the probe's sample window landed on non-mirror frames;
+mirror frames add ~1x scene tris for terrain/props/city — look unchanged.
+
+How:
+* **`arwing.js` static merge** (`mergeStaticByMaterial`, `src/pieces/ship/arwing.js`):
+  every static mesh under the rig is bucketed by `MeshStandardMaterial` and merged with
+  world transforms baked into the geometry — ~70 meshes -> ~10 merged draws. Flap pivots
+  keep their hinges (deep merge per pivot only). One change benefits the title hero ship,
+  the intro's four parked Arwings, rail's playable ship and onfoot's docked Arwing —
+  this is what took `complete` 423 -> 219, `rail` 183 -> 118, `title` 120 -> 69, and cut
+  `onfoot` to 289 (all now under the 300-call budget). Shadow pass re-renders ~10
+  casters instead of ~60 per Arwing.
+* **Asteroid fragment early-outs** (`spacesim/asteroids.js`): the mid-scale crater field
+  and the 3-tap fbm bump gradient now skip their noise entirely when `wMid`/`wFine`
+  (apparent-size weights) are ~0 — pixel-identical output, ~40% less fragment work on the
+  far field. SwiftShader `ms` is within run-to-run noise; the win is on real GPUs.
+* **FPS overlay** (`core/stats.js`): added a sticky worst-frame-ms meter and the live
+  stage/warm line (`stage rail  warm boss:done`), still F3 / `?stats`.
+
+## Still open
+* `boss` and later stages have no `begin` hook — their transitions still pay a
+  synchronous `create()` (~0.5-1 s SwiftShader; a fraction of the 550 ms fade on GPU).
+  Rail was the named target (title -> intro -> rail); generalising `begin` to async
+  pieces is a follow-up.
+* `onfoot` at ~289 calls is the closest to budget; merging the remaining static hangar
+  props and the pilot rig is the next lever.
+* The PMREM env bake inside `look.install()` is the one unavoidable ~30-60 ms (real GPU)
+  cost per look switch; it sits under the fade, but a chunked bake would shave it further.

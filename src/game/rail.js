@@ -13,7 +13,7 @@
  */
 import * as THREE from 'three';
 import { applyLook, PRESETS } from '../pieces/lookdev/index.js';
-import { createWorld, SUN_DIR, FOG_DENSITY } from '../pieces/world/index.js';
+import { createWorld, beginWorld, SUN_DIR, FOG_DENSITY } from '../pieces/world/index.js';
 import { buildArwing } from '../pieces/ship/index.js';
 import { createEnemyManager } from '../pieces/enemies/index.js';
 import { createVfx, PALETTE as VFX } from '../pieces/vfx/index.js';
@@ -63,54 +63,56 @@ function buildTimeline(api) {
   ];
 }
 
-export async function createRail(ctx, game) {
+export async function createRail(ctx, game, hudMod) {
+  const b = beginRail(ctx, game, hudMod);
+  while (!b.done) b.step();
+  return b.activate();
+}
+
+/**
+ * Incremental rail-stage build for seamless intro -> rail.
+ *
+ * beginRail() returns { step(), done, remaining, activate(), abort() }. Each
+ * step() builds one unit (the deferred look rig, the world prologue, one terrain
+ * chunk at a time, the Arwing + hero lights, the enemy/vfx pools, the HUD) into
+ * a parked, invisible Group, so construction spreads across the intro's frames.
+ * Subsystems that `scene.add` internally (enemy pools, the vfx group) are swept
+ * into the parked group after each step. activate() reparents everything into
+ * the scene, installs the deferred look (lights / PMREM env / grade) + world
+ * atmosphere, wires events, and returns the live { update, dispose } piece.
+ */
+export function beginRail(ctx, game, hudMod) {
   const { scene, camera, renderer, input, ui, rng, events, size } = ctx;
-  const { hud, audio, overlay } = game;
+  const { audio, overlay } = game;
   const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), tmp3 = new THREE.Vector3();
   const tmpQuat = new THREE.Quaternion();
 
-  // ---------- look: Corneria day, late-afternoon key over the left shoulder (same rig the world piece tunes for)
-  const base = PRESETS.corneria;
-  const look = applyLook(ctx, {
-    ...base, name: 'corneria-mission',
-    sun: { ...base.sun, dir: [SUN_DIR.x, SUN_DIR.y, SUN_DIR.z], color: 0xffd6a4, intensity: 3.9 },
-    hemi: { sky: 0x7fb4ff, ground: 0x55684a, intensity: 0.65 },
-    fill: { ...base.fill, color: 0x8fbaff, intensity: 0.22 },
-    envIntensity: 0.5,
-    fog: { color: 0xbcd4ea, density: FOG_DENSITY },
-    exposure: 1.0,
-    bloom: { strength: 0.42, radius: 0.6, threshold: 0.86 },
-    grade: { ...base.grade, contrast: 1.07, saturation: 1.12, vignette: 0.28, lift: 0x02040a, gain: 0xfff6ec },
-  }, { sky: false, shadowSize: 520, shadowMap: 2048 });
+  // ---------- parked content: everything the build mounts lives under `stage`
+  // (visible=false) until activate() reparents it, so a warm build during the
+  // previous stage renders nothing and costs no draw calls.
+  const stage = new THREE.Group(); stage.name = 'rail-warm'; stage.visible = false;
+  const preOwned = new Set(scene.children);
+  const sweep = () => { for (const o of scene.children.slice()) if (!preOwned.has(o)) { preOwned.add(o); stage.add(o); } };
 
-  // ---------- world
-  const world = createWorld(ctx, { look });
-  scene.add(world.group);
-  world.group.position.set(0, -ALT, 0);
-  scene.fog.density = FOG_DENSITY;
-  camera.fov = 60; camera.near = 0.5; camera.far = 7000; camera.updateProjectionMatrix();
-  camera.up.set(0, 1, 0);
+  // ---------- state shared by the steps, activate(), update() and dispose()
+  let look = null, wb = null, world = null, arwing = null;
+  let shipRoot = null, shipAtt = null, shipRoll = null, player = null;
+  let keyLight = null, rimLight = null, underLight = null, boostLight = null;
+  let em = null, vfx = null, trail = null, wingL = null, wingR = null, hud = null;
 
-  // ---------- ship (hero lights so the white hull never bleaches or sinks into the sky)
-  const shipRoot = new THREE.Group(), shipAtt = new THREE.Group(), shipRoll = new THREE.Group();
-  const arwing = buildArwing({ THREE });
-  arwing.setHover(0);
-  const M = arwing.materials;
-  for (const m of [M.matHull, M.matWing]) if (m) { m.color.set(0xdfe6ee); m.roughness = 0.42; m.envMapIntensity = 1.1; }
-  if (M.matBlue) M.matBlue.color.set(0x1a4ee8);
-  shipRoll.add(arwing.group); shipAtt.add(shipRoll); shipRoot.add(shipAtt); scene.add(shipRoot);
-  const keyLight = new THREE.DirectionalLight(0xffe2bc, 1.6); const rimLight = new THREE.DirectionalLight(0x6fb4ff, 2.2); const underLight = new THREE.DirectionalLight(0x6a9ab8, 0.7);
-  scene.add(keyLight, keyLight.target, rimLight, rimLight.target, underLight, underLight.target);
-  const boostLight = new THREE.PointLight(0x5a9cff, 0, 26, 2); boostLight.position.set(0, 0, 6); arwing.rig.add(boostLight);
-
-  // ---------- enemies / vfx
-  const player = new THREE.Object3D(); scene.add(player);
-  const em = createEnemyManager(ctx, player);
-  const vfx = createVfx(ctx, { hitTest });
-  vfx.setSun(SUN_DIR);
-  const trail = vfx.trail({ color: VFX.boost, hot: VFX.boostHot, width: 0.7, segments: 30, spacing: 0.035 });
-  const wingL = vfx.trail({ color: new THREE.Color(0.35, 0.8, 1.0), width: 0.16, segments: 22, spacing: 0.035 });
-  const wingR = vfx.trail({ color: new THREE.Color(0.35, 0.8, 1.0), width: 0.16, segments: 22, spacing: 0.035 });
+  const S = {
+    x: 0, y: 4, vx: 0, vy: 0, pitch: 0, yaw: 0, bank: 0,
+    speed: CRUISE, boost: 0, brake: 0, gauge: 1,
+    roll: { active: false, t: 0, dir: 1, cool: 0 }, tapL: -10, tapR: -10, prevX: 0,
+    fireCool: 0, recoil: 0, fov: 60, shake: 0, invuln: 0,
+    shield: 1, lives: 2, bombs: 3, dead: false, hits: 0, score: 0, shots: 0, hitsLanded: 0, kills: 0,
+    time: 0, done: false, ending: false,
+  };
+  let railX = 0, railVX = 0, lockE = null, lockT = 0, zone = '', laserSfxT = 0;
+  const camPos = new THREE.Vector3(0, 7, 12), camLook = new THREE.Vector3(0, 3, -60);
+  const shipWorld = new THREE.Vector3(), aimDir = new THREE.Vector3(0, 0, -1), muzzleW = new THREE.Vector3();
+  const offs = [];
+  let timeline = null, evt = 0;
 
   function hitTest(b) {
     if (b.owner === 'enemy') return false;
@@ -130,81 +132,128 @@ export async function createRail(ctx, game) {
     return b.pos.z < -420;
   }
 
-  // ---------- state
-  const S = {
-    x: 0, y: 4, vx: 0, vy: 0, pitch: 0, yaw: 0, bank: 0,
-    speed: CRUISE, boost: 0, brake: 0, gauge: 1,
-    roll: { active: false, t: 0, dir: 1, cool: 0 }, tapL: -10, tapR: -10, prevX: 0,
-    fireCool: 0, recoil: 0, fov: 60, shake: 0, invuln: 0,
-    shield: 1, lives: 2, bombs: 3, dead: false, hits: 0, score: 0, shots: 0, hitsLanded: 0, kills: 0,
-    time: 0, done: false, ending: false,
-  };
-  let railX = 0, railVX = 0, lockE = null, lockT = 0, zone = '', laserSfxT = 0;
-  const camPos = new THREE.Vector3(0, 7, 12), camLook = new THREE.Vector3(0, 3, -60);
-  const shipWorld = new THREE.Vector3(), aimDir = new THREE.Vector3(0, 0, -1), muzzleW = new THREE.Vector3();
-
-  // ---------- events
-  const offs = [];
-  offs.push(events.on('player:hit', ({ position }) => {
-    if (S.invuln > 0 || S.ending) { vfx.hitSparks(position, tmp.set(0, 0, 1), { color: new THREE.Color(0.4, 0.8, 1), scale: 1.2 }); return; }
-    S.shield = Math.max(0, S.shield - 0.07); hud.damage(0.07); S.shake = Math.max(S.shake, 0.7); vfx.shake(0.35); look.flash(0.12); S.invuln = 0.4;
-    audio?.sfx('hit');
-    if (S.shield <= 0) {
-      vfx.explode(shipWorld, S.lives > 0 ? 1.2 : 2.6, { flash: S.lives === 0 });
-      audio?.sfx('explosionM'); look.flash(0.8); vfx.shake(1.0);
-      if (S.lives <= 0) { // out of spares: the campaign shows GAME OVER and offers a retry
-        S.shield = 0; hud.setShield(0); S.ending = true; S.dead = true; shipRoot.visible = false;
-        hud.say('Peppy', 'Fox! FOX! ... Great Fox, we lost him.', { mood: 'alarm' });
-        game.fail('ARWING DESTROYED OVER CORNERIA');
-        return;
-      }
-      S.shield = 1; hud.setShield(1); S.lives = Math.max(0, S.lives - 1); hud.setLives(S.lives); S.invuln = 2.5;
-      hud.say('Peppy', S.lives > 0 ? "Fox! Shields are gone — pulling a spare Arwing from Great Fox!" : "That's the last one, Fox. No more spares — stay alive!", { mood: 'alarm' });
-    }
-  }));
-  offs.push(events.on('enemy:killed', ({ position, kind }) => {
-    const pts = kind === 'mantis' ? 300 : kind === 'vulture' ? 150 : 100;
-    S.kills++; S.score += pts; hud.addHit(1); hud.addScore(pts - 10);
-    const d = position.distanceTo(camera.position);
-    vfx.explode(position, kind === 'mantis' ? 2.2 : 1.5, { flash: d > 60, debrisTint: new THREE.Color(0.3, 0.26, 0.34) });
-    audio?.sfx(kind === 'mantis' ? 'explosionM' : 'explosionS');
-  }));
-  offs.push(events.on('enemy:hit', () => { S.hitsLanded++; S.score += 10; hud.addScore(10); }));
-
-  // ---------- helpers wired into the timeline
-  const api = {
-    hud, em, audio,
-    say(who, text, mood) { hud.say(who, text, { mood }); audio?.sfx('comm'); },
-    banner(a, b, d) { hud.banner(a, b, d); },
-    spawn(o) {
-      const w = em.spawnWave(o.kind, { ...o, mirror: o.mirror ?? rng.sign() });
-      if (o.startDist) for (const e of em.list) if (e.wave === w) e.dist += o.startDist;
-      return w;
+  // ---------- build steps (one unit each)
+  const base = PRESETS.corneria;
+  const steps = [
+    // look: built detached (defer) — the PMREM env bake lands at install(), under the fade
+    () => {
+      look = applyLook(ctx, {
+        ...base, name: 'corneria-mission',
+        sun: { ...base.sun, dir: [SUN_DIR.x, SUN_DIR.y, SUN_DIR.z], color: 0xffd6a4, intensity: 3.9 },
+        hemi: { sky: 0x7fb4ff, ground: 0x55684a, intensity: 0.65 },
+        fill: { ...base.fill, color: 0x8fbaff, intensity: 0.22 },
+        envIntensity: 0.5,
+        fog: { color: 0xbcd4ea, density: FOG_DENSITY },
+        exposure: 1.0,
+        bloom: { strength: 0.42, radius: 0.6, threshold: 0.86 },
+        grade: { ...base.grade, contrast: 1.07, saturation: 1.12, vignette: 0.28, lift: 0x02040a, gain: 0xfff6ec },
+      }, { sky: false, shadowSize: 520, shadowMap: 2048, defer: true });
     },
-  };
-  const timeline = buildTimeline(api);
-  let evt = 0;
+    () => { wb = beginWorld(ctx, { look, defer: true }); world = wb.world; },
+    () => (wb.step() ? undefined : 'again'), // one terrain-chunk/backdrop unit per step
+    // ship (hero lights so the white hull never bleaches or sinks into the sky)
+    () => {
+      shipRoot = new THREE.Group(); shipAtt = new THREE.Group(); shipRoll = new THREE.Group();
+      arwing = buildArwing({ THREE });
+      arwing.setHover(0);
+      const M = arwing.materials;
+      for (const m of [M.matHull, M.matWing]) if (m) { m.color.set(0xdfe6ee); m.roughness = 0.42; m.envMapIntensity = 1.1; }
+      if (M.matBlue) M.matBlue.color.set(0x1a4ee8);
+      shipRoll.add(arwing.group); shipAtt.add(shipRoll); shipRoot.add(shipAtt); stage.add(shipRoot);
+      keyLight = new THREE.DirectionalLight(0xffe2bc, 1.6); rimLight = new THREE.DirectionalLight(0x6fb4ff, 2.2); underLight = new THREE.DirectionalLight(0x6a9ab8, 0.7);
+      stage.add(keyLight, keyLight.target, rimLight, rimLight.target, underLight, underLight.target);
+      boostLight = new THREE.PointLight(0x5a9cff, 0, 26, 2); boostLight.position.set(0, 0, 6); arwing.rig.add(boostLight);
+    },
+    () => { player = new THREE.Object3D(); stage.add(player); em = createEnemyManager(ctx, player); sweep(); },
+    () => {
+      vfx = createVfx(ctx, { hitTest });
+      vfx.setSun(SUN_DIR);
+      trail = vfx.trail({ color: VFX.boost, hot: VFX.boostHot, width: 0.7, segments: 30, spacing: 0.035 });
+      wingL = vfx.trail({ color: new THREE.Color(0.35, 0.8, 1.0), width: 0.16, segments: 22, spacing: 0.035 });
+      wingR = vfx.trail({ color: new THREE.Color(0.35, 0.8, 1.0), width: 0.16, segments: 22, spacing: 0.035 });
+      sweep();
+    },
+    // hud: DOM created hidden so a mid-intro warm never overlays the cinematic
+    () => { hud = hudMod?.createHud ? hudMod.createHud(ctx) : null; if (hud) { hud.root.style.display = 'none'; game.hud = hud; } },
+  ];
+  let stepI = 0;
 
-  hud.show(); hud.setLives(S.lives); hud.setBombs(S.bombs); hud.setShield(1);
-  overlay.objective('OBJECTIVE', 'CLEAR THE CORNERIAN SKIES');
-  overlay.hint('<b>WASD</b> FLY &nbsp; <b>SPACE</b> FIRE &nbsp; <b>SHIFT</b> BOOST &nbsp; <b>CTRL</b> BRAKE &nbsp; <b>Q/E</b> ROLL &nbsp; <b>B</b> BOMB', 9);
-  audio?.playMusic('main');
+  /** Mount the parked build and go live. Returns the piece (or null if no HUD). */
+  function activate() {
+    if (!hud) { abort(); return null; }
+    for (const o of stage.children.slice()) scene.add(o);
+    scene.add(world.group);
+    world.group.position.set(0, -ALT, 0);
+    look.install();                 // deferred rig goes live (lights / env / grade / fog / exposure)
+    world.install();                // world's own fog + background (same as the synchronous path)
+    scene.fog.density = FOG_DENSITY;
+    camera.fov = 60; camera.near = 0.5; camera.far = 7000; camera.updateProjectionMatrix();
+    camera.up.set(0, 1, 0);
+    game.hud = hud; hud.root.style.display = '';
 
-  // ---------- autoplay script (weave, boost + roll, brake, bomb)
-  input.script = (t) => {
-    const buttons = [];
-    let x = Math.sin(t * 1.1) * 0.85 + Math.sin(t * 2.7) * 0.25, y = Math.sin(t * 0.8 + 1.0) * 0.5;
-    const m = t % 16;
-    if (m > 1.8 && m < 4.6) buttons.push('boost');
-    if (m > 5.2 && m < 6.8) buttons.push('brake');
-    if ((m > 3.7 && m < 3.9) || (m > 9.4 && m < 9.6)) buttons.push('rollR');
-    if (m > 12.2 && m < 12.4) buttons.push('rollL');
-    if (Math.floor(t * 2) % 3 !== 2) buttons.push('fire');
-    if (t > 20 && t < 20.2 && Math.floor(t / 40) === 0) buttons.push('bomb');
-    if (m > 9.8 && m < 11.6) { x = 1; y = -0.35; }
-    if (m > 13.4 && m < 15) { x = -1; y = 0.55; buttons.push('boost'); }
-    return { x, y, buttons };
-  };
+    // ---------- events
+    offs.push(events.on('player:hit', ({ position }) => {
+      if (S.invuln > 0 || S.ending) { vfx.hitSparks(position, tmp.set(0, 0, 1), { color: new THREE.Color(0.4, 0.8, 1), scale: 1.2 }); return; }
+      S.shield = Math.max(0, S.shield - 0.07); hud.damage(0.07); S.shake = Math.max(S.shake, 0.7); vfx.shake(0.35); look.flash(0.12); S.invuln = 0.4;
+      audio?.sfx('hit');
+      if (S.shield <= 0) {
+        vfx.explode(shipWorld, S.lives > 0 ? 1.2 : 2.6, { flash: S.lives === 0 });
+        audio?.sfx('explosionM'); look.flash(0.8); vfx.shake(1.0);
+        if (S.lives <= 0) { // out of spares: the campaign shows GAME OVER and offers a retry
+          S.shield = 0; hud.setShield(0); S.ending = true; S.dead = true; shipRoot.visible = false;
+          hud.say('Peppy', 'Fox! FOX! ... Great Fox, we lost him.', { mood: 'alarm' });
+          game.fail('ARWING DESTROYED OVER CORNERIA');
+          return;
+        }
+        S.shield = 1; hud.setShield(1); S.lives = Math.max(0, S.lives - 1); hud.setLives(S.lives); S.invuln = 2.5;
+        hud.say('Peppy', S.lives > 0 ? "Fox! Shields are gone — pulling a spare Arwing from Great Fox!" : "That's the last one, Fox. No more spares — stay alive!", { mood: 'alarm' });
+      }
+    }));
+    offs.push(events.on('enemy:killed', ({ position, kind }) => {
+      const pts = kind === 'mantis' ? 300 : kind === 'vulture' ? 150 : 100;
+      S.kills++; S.score += pts; hud.addHit(1); hud.addScore(pts - 10);
+      const d = position.distanceTo(camera.position);
+      vfx.explode(position, kind === 'mantis' ? 2.2 : 1.5, { flash: d > 60, debrisTint: new THREE.Color(0.3, 0.26, 0.34) });
+      audio?.sfx(kind === 'mantis' ? 'explosionM' : 'explosionS');
+    }));
+    offs.push(events.on('enemy:hit', () => { S.hitsLanded++; S.score += 10; hud.addScore(10); }));
+
+    // ---------- helpers wired into the timeline
+    const api = {
+      hud, em, audio,
+      say(who, text, mood) { hud.say(who, text, { mood }); audio?.sfx('comm'); },
+      banner(a, b, d) { hud.banner(a, b, d); },
+      spawn(o) {
+        const w = em.spawnWave(o.kind, { ...o, mirror: o.mirror ?? rng.sign() });
+        if (o.startDist) for (const e of em.list) if (e.wave === w) e.dist += o.startDist;
+        return w;
+      },
+    };
+    timeline = buildTimeline(api);
+    evt = 0;
+
+    hud.show(); hud.setLives(S.lives); hud.setBombs(S.bombs); hud.setShield(1);
+    overlay.objective('OBJECTIVE', 'CLEAR THE CORNERIAN SKIES');
+    overlay.hint('<b>WASD</b> FLY &nbsp; <b>SPACE</b> FIRE &nbsp; <b>SHIFT</b> BOOST &nbsp; <b>CTRL</b> BRAKE &nbsp; <b>Q/E</b> ROLL &nbsp; <b>B</b> BOMB', 9);
+    audio?.playMusic('main');
+
+    // ---------- autoplay script (weave, boost + roll, brake, bomb)
+    input.script = (t) => {
+      const buttons = [];
+      let x = Math.sin(t * 1.1) * 0.85 + Math.sin(t * 2.7) * 0.25, y = Math.sin(t * 0.8 + 1.0) * 0.5;
+      const m = t % 16;
+      if (m > 1.8 && m < 4.6) buttons.push('boost');
+      if (m > 5.2 && m < 6.8) buttons.push('brake');
+      if ((m > 3.7 && m < 3.9) || (m > 9.4 && m < 9.6)) buttons.push('rollR');
+      if (m > 12.2 && m < 12.4) buttons.push('rollL');
+      if (Math.floor(t * 2) % 3 !== 2) buttons.push('fire');
+      if (t > 20 && t < 20.2 && Math.floor(t / 40) === 0) buttons.push('bomb');
+      if (m > 9.8 && m < 11.6) { x = 1; y = -0.35; }
+      if (m > 13.4 && m < 15) { x = -1; y = 0.55; buttons.push('boost'); }
+      return { x, y, buttons };
+    };
+    return { update, dispose, state: S };
+  }
 
   function update(dt, t) {
     dt = Math.min(dt, 1 / 20);
@@ -370,5 +419,25 @@ export async function createRail(ctx, game) {
     if (typeof window !== 'undefined') delete window.__world;
   }
 
-  return { update, dispose, state: S };
+  /** Tear down a partial build (the warm target changed mid-build). */
+  function abort() {
+    for (const o of stage.children.slice()) stage.remove(o);
+    try { hud?.dispose(); } catch {}
+    try { trail?.dispose?.(); wingL?.dispose?.(); wingR?.dispose?.(); } catch {}
+    try { vfx?.dispose(); } catch {}
+    try { em?.dispose(); } catch {}
+    try { arwing?.dispose(); } catch {}
+    try { wb?.world.dispose(); } catch {}
+    try { look?.dispose(); } catch {}
+    stage.clear();
+    if (game.hud === hud) game.hud = null;
+  }
+
+  return {
+    get done() { return stepI >= steps.length; },
+    get remaining() { return Math.max(0, steps.length - stepI); },
+    /** Build one unit; 'again' steps (world chunks) repeat until that unit finishes. */
+    step() { if (stepI >= steps.length) return true; if (steps[stepI]() !== 'again') stepI++; return this.done; },
+    activate, abort,
+  };
 }

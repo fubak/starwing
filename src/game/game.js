@@ -60,34 +60,46 @@ export async function create(ctx) {
   };
   function mergeStats(x) { for (const k of ['score', 'hits', 'shots', 'landed']) if (typeof x[k] === 'number') stats[k] += x[k]; }
 
-  /** Reset everything a child piece may have leaked into the shared renderer/camera/composer. */
-  function resetShared() {
+  /**
+   * Reset everything a child piece may have leaked into the shared
+   * renderer/camera/composer. When `keepCine` is set (a cinematic -> cinematic
+   * switch), the shared cinematic stage — its lights, env, sky, actors, grade
+   * pass and DOM overlay — stays mounted so the next sequence starts instantly.
+   */
+  function resetShared(keepCine = false) {
     input.script = null;
-    scene.fog = null; scene.background = null; scene.environment = null;
+    const d = keepCine && cine?.getCinematics ? cine.getCinematics(ctx) : null;
+    const keep = keepCine && d ? d.keepSet() : null; // Set of scene children + DOM nodes owned by the live director
+    scene.fog = keepCine ? scene.fog : null;
+    scene.background = keepCine ? scene.background : null;
+    scene.environment = keepCine ? scene.environment : null;
     renderer.toneMappingExposure = defaults.exposure;
     renderer.shadowMap.needsUpdate = true;
     if (bloom && defaults.bloom) Object.assign(bloom, defaults.bloom);
     camera.fov = defaults.fov; camera.near = defaults.near; camera.far = defaults.far; camera.updateProjectionMatrix();
     camera.up.set(0, 1, 0); camera.position.set(0, 0, 10); camera.quaternion.identity(); camera.zoom = 1;
     if (composer && defaults.passes) {
-      for (const p of composer.passes.slice()) if (!defaults.passes.includes(p)) { composer.removePass(p); p.dispose?.(); }
+      for (const p of composer.passes.slice()) if (!defaults.passes.includes(p) && !(keepCine && p.isLookGrade)) { composer.removePass(p); p.dispose?.(); }
       for (const p of defaults.passes) if (!composer.passes.includes(p)) composer.addPass(p);
       for (const p of defaults.passes) p.enabled = true;
     }
     // stray scene objects (pieces are expected to clean up; this is the safety net)
-    for (const o of scene.children.slice()) scene.remove(o);
-    // stray UI (keep our overlay on top)
-    for (const el of Array.from(ui.children)) if (el !== overlay.root) el.remove();
+    for (const o of scene.children.slice()) if (!keep?.has(o)) scene.remove(o);
+    // stray UI (keep our overlay on top; also keep the live director's overlay)
+    for (const el of Array.from(ui.children)) if (el !== overlay.root && !keep?.has(el)) el.remove();
     overlay.raise();
     overlay.objective('');
   }
 
-  function disposeCurrent() {
+  function disposeCurrent(next) {
     if (current) { try { current.dispose?.(); } catch (e) { console.warn('[game] dispose failed', currentName, e); } }
     current = null;
     if (hud) { try { hud.dispose(); } catch {} hud = null; game.hud = null; }
-    if (cine) { try { cine.disposeCinematics(); } catch {} }
-    resetShared();
+    const keepCine = CINE.has(currentName) && CINE.has(next);
+    // Cinematic -> gameplay: park (don't tear down) the shared director so the next
+    // cinematic stage (complete / a title revisit) reattaches instantly.
+    if (cine && !keepCine) { try { cine.parkCinematics?.(); } catch {} }
+    resetShared(keepCine);
   }
 
   // ---------- stage factories ---------------------------------------------------------
@@ -99,7 +111,9 @@ export async function create(ctx) {
       let finished = false; done.then(() => { finished = true; });
       audio?.playMusic?.('main');
       overlay.setFade(0);
-      return { update(dt, t) { d.update(dt, t); if (finished) game.next(); }, dispose() { d.dispose(); } };
+      // The director is shared across cinematic stages — the campaign disposes it
+      // (via disposeCinematics) only when the next stage isn't a cinematic.
+      return { update(dt, t) { d.update(dt, t); if (finished) game.next(); }, dispose() {} };
     },
     async intro() {
       if (!cine) return null;
@@ -108,15 +122,19 @@ export async function create(ctx) {
       let finished = false; done.then(() => { finished = true; });
       overlay.setFade(0);
       overlay.hint('<b>ENTER</b> SKIP', 4);
-      return { update(dt, t) { d.update(dt, t); if (finished || (stageT > 0.8 && (input.wasPressed('confirm') || input.wasPressed('pause')))) game.next(); }, dispose() { d.dispose(); } };
+      return { update(dt, t) { d.update(dt, t); if (finished || (stageT > 0.8 && (input.wasPressed('confirm') || input.wasPressed('pause')))) game.next(); }, dispose() {} };
     },
     async rail() {
       const mod = mods.rail; if (!mod) return null;
-      hud = hudMod?.createHud ? hudMod.createHud(ctx) : null; game.hud = hud;
-      if (!hud) return null;
+      let piece = null;
+      const b = takeWarm('rail');
+      if (b) piece = b.activate();
+      else piece = await mod.createRail(ctx, game, hudMod);
+      hud = game.hud;
+      if (!piece || !hud) { piece?.dispose?.(); return null; }
       overlay.raise();
       overlay.letterbox(false);
-      return mod.createRail(ctx, game);
+      return piece;
     },
     async boss() {
       const mod = mods.boss; if (!mod?.create) return null;
@@ -192,11 +210,19 @@ export async function create(ctx) {
       audio?.playMusic?.('main');
       let finished = false; done.then(() => { finished = true; });
       overlay.setFade(0);
-      return { update(dt, t) { d.update(dt, t); if (finished) { for (const k in stats) stats[k] = 0; requestStage(0); } }, dispose() { d.dispose(); } };
+      return { update(dt, t) { d.update(dt, t); if (finished) { for (const k in stats) stats[k] = 0; requestStage(0); } }, dispose() {} };
     },
   };
+  // Incremental-build hooks: pumpWarm() drives these one step per frame while the
+  // previous stage plays, so the switch is a reparent + look-install, not a rebuild.
+  stages.rail.begin = () => mods.rail?.beginRail?.(ctx, game, hudMod) ?? null;
 
   // ---------- transitions --------------------------------------------------------------
+  // Stages that run on the shared cinematic director (one Stage: Great Fox + hangar +
+  // squadron + planet). Cinematic -> cinematic switches keep the director alive so
+  // title -> intro (and complete -> title) cost ~nothing: no rebuild, no shader recompile.
+  const CINE = new Set(['title', 'intro', 'complete']);
+
   function requestStage(i) {
     if (pending !== null || loading) return;
     pending = i;
@@ -207,9 +233,55 @@ export async function create(ctx) {
     audio?.duck?.(0.35, FADE_OUT);
   }
 
+  // ---------- seamless transitions: incremental prebuild ("warm") -------------
+  // While a stage is playing, build the NEXT stage one unit per frame (rail is
+  // the heavy one: 11 terrain chunks of CPU noise + an Arwing + vfx/enemy pools).
+  // Everything lands in a parked, invisible group; at stage-switch time
+  // activate() just reparents it and installs the deferred look — the fade
+  // covers a millisecond-scale swap instead of a multi-hundred-ms build.
+  let warm = null; // { name, step(), done, activate(), abort() }
+  function pumpWarm() {
+    if (disposed || loading || paused || failed) return;
+    if (!current && pending === null) return;              // still booting
+    const ti = pending !== null ? pending : idx + 1;
+    const want = ORDER[((ti % ORDER.length) + ORDER.length) % ORDER.length];
+    if (want === currentName) { return; }                  // retry: the live stage, nothing to warm
+    if (warm && warm.name !== want) { try { warm.abort?.(); } catch {} warm = null; }
+    if (!warm) {
+      const mk = stages[want]?.begin;
+      if (!mk) return;
+      let b = null;
+      try { b = mk(); } catch (e) { console.warn(`[game] begin "${want}" failed`, e); }
+      if (!b) return;
+      b.name = want; // tag directly: getters (done/remaining) must stay live
+      warm = b;
+    }
+    try {
+      if (ctx.engine?.fixedStep) warm.step();              // deterministic: exactly one unit per frame
+      else { const t0 = performance.now(); do { warm.step(); } while (!warm.done && performance.now() - t0 < 5); }
+    } catch (e) {
+      console.warn(`[game] warm "${warm.name}" failed`, e);
+      try { warm.abort?.(); } catch {}
+      warm = null;
+    }
+  }
+
+  /** Consume the warmed build for `name` if there is one; finishes it inline if partial. */
+  function takeWarm(name) {
+    if (!warm) return null;
+    if (warm.name !== name) { try { warm.abort?.(); } catch {} warm = null; return null; }
+    const b = warm; warm = null;
+    while (!b.done) b.step();                              // e.g. intro skipped early: pay the remainder once
+    return b;
+  }
+
   async function startStage(i) {
     loading = true;
-    disposeCurrent();
+    const mark = { from: currentName || '(boot)', t0: performance.now() };
+    const nextName = ORDER[((i % ORDER.length) + ORDER.length) % ORDER.length];
+    const keepCine = CINE.has(currentName) && CINE.has(nextName);
+    disposeCurrent(nextName);
+    mark.tDispose = performance.now();
     idx = ((i % ORDER.length) + ORDER.length) % ORDER.length;
     currentName = ORDER[idx];
     stageT = 0;
@@ -218,11 +290,29 @@ export async function create(ctx) {
     try { piece = await stages[currentName](); } catch (e) { console.error(`[game] stage "${currentName}" failed`, e); resetShared(); }
     if (disposed) { piece?.dispose?.(); return; }
     if (!piece) { console.warn(`[game] skipping stage "${currentName}"`); loading = false; pending = null; requestStage(idx + 1); return; }
+    mark.tBuild = performance.now();
     current = piece;
     overlay.raise();
     overlay.letterbox(false);
+    // Pre-compile the new stage's shaders while the fade is still black so the first
+    // visible frame doesn't pay every program's compile at once. Skipped for
+    // cinematic -> cinematic switches: the shared director's programs are already
+    // warm, so compileAsync would only re-validate them under a black screen.
+    if (!keepCine) {
+      if (renderer.compileAsync) {
+        try { await Promise.race([renderer.compileAsync(scene, piece.camera ?? camera), new Promise((r) => setTimeout(r, 120))]); } catch {}
+      } else if (renderer.compile) {
+        try { renderer.compile(scene, piece.camera ?? camera); } catch {}
+      }
+    }
     overlay.fadeTo(0, FADE_IN);
     audio?.duck?.(1, FADE_IN);
+    mark.tReady = performance.now();
+    mark.to = currentName;
+    mark.disposeMs = mark.tDispose - mark.t0;
+    mark.buildMs = mark.tBuild - mark.tDispose;
+    mark.compileMs = mark.tReady - mark.tBuild;
+    if (typeof window !== 'undefined') (window.__campaign.stageLog ??= []).push(mark);
     loading = false; pending = null;
   }
 
@@ -237,14 +327,15 @@ export async function create(ctx) {
   // ---------- go
   const start = ORDER.indexOf(q.get('stage') ?? '');
   startStage(start >= 0 ? start : 0);
-  // harness hook (tools / probes): current stage name, fail flag, stats
-  if (typeof window !== 'undefined') window.__campaign = { get stage() { return currentName; }, get failed() { return !!failed; }, get paused() { return paused; }, stats, get stageT() { return stageT; } };
+  // harness hook (tools / probes): current stage name, fail flag, stats, warm progress
+  if (typeof window !== 'undefined') window.__campaign = { get stage() { return currentName; }, get failed() { return !!failed; }, get paused() { return paused; }, stats, get stageT() { return stageT; }, get warm() { return warm ? { name: warm.name, remaining: warm.remaining ?? 0, done: !!warm.done } : null; } };
 
   return {
     update(dt, t) {
       stageT += dt;
       overlay.update(dt);
       audio?.update?.(dt);
+      pumpWarm();
       // game over: stage frozen under the card; Enter retries the stage, Esc returns to the title, auto-retry after 12s
       if (failed) {
         failed.t += dt;
@@ -274,7 +365,9 @@ export async function create(ctx) {
       disposed = true;
       if (typeof window !== 'undefined') delete window.__campaign;
       window.removeEventListener('blur', onBlur);
+      if (warm) { try { warm.abort?.(); } catch {} warm = null; }
       disposeCurrent();
+      try { cine?.disposeCinematics?.(); } catch {}
       audio?.stop?.();
       overlay.dispose();
     },
