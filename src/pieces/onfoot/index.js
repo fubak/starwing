@@ -75,12 +75,11 @@ export async function create(ctx) {
     [4.7, null, () => ['fire']], // stand and shoot the drones ahead
     [6.6, [-1.2, -3], (T) => (T > 5.5 && T < 5.65 ? ['rollL'] : T > 6.3 && T < 6.45 ? ['jump'] : [])],
     [8.2, [0.8, -14], (T) => (T > 7.4 && T < 7.9 ? ['fire'] : [])],
-    [10.0, [0, -28.3]],
-    [10.7, null, () => ['interact']],
-    [12.6, [0, -40]], // through the door into the corridor
-    [14.4, null, () => ['fire']],
-    [17.0, [0, -24], (T) => (T > 15.2 && T < 15.35 ? ['rollR'] : [])],
-    [24.5, [1.5, 20], (T) => (T > 19 && T < 19.2 ? ['jump'] : [])],
+    [12.6, [0, -28.3], () => ['interact']], // walk to the door, keep interact held until it opens
+    [17.0, [0, -40], () => ['interact']], // through the door into the corridor
+    [18.4, null, () => ['fire']],
+    [21.0, [0, -24], (T) => (T > 19.2 && T < 19.35 ? ['rollR'] : [])],
+    [24.5, [1.5, 20], (T) => (T > 22 && T < 22.2 ? ['jump'] : [])],
     [26, null],
   ];
   input.script = (t) => {
@@ -195,7 +194,7 @@ export async function create(ctx) {
     const doorPos = V.tmp.set(0, 0, -hz + 0.5); const dDoor = P.pos.distanceTo(doorPos);
     const canInteract = dDoor < 6.5 && !doorOpened;
     hud.setPrompt(canInteract ? 'OPEN BLAST DOOR' : '');
-    if (canInteract && (input.wasPressed('interact') || input.wasPressed('confirm'))) {
+    if (canInteract && (input.isHeld('interact') || input.wasPressed('confirm'))) {
       doorOpened = true; hangar.door.target = 1; hud.flash('DOOR UNLOCKED — PROCEED TO BRIDGE'); fx.sparks(new THREE.Vector3(0, 5, -hz + 1), 20, 0x40ff80);
       ctx.events?.emit?.('onfoot:door', { rings: fx.stats.rings, ringsTotal: fx.pickups.length });
     }
@@ -268,6 +267,7 @@ export async function create(ctx) {
     get dronesDestroyed() { return fx.stats.drones; },
     get doorUnlocked() { return doorOpened; },
     get complete() { return completed; },
+    get pos() { return P.pos; }, // integrator/harness introspection
     setHudVisible: (v) => hud.setVisible(v),
     setTitle: (a, b) => hud.setTitle(a, b),
     dispose() {
