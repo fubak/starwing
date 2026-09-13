@@ -135,7 +135,7 @@ export async function createRail(ctx, game) {
     speed: CRUISE, boost: 0, brake: 0, gauge: 1,
     roll: { active: false, t: 0, dir: 1, cool: 0 }, tapL: -10, tapR: -10, prevX: 0,
     fireCool: 0, recoil: 0, fov: 60, shake: 0, invuln: 0,
-    shield: 1, lives: 3, bombs: 3, hits: 0, score: 0, shots: 0, hitsLanded: 0, kills: 0,
+    shield: 1, lives: 2, bombs: 3, dead: false, hits: 0, score: 0, shots: 0, hitsLanded: 0, kills: 0,
     time: 0, done: false, ending: false,
   };
   let railX = 0, railVX = 0, lockE = null, lockT = 0, zone = '', laserSfxT = 0;
@@ -149,10 +149,16 @@ export async function createRail(ctx, game) {
     S.shield = Math.max(0, S.shield - 0.07); hud.damage(0.07); S.shake = Math.max(S.shake, 0.7); vfx.shake(0.35); look.flash(0.12); S.invuln = 0.4;
     audio?.sfx('hit');
     if (S.shield <= 0) {
-      S.shield = 1; hud.setShield(1); S.lives = Math.max(0, S.lives - 1); hud.setLives(S.lives); S.invuln = 2.5; look.flash(0.8); vfx.shake(1.0);
-      vfx.explode(shipWorld, 1.2, { flash: false });
-      audio?.sfx('explosionM');
-      hud.say('Peppy', S.lives > 0 ? "Fox! Shields are gone — pulling a spare Arwing from Great Fox!" : "That's the last one, Fox. ROB is patching you up — stay alive!", { mood: 'alarm' });
+      vfx.explode(shipWorld, S.lives > 0 ? 1.2 : 2.6, { flash: S.lives === 0 });
+      audio?.sfx('explosionM'); look.flash(0.8); vfx.shake(1.0);
+      if (S.lives <= 0) { // out of spares: the campaign shows GAME OVER and offers a retry
+        S.shield = 0; hud.setShield(0); S.ending = true; S.dead = true; shipRoot.visible = false;
+        hud.say('Peppy', 'Fox! FOX! ... Great Fox, we lost him.', { mood: 'alarm' });
+        game.fail('ARWING DESTROYED OVER CORNERIA');
+        return;
+      }
+      S.shield = 1; hud.setShield(1); S.lives = Math.max(0, S.lives - 1); hud.setLives(S.lives); S.invuln = 2.5;
+      hud.say('Peppy', S.lives > 0 ? "Fox! Shields are gone — pulling a spare Arwing from Great Fox!" : "That's the last one, Fox. No more spares — stay alive!", { mood: 'alarm' });
     }
   }));
   offs.push(events.on('enemy:killed', ({ position, kind }) => {
@@ -347,7 +353,7 @@ export async function createRail(ctx, game) {
     hud.update(dt);
     // --- end of the rail leg: hand over to the boss
     if (S.time > 78 && !S.ending) { S.ending = true; overlay.objective('OBJECTIVE', 'ENGAGE THE DREADNOUGHT'); }
-    if (S.time > 81.5 && !S.done) { S.done = true; game.next({ score: S.score, hits: S.kills, shots: S.shots, landed: S.hitsLanded }); }
+    if (S.time > 81.5 && !S.done && !S.dead) { S.done = true; game.next({ score: S.score, hits: S.kills, shots: S.shots, landed: S.hitsLanded }); }
   }
 
   function dispose() {

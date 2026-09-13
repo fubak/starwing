@@ -43,11 +43,20 @@ export async function create(ctx) {
   let idx = -1, current = null, currentName = '', loading = false, pending = null;
   let paused = false, pauseGuard = 0, t0 = 0, stageT = 0;
   let disposed = false;
+  let failed = null; // { t, reason } while the GAME OVER card is up (stage frozen)
+  const GAMEPLAY = ['rail', 'boss', 'space', 'onfoot'];
 
   const game = {
     hud: null, audio, overlay, stats, ctx,
     /** Called by a stage when it is finished; carries stats forward. */
     next(extra) { if (extra) mergeStats(extra); requestStage(idx + 1); },
+    /** Called by a stage when the player is destroyed: freezes the stage under a GAME OVER card. */
+    fail(reason = 'ARWING DESTROYED') {
+      if (failed || pending !== null || loading) return;
+      failed = { t: 0, reason };
+      overlay.gameOver(reason); overlay.objective('');
+      audio?.duck?.(0.2, 0.5); audio?.sfx?.('alarm');
+    },
   };
   function mergeStats(x) { for (const k of ['score', 'hits', 'shots', 'landed']) if (typeof x[k] === 'number') stats[k] += x[k]; }
 
@@ -98,7 +107,8 @@ export async function create(ctx) {
       const done = cine.playIntro(ctx);
       let finished = false; done.then(() => { finished = true; });
       overlay.setFade(0);
-      return { update(dt, t) { d.update(dt, t); if (finished) game.next(); }, dispose() { d.dispose(); } };
+      overlay.hint('<b>ENTER</b> SKIP', 4);
+      return { update(dt, t) { d.update(dt, t); if (finished || (stageT > 0.8 && (input.wasPressed('confirm') || input.wasPressed('pause')))) game.next(); }, dispose() { d.dispose(); } };
     },
     async rail() {
       const mod = mods.rail; if (!mod) return null;
@@ -111,17 +121,19 @@ export async function create(ctx) {
     async boss() {
       const mod = mods.boss; if (!mod?.create) return null;
       audio?.playMusic?.('battle');
-      const piece = await mod.create(ctx);
+      const piece = await mod.create(ctx, { embedded: true, hudTop: 70 });
       overlay.raise();
       overlay.caption('MISSION 1 · CORNERIA', 'GORGON', 'VENOMIAN DREADNOUGHT', 3.4);
+      overlay.objective('OBJECTIVE', 'DESTROY THE GORGON');
       let won = -1, dead = false;
       return {
         update(dt, t) {
           piece.update(dt, t);
           const S = piece.debug?.S;
-          if (S?.destruct?.won && won < 0) { won = 0; overlay.objective('', ''); mergeStats({ score: 8000 + Math.round(S.score ?? 0), hits: 1 }); }
+          if ((S?.won || S?.destruct?.won) && won < 0) { won = 0; overlay.objective('', ''); mergeStats({ score: 8000 + Math.round(S.score ?? 0), hits: 1 + (S.hits ?? 0), shots: S.hits ?? 0, landed: S.hits ?? 0 }); }
           if (won >= 0) { won += dt; if (won > 5.2 && !dead) { dead = true; game.next(); } }
-          if (won < 0 && stageT > 150 && !dead) { dead = true; game.next(); } // safety: never trap the player
+          else if (S?.player && S.player.shield <= 0 && !S.intro && !S.destruct) game.fail('THE GORGON GOT YOU');
+          if (won < 0 && stageT > 240 && !dead) { dead = true; game.next(); } // safety: never trap the player
         },
         dispose() { piece.dispose(); },
       };
@@ -129,16 +141,22 @@ export async function create(ctx) {
     async space() {
       const mod = mods.space; if (!mod?.create) return null;
       audio?.playMusic?.('battle');
-      const piece = await mod.create(ctx);
+      const piece = await mod.create(ctx, { respawn: false });
+      piece.setRespawn?.(false);
       overlay.raise();
       overlay.caption('MISSION 2 · METEO', 'ASTEROID BELT', 'ALL-RANGE MODE', 3.4);
-      const DUR = 58;
-      let left = DUR, ended = false;
+      overlay.hint('<b>WASD</b> PITCH / ROLL &nbsp; <b>SPACE</b> FIRE &nbsp; <b>SHIFT</b> BOOST &nbsp; <b>CTRL</b> BRAKE &nbsp; <b>Q/E</b> ROLL', 9);
+      const LIMIT = 180; // hard cap so the campaign can never stall here
+      let ended = false, doneT = -1, lastLeft = -1;
       return {
         update(dt, t) {
-          piece.update(dt, t); left -= dt;
-          overlay.objective('CLEAR THE DRONES · TIME', `${Math.max(0, Math.ceil(left))}`);
-          if (left < 0.6 && !ended) { ended = true; mergeStats({ score: 3200, hits: 6 }); game.next(); }
+          piece.update(dt, t);
+          const left = piece.dronesRemaining ?? 0;
+          if (doneT < 0) {
+            if (left !== lastLeft) { lastLeft = left; overlay.objective('DESTROY THE DRONES · REMAINING', `${left}`); }
+            if (left === 0 || piece.complete) { doneT = 0; overlay.objective('', ''); }
+          } else doneT += dt;
+          if (((doneT > 3.4) || stageT > LIMIT) && !ended) { ended = true; mergeStats({ score: piece.score ?? 0, hits: piece.kills ?? 0, shots: (piece.kills ?? 0) * 4, landed: (piece.kills ?? 0) * 3 }); game.next(); }
         },
         dispose() { piece.dispose(); },
       };
@@ -149,14 +167,15 @@ export async function create(ctx) {
       const piece = await mod.create(ctx);
       overlay.raise();
       overlay.caption('MISSION 3 · VENOM OUTPOST', 'THE HANGAR', 'ON FOOT', 3.4);
-      let poll = 0, ended = false, doneT = -1;
+      overlay.objective('OBJECTIVE', 'REACH THE BLAST DOOR');
+      overlay.hint('<b>WASD</b> RUN &nbsp; <b>SPACE</b> JUMP &nbsp; <b>J</b> BLASTER &nbsp; <b>Q/E</b> ROLL &nbsp; <b>F / ENTER</b> OPEN DOOR', 9);
+      let ended = false, doneT = -1;
       return {
         update(dt, t) {
           piece.update(dt, t);
-          poll -= dt;
-          if (poll <= 0 && doneT < 0) { poll = 0.4; if (/DOOR UNLOCKED|MISSION COMPLETE/i.test(ui.textContent || '')) { doneT = 0; overlay.objective('', ''); } }
+          if (doneT < 0 && (piece.doorUnlocked || piece.complete)) { doneT = 0; overlay.objective('', ''); }
           if (doneT >= 0) doneT += dt;
-          if (((doneT > 3.5) || stageT > 110) && !ended) { ended = true; mergeStats({ score: 2500, hits: 4 }); game.next(); }
+          if (((doneT > 3.5) || stageT > 180) && !ended) { ended = true; mergeStats({ score: 2500 + (piece.ringsCollected ?? 0) * 200 + (piece.dronesDestroyed ?? 0) * 300, hits: piece.dronesDestroyed ?? 0 }); game.next(); }
         },
         dispose() { piece.dispose(); },
       };
@@ -178,6 +197,8 @@ export async function create(ctx) {
   function requestStage(i) {
     if (pending !== null || loading) return;
     pending = i;
+    failed = null; overlay.gameOver(null);
+    if (paused) setPaused(false);
     overlay.fadeTo(1, FADE_OUT);
     overlay.letterbox(true);
     audio?.duck?.(0.35, FADE_OUT);
@@ -213,15 +234,30 @@ export async function create(ctx) {
   // ---------- go
   const start = ORDER.indexOf(q.get('stage') ?? '');
   startStage(start >= 0 ? start : 0);
+  // harness hook (tools / probes): current stage name, fail flag, stats
+  if (typeof window !== 'undefined') window.__campaign = { get stage() { return currentName; }, get failed() { return !!failed; }, get paused() { return paused; }, stats, get stageT() { return stageT; } };
 
   return {
     update(dt, t) {
       stageT += dt;
       overlay.update(dt);
       audio?.update?.(dt);
-      // pause (gameplay stages only; cinematics take Esc as skip-nothing)
+      // game over: stage frozen under the card; Enter retries the stage, Esc returns to the title, auto-retry after 12s
+      if (failed) {
+        failed.t += dt;
+        // let the wreck play out in slow motion under the card, then freeze
+        const k = Math.max(0, 1 - failed.t / 1.8);
+        if (k > 0.08 && current && !loading && pending === null) { try { current.update(dt * k, t); } catch (e) { console.warn('[game] post-fail update', e); } }
+        if (pending === null && !loading) {
+          if ((input.wasPressed('confirm') && failed.t > 0.6) || failed.t > 12) { audio?.sfx?.('confirm'); requestStage(idx); }
+          else if (input.wasPressed('pause') && failed.t > 0.5) { audio?.sfx?.('menu'); requestStage(0); }
+        }
+        if (pending !== null && !loading && overlay.fadeDone) startStage(pending);
+        return;
+      }
+      // pause (gameplay stages only; cinematics take Esc as skip / nothing)
       pauseGuard = Math.max(0, pauseGuard - dt);
-      if (input.wasPressed('pause') && current && !loading && pauseGuard <= 0) { pauseGuard = 0.2; setPaused(!paused); }
+      if (input.wasPressed('pause') && current && !loading && pending === null && GAMEPLAY.includes(currentName) && pauseGuard <= 0) { pauseGuard = 0.2; setPaused(!paused); }
       if (paused) { hud?.update?.(0); return; }
       if (pending !== null && !loading) {
         if (overlay.fadeDone) startStage(pending);
@@ -233,6 +269,7 @@ export async function create(ctx) {
     },
     dispose() {
       disposed = true;
+      if (typeof window !== 'undefined') delete window.__campaign;
       window.removeEventListener('blur', onBlur);
       disposeCurrent();
       audio?.stop?.();

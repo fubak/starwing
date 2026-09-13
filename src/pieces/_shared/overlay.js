@@ -24,6 +24,13 @@ const CSS = `
 .gm-pause .h b{color:#8fc6ff;font-weight:800}
 .gm-hint{position:absolute;right:2.6%;bottom:3.2%;text-align:right;font:600 clamp(9px,.85vw,12px)/1.8 ${FONT};letter-spacing:.32em;opacity:0;transition:opacity .5s;text-shadow:0 1px 8px rgba(0,0,0,.8)}
 .gm-hint b{color:#8fc6ff;font-weight:800}
+.gm-over{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(40,4,8,.78),rgba(0,0,0,.94));display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0;transition:opacity .45s}
+.gm-over .t{font:900 clamp(40px,7.5vw,104px)/1 ${FONT};letter-spacing:.28em;font-style:italic;color:#ff5d5d;text-shadow:0 0 34px rgba(255,80,80,.55),0 4px 0 rgba(0,0,0,.5)}
+.gm-over .s{font:600 clamp(11px,1.2vw,16px)/1 ${FONT};letter-spacing:.4em;opacity:.8;margin-top:18px}
+.gm-over .h{font:700 clamp(12px,1.3vw,18px)/2 ${FONT};letter-spacing:.35em;margin-top:34px;text-align:center}
+.gm-over .h b{color:#8fc6ff}
+.gm-over .h .blink{animation:gm-blink 1.1s steps(2,end) infinite}
+@keyframes gm-blink{to{opacity:.25}}
 .gm-vig{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(0,0,0,0) 55%,rgba(0,0,0,.35) 100%);opacity:0}
 `;
 
@@ -40,6 +47,7 @@ export function createGameOverlay(ui) {
   const obj = el('gm-obj', `<div class="l"></div><div class="v"></div>`);
   const hint = el('gm-hint');
   const pause = el('gm-pause', `<div class="t">PAUSED</div><div class="h"><b>ESC</b> RESUME &nbsp;·&nbsp; <b>WASD</b> FLY &nbsp;·&nbsp; <b>SPACE</b> FIRE &nbsp;·&nbsp; <b>SHIFT</b> BOOST &nbsp;·&nbsp; <b>CTRL</b> BRAKE<br><b>Q / E</b> BARREL ROLL &nbsp;·&nbsp; <b>B</b> NOVA BOMB &nbsp;·&nbsp; <b>ENTER</b> CONFIRM</div>`);
+  const over = el('gm-over', `<div class="t">GAME OVER</div><div class="s"></div><div class="h"><span class="blink"><b>ENTER</b> RETRY</span> &nbsp;·&nbsp; <b>ESC</b> TITLE</div>`);
   const fade = el('gm-fade');
   ui.appendChild(root);
 
@@ -66,6 +74,8 @@ export function createGameOverlay(ui) {
     },
     hint(html, secs = 6) { hint.innerHTML = html; st.hintTimer = secs; hint.style.opacity = html ? '1' : '0'; },
     setPaused(p) { st.paused = p; pause.style.opacity = p ? '1' : '0'; },
+    /** Fail screen (null/false hides). sub = one-line reason. */
+    gameOver(sub) { if (sub == null || sub === false) { over.style.opacity = '0'; return; } over.querySelector('.s').textContent = sub; over.style.opacity = '1'; },
     vignette(a) { vig.style.opacity = String(clamp01(a)); },
     update(dt) {
       // fade
