@@ -17,6 +17,7 @@ import { createWorld, beginWorld, SUN_DIR, FOG_DENSITY } from '../pieces/world/i
 import { buildArwing } from '../pieces/ship/index.js';
 import { createEnemyManager } from '../pieces/enemies/index.js';
 import { createVfx, PALETTE as VFX } from '../pieces/vfx/index.js';
+import { parkedGpuWarm } from './warm.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const damp = (cur, target, lambda, dt) => cur + (target - cur) * (1 - Math.exp(-lambda * dt));
@@ -105,7 +106,8 @@ export function beginRail(ctx, game, hudMod) {
   let keyLight = null, rimLight = null, underLight = null, boostLight = null;
   let em = null, vfx = null, trail = null, wingL = null, wingR = null, hud = null;
 
-  const STEP_NAMES = ['look', 'world-init', 'world', 'ship', 'enemies', 'enemy-pool', 'sweep', 'vfx', 'hud'];
+  const STEP_NAMES = ['look', 'world-init', 'world', 'ship', 'enemies', 'enemy-pool', 'sweep', 'vfx', 'hud', 'look-mount', 'gpu-warm'];
+  let pg = null;   // parked GPU warm (compile + first draw of every program, while parked)
   const S = {
     x: 0, y: 4, vx: 0, vy: 0, pitch: 0, yaw: 0, bank: 0,
     speed: CRUISE, boost: 0, brake: 0, gauge: 1,
@@ -187,6 +189,24 @@ export function beginRail(ctx, game, hudMod) {
     },
     // hud: DOM created hidden so a mid-intro warm never overlays the cinematic
     () => { hud = hudMod?.createHud ? hudMod.createHud(ctx) : null; if (hud) { hud.root.style.display = 'none'; game.hud = hud; } },
+    // Mount the deferred look rig + world under the parked stage (the PMREM env
+    // bake rides this step instead of the mount frame) so the GPU warm's light
+    // census — every program cache key — matches the mounted stage.
+    () => {
+      stage.environment = look.mountTo(stage);
+      stage.environmentIntensity = base.envIntensity ?? 0.5;
+      // program keys only need the fog TYPE to match; world.install() writes the real one
+      stage.fog = new THREE.FogExp2(0xbcd4ea, FOG_DENSITY);
+      stage.add(world.group);
+      pg = parkedGpuWarm(ctx, stage, {
+        exposure: 1.0, shadowAuto: renderer.shadowMap.autoUpdate,
+        bloom: ctx.bloom ? { s: 0.42, r: 0.6, t: 0.86 } : null,
+        fov: 60, near: 0.5, far: 7000, zoom: 1,
+        pos: camera.position.clone(), quat: camera.quaternion.clone(), up: camera.up.clone(),
+      });
+    },
+    // compile + first draw of every rail program, a few drawables per unit
+    () => (pg.step() ? undefined : 'again'),
   ];
   let stepI = 0;
 
@@ -445,6 +465,7 @@ export function beginRail(ctx, game, hudMod) {
 
   /** Tear down a partial build (the warm target changed mid-build). */
   function abort() {
+    try { pg?.abort?.(); } catch {}
     for (const o of stage.children.slice()) stage.remove(o);
     try { hud?.dispose(); } catch {}
     try { trail?.dispose?.(); wingL?.dispose?.(); wingR?.dispose?.(); } catch {}
@@ -464,5 +485,6 @@ export function beginRail(ctx, game, hudMod) {
     /** Build one unit; 'again' steps (world chunks) repeat until that unit finishes. */
     step() { if (stepI >= steps.length) return true; if (steps[stepI]() !== 'again') stepI++; return this.done; },
     activate, abort,
+    gwarmed: true,   // the GPU warm rides the step list — no warm pass needed at mount
   };
 }

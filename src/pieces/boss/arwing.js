@@ -2,16 +2,16 @@
 // animation API: update / setBank / setThrust / flap); fall back to a compact
 // stylised Arwing so the boss piece never depends on another piece's state.
 
-export async function loadArwing(THREE, length = 7) {
+// static import (not dynamic): boss's create() is stepped as a generator by the
+// campaign's parked-stage warm build, and a generator cannot await a module load
+import { buildArwing } from '../ship/arwing.js';
+
+export function loadArwing(THREE, length = 7) {
   let obj = null, api = null;
   try {
-    const mod = await import('../ship/index.js');
-    const fn = mod.buildArwing || mod.createArwing || mod.buildShip;
-    if (typeof fn === 'function') {
-      const r = await fn({});
-      obj = r?.isObject3D ? r : r?.group?.isObject3D ? r.group : r?.mesh?.isObject3D ? r.mesh : r?.object?.isObject3D ? r.object : null;
-      if (obj && !r.isObject3D) api = r;
-    }
+    const r = buildArwing({});
+    obj = r?.isObject3D ? r : r?.group?.isObject3D ? r.group : r?.mesh?.isObject3D ? r.mesh : r?.object?.isObject3D ? r.object : null;
+    if (obj && !r.isObject3D) api = r;
   } catch (e) { obj = null; api = null; }
   const group = new THREE.Group();
   const ship = obj || fallbackArwing(THREE);

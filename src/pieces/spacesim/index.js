@@ -6,6 +6,9 @@ import { applyLook } from '../lookdev/index.js';
 import { buildPlanet, SUN_DIR } from './sky.js';
 import { buildAsteroidBelt } from './asteroids.js';
 import { buildFallbackArwing } from './arwing.js';
+// static (not dynamic) import: create() is a generator the campaign steps one
+// phase per frame, and a generator cannot await a module load
+import { buildArwing } from '../ship/arwing.js';
 import { buildDrone } from './drone.js';
 import { buildDust } from './dust.js';
 import { createHud } from './hud.js';
@@ -17,14 +20,31 @@ const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quater
 const damp = (rate, dt) => 1 - Math.exp(-rate * dt);
 const easeInOutCubic = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 
+/** Standalone / non-incremental entry point: drain the phased build in one go. */
 export async function create(ctx, opts = {}) {
+  const g = createSteps(ctx, opts);
+  let r; do { r = g.next(); } while (!r.done);
+  return r.value;
+}
+
+/**
+ * Phased create: each `yield` is a point the campaign may hand control back to
+ * the frame loop, so the ~700 ms of look/env bakes, planet + moon bakes, 540
+ * asteroids, ship, drones and pools no longer land on the frame that mounts the
+ * stage. See src/game/warm.js for the parked-scene machinery.
+ */
+export function* createSteps(ctx, opts = {}) {
   const { scene, camera, renderer, bloom, input, ui, rng, size, audio, events } = ctx;
   // ---------------- mission state (exposed to the integrator: dronesRemaining / kills / score / onComplete)
   const mission = { kills: 0, score: 0, wave: 1, complete: false, completeAt: -1, respawn: opts.respawn ?? true, onComplete: opts.onComplete ?? null };
   const completeListeners = [];
 
   // ---------------- look (lights, sky dome, env map, grade, bloom)
-  const look = applyLook(ctx, 'space', { shadowSize: 10, shadowMap: 1024 });
+  // defer: applyLook's PMREM bake would otherwise run TWICE (once for the stock
+  // preset here, once for the tweaked one below) — ~1.5 s of software-GL work for
+  // a texture we immediately throw away. Deferred, install() only assigns the
+  // env the setPreset bake already produced.
+  const look = applyLook(ctx, 'space', { shadowSize: 10, shadowMap: 1024, defer: true });
   // key light from the upper right so the belt is side-lit (backlit rocks read as black blobs)
   look.preset.sun.dir.set(0.80, 0.46, -0.24).normalize();
   SUN_DIR.copy(look.preset.sun.dir);
@@ -39,22 +59,28 @@ export async function create(ctx, opts = {}) {
   look.preset.hemi.intensity = 1.0; look.preset.fill.intensity = 1.3;
   look.preset.fill.dir.set(-0.6, 0.2, 0.75).normalize();
   look.preset.grade.vignette = 0.38; look.preset.grade.saturation = 1.15;
-  look.setPreset(look.preset, true); // rebuild env map / sky with the tweaked preset
+  yield 'look';
+  look.setPreset(look.preset, true); // build env map / sky with the tweaked preset
+  look.install();                    // mount lights/sky/grade + push globals (env already baked)
   const envMap = scene.environment;
+  yield 'env';
 
   // ---------------- planet + moon (ahead-left of the spawn heading so the opening shot frames it)
   const planetPos = new THREE.Vector3(-0.40, 0.12, -1).normalize().multiplyScalar(3500);
   const dbg = new URLSearchParams(location.search);
   const planet = buildPlanet(renderer, { radius: 1250, position: planetPos, preset: look.preset });
   if (!dbg.has('noplanet')) scene.add(planet.group);
+  yield 'planet';
 
   // ---------------- asteroid belt
   const belt = buildAsteroidBelt(rng, { count: dbg.has('nobelt') ? 6 : 540, extent: 560, thickness: 140, look, heroes: dbg.has('nobelt') ? 0 : 5 });
   scene.add(belt.group);
+  yield 'belt';
 
   // ---------------- dust motes, haze sheets (god-ray forward scatter), sun disc
   const dust = buildDust(rng, { sunDir: SUN_DIR, sunColor: look.preset.sun.color });
   if (!dbg.has('nodust')) scene.add(dust.group);
+  yield 'dust';
 
   // Harness friendliness (as lookdev does): in fixed-step mode drain the GL queue each frame so stepping N
   // frames doesn't build a backlog the screenshot then has to wait out on software GL.
@@ -67,9 +93,8 @@ export async function create(ctx, opts = {}) {
   // dynamic import so a mid-edit / renamed ship export degrades to the fallback instead of killing the piece
   let rig = null, arwing = null;
   try {
-    const shipMod = await import('../ship/index.js');
-    if (typeof shipMod.buildArwing === 'function') { rig = shipMod.buildArwing({ THREE }); arwing = rig?.group?.isObject3D ? rig.group : rig?.isObject3D ? rig : null; }
-  } catch (e) { console.warn('spacesim: ship import failed, using fallback', e); }
+    rig = buildArwing({ THREE }); arwing = rig?.group?.isObject3D ? rig.group : rig?.isObject3D ? rig : null;
+  } catch (e) { console.warn('spacesim: ship build failed, using fallback', e); }
   if (!arwing) { rig = null; arwing = buildFallbackArwing({ envMap }); }
   const shipRoot = new THREE.Group(); // world pose
   const shipBank = new THREE.Group(); // visual bank / barrel roll
@@ -115,6 +140,7 @@ export async function create(ctx, opts = {}) {
     if (heroRocks[0]) heroRocks[0].pos.set(700, 220, -1100);
     if (heroRocks[1]) heroRocks[1].pos.set(-760, -300, -1500);
   }
+  yield 'ship';
 
   // ---------------- drones (targets)
   const drones = [];
@@ -129,6 +155,7 @@ export async function create(ctx, opts = {}) {
       tilt: rng.range(-0.6, 0.6), hp: 1, dead: 0, prev: new THREE.Vector3(), hit: 0,
     });
   }
+  yield 'drones';
 
   // ---------------- lasers
   // crisp bolts: a hard, opaque hot core (white-green) inside a thin tight sheath; no big halo smear.
@@ -153,6 +180,7 @@ export async function create(ctx, opts = {}) {
   const muzzleL = new THREE.Vector3(-2.9, -0.55, 0.3), muzzleR = new THREE.Vector3(2.9, -0.55, 0.3);
   let muzzleSide = 0;
   const muzzleFlash = new THREE.PointLight(0x66ff88, 0, 30, 2); scene.add(muzzleFlash);
+  yield 'bolts';
   function fire() {
     const b = bolts.find((x) => !x.mesh.visible); if (!b) return;
     const m = muzzleSide++ % 2 === 0 ? muzzleL : muzzleR;
@@ -192,6 +220,8 @@ export async function create(ctx, opts = {}) {
     audio.noise?.({ dur: 0.5, gain: 0.25, cutoff: 600 });
   }
 
+  yield 'explosions';
+
   // ---------------- speed lines (boost streaks in camera space)
   const N_LINES = 110;
   const linePos = new Float32Array(N_LINES * 6);
@@ -223,6 +253,7 @@ export async function create(ctx, opts = {}) {
   let camShake = 0, camPull = 0;
   const camOffset = new THREE.Vector3(0, 2.7, 10.8);
   const aimNear = new THREE.Vector3(), aimFar = new THREE.Vector3();
+  yield 'hud';
 
   // ---------------- autoplay script
   input.script = (t) => {

@@ -14,7 +14,8 @@
 import * as THREE from 'three';
 import { createGameOverlay } from '../pieces/_shared/overlay.js';
 import { trace } from '../core/trace.js';
-import { compileScene, uploadTextures, warmRender } from '../core/warmup.js';
+import { createStageWarm } from '../core/warmup.js';
+import { beginWarmPiece } from './warm.js';
 
 const ORDER = ['title', 'intro', 'rail', 'boss', 'space', 'onfoot', 'complete'];
 const FADE_OUT = 0.55, FADE_IN = 0.7;
@@ -138,7 +139,7 @@ export async function create(ctx) {
       let piece = null;
       const b = takeWarm('rail');
       if (b) piece = b.activate();
-      else piece = await mod.createRail(ctx, game, hudMod);
+      else { piece = await mod.createRail(ctx, game, hudMod); warmTook = true; } // createRail drains beginRail, gpu warm included
       hud = game.hud;
       if (!piece || !hud) { piece?.dispose?.(); return null; }
       overlay.raise();
@@ -148,7 +149,9 @@ export async function create(ctx) {
     async boss() {
       const mod = mods.boss; if (!mod?.create) return null;
       audio?.playMusic?.('battle');
-      const piece = await mod.create(ctx, { embedded: true, hudTop: 70 });
+      const b = takeWarm('boss');
+      const piece = b ? b.activate() : await mod.create(ctx, { embedded: true, hudTop: 70 });
+      if (!piece) return null;
       overlay.raise();
       overlay.caption('MISSION 1 · CORNERIA', 'GORGON', 'VENOMIAN DREADNOUGHT', 3.4);
       let won = -1, dead = false;
@@ -168,7 +171,9 @@ export async function create(ctx) {
     async space() {
       const mod = mods.space; if (!mod?.create) return null;
       audio?.playMusic?.('battle');
-      const piece = await mod.create(ctx, { respawn: false });
+      const b = takeWarm('space');
+      const piece = b ? b.activate() : await mod.create(ctx, { respawn: false });
+      if (!piece) return null;
       piece.setRespawn?.(false);
       if (typeof window !== 'undefined') window.__space = piece; // probe hook
       overlay.raise();
@@ -194,7 +199,9 @@ export async function create(ctx) {
       const mod = mods.onfoot; if (!mod?.create) return null;
       audio?.playMusic?.('main');
       ctx.onfoot = { hudTitle: false };          // the campaign caption does the title card
-      const piece = await mod.create(ctx);
+      const b = takeWarm('onfoot');
+      const piece = b ? b.activate() : await mod.create(ctx);
+      if (!piece) return null;
       overlay.raise();
       overlay.caption('MISSION 3 · VENOM OUTPOST', 'THE HANGAR', 'ON FOOT', 3.4);
       // (piece draws its own control strip — no overlay hint here)
@@ -225,6 +232,20 @@ export async function create(ctx) {
   // Incremental-build hooks: pumpWarm() drives these one step per frame while the
   // previous stage plays, so the switch is a reparent + look-install, not a rebuild.
   stages.rail.begin = () => mods.rail?.beginRail?.(ctx, game, hudMod) ?? null;
+  // boss/space/onfoot express their create() as a generator (one `yield` per build
+  // phase); beginWarmPiece runs it against a parked scene / detached UI / shadow
+  // composer so the phases can be paced across the previous stage's frames.
+  stages.boss.begin = () => (mods.boss?.createSteps
+    ? beginWarmPiece(ctx, 'boss', (bctx) => mods.boss.createSteps(bctx, { embedded: true, hudTop: 70 }), { phases: 8 })
+    : null);
+  stages.space.begin = () => (mods.space?.createSteps
+    ? beginWarmPiece(ctx, 'space', (bctx) => mods.space.createSteps(bctx, { respawn: false }), { phases: 12 })
+    : null);
+  stages.onfoot.begin = () => {
+    if (!mods.onfoot?.createSteps) return null;
+    ctx.onfoot = { hudTitle: false };
+    return beginWarmPiece(ctx, 'onfoot', (bctx) => mods.onfoot.createSteps(bctx), { phases: 17 });
+  };
 
   // ---------- transitions --------------------------------------------------------------
   // Stages that run on the shared cinematic director (one Stage: Great Fox + hangar +
@@ -260,13 +281,28 @@ export async function create(ctx) {
   const FRAME_TARGET = 11;         // ms of CPU we are willing to spend per frame
   let cpuEma = 4;
   let stepEma = 0;
+  let starve = 0;
+  // Wall-clock frame length (raster included). The staged GPU warm paces itself
+  // against this, sampled BEFORE the transition, so a machine whose frames really
+  // do cost 150 ms (software GL) isn't paced at 7 ms/frame and stuck in black for
+  // a minute, while a real GPU still gets small ~7 ms slices.
+  let wallEma = 16, lastWall = 0;
   function pumpWarm() {
     const cpu = ctx.engine?.lastCpu ?? cpuEma;
     cpuEma += (cpu - cpuEma) * 0.06;
+    const nowW = performance.now();
+    if (lastWall) wallEma += (Math.min(600, nowW - lastWall) - wallEma) * 0.06;
+    lastWall = nowW;
     if (disposed || loading || paused || failed) return;
     if (!current && pending === null) return;              // still booting
     const ti = pending !== null ? pending : idx + 1;
-    const want = ORDER[((ti % ORDER.length) + ORDER.length) % ORDER.length];
+    const at = (i) => ORDER[((i % ORDER.length) + ORDER.length) % ORDER.length];
+    // Look past stages that have no warm-builder (the cinematics: intro/complete
+    // build in a few ms). Otherwise rail's 90-unit warm only gets intro's ~14 s of
+    // runway while title's 12 s are wasted, and the remainder is drained on the
+    // switch frame. Cap the lookahead so we never park more than one heavy stage.
+    let want = at(ti), look = 0;
+    while (!stages[want]?.begin && look < 2) want = at(ti + ++look);
     if (want === currentName) { return; }                  // retry: the live stage, nothing to warm
     if (warm && warm.name !== want) { try { warm.abort?.(); } catch {} warm = null; }
     if (!warm) {
@@ -282,13 +318,34 @@ export async function create(ctx) {
     try {
       if (!warm.done) {
         if (ctx.engine?.fixedStep) {
-          trace.mark('warm:step', `${warm.name}:${warm.remaining ?? 0}`);
-          warm.step();                                     // deterministic: exactly one unit per frame
+          // Deterministic pacing: 3 units per frame (a full parked build + its
+          // GPU warm is ~50-100 units; one per frame wouldn't finish inside a
+          // 22s cinematic). Real-time mode uses the headroom budget instead.
+          for (let u = 0; u < 3 && !warm.done; u++) {
+            trace.mark('warm:step', `${warm.stepName ?? warm.name}`);
+            warm.step();
+          }
         } else {
           // Frames with no headroom skip the build entirely rather than hitch.
           let budget = FRAME_TARGET - cpuEma;
-          if (budget < stepEma * 0.85) return;
-          trace.mark('warm:step', `${warm.name}:${warm.remaining ?? 0}`);
+          // Progress guarantee: some units (a planet bake, 540 asteroids) can never
+          // fit in FRAME_TARGET, and a pure headroom test would stall the whole
+          // build forever — then takeWarm() would pay the entire remainder on the
+          // switch frame, which is the hitch we are removing. After `starve` idle
+          // frames we run one unit anyway: worst case one heavy unit per 16
+          // frames (~4 units/sec of worst-case overrun — and stages give the warm
+          // tens of seconds of runway) instead of the whole remainder on the
+          // switch frame (by far the worse deal: 1.2-1.6 s drains measured).
+          // When EVERY frame already exceeds the budget (software-GL harness),
+          // "headroom" never exists — there the starve gate is the only thing
+          // that ever runs, so open it all the way. Note: use wallEma, not
+          // cpuEma — lastCpu only counts update + command submission; the
+          // software raster runs async in the GPU process so a slow renderer
+          // reads ~3 ms of CPU. Wall time sees the real frame cost.
+          const starveLimit = wallEma > 100 ? 1 : 16;
+          if (budget < stepEma * 0.85 && ++starve < starveLimit) return;
+          starve = 0;
+          trace.mark('warm:step', `${warm.stepName ?? warm.name}`);
           do {
             const s0 = performance.now(); warm.step(); const ms = performance.now() - s0;
             stepEma = stepEma ? stepEma + (ms - stepEma) * 0.25 : ms;
@@ -304,12 +361,47 @@ export async function create(ctx) {
     }
   }
 
+  // ---------- staged GPU warm (compile + first draw of every program), paced ----
+  // The build is only half of a stage switch; the other half is "every shader in
+  // the new scene compiles and draws for the first time". That used to be two
+  // blocking calls on the mount frame. Now it is a step machine we pump with the
+  // same headroom logic as the incremental build, while the fade is still black.
+  let gwarm = null; // { w, resolve, budget }
+  function gpuWarm(cam) {
+    return new Promise((resolve) => {
+      let w = null;
+      try { w = createStageWarm(renderer, scene, cam); } catch (e) { console.warn('[game] warm init', e); }
+      if (!w) { resolve(); return; }
+      // Snapshot the pacing budget NOW (from the outgoing stage's frames): the warm
+      // work itself lands in lastCpu, so a live EMA would feed back on itself and
+      // grow each unit until the whole warm was one frame again.
+      const budget = Math.max(FRAME_TARGET * 0.6, Math.min(60, wallEma * 0.3));
+      gwarm = { w, resolve, budget };
+      trace.mark('warm:gpu-begin', budget.toFixed(0));
+    });
+  }
+  function pumpGpuWarm() {
+    if (!gwarm) return;
+    const budget = gwarm.budget;
+    const t0 = performance.now();
+    try {
+      do {
+        if (gwarm.w.step()) { const r = gwarm.resolve; gwarm = null; r(); return; }
+      } while (performance.now() - t0 < budget);
+    } catch (e) {
+      console.warn('[game] warm step failed', e);
+      const r = gwarm.resolve; try { gwarm.w.abort(); } catch {} gwarm = null; r();
+    }
+  }
+
+  let warmTook = false; // set when a parked build mounted this stage (it already ran its GPU warm units)
   /** Consume the warmed build for `name` if there is one; finishes it inline if partial. */
   function takeWarm(name) {
     if (!warm) return null;
     if (warm.name !== name) { try { warm.abort?.(); } catch {} warm = null; return null; }
     const b = warm; warm = null;
     while (!b.done) b.step();                              // e.g. intro skipped early: pay the remainder once
+    warmTook = true;
     return b;
   }
 
@@ -326,6 +418,7 @@ export async function create(ctx) {
     events.emit('campaign:stage', currentName);
     trace.setStage(currentName);
     let piece = null;
+    warmTook = false; // set by takeWarm() inside the stage factory
     try { piece = await stages[currentName](); } catch (e) { console.error(`[game] stage "${currentName}" failed`, e); resetShared(); }
     if (disposed) { piece?.dispose?.(); return; }
     if (!piece) { console.warn(`[game] skipping stage "${currentName}"`); loading = false; pending = null; requestStage(idx + 1); return; }
@@ -339,12 +432,11 @@ export async function create(ctx) {
     // texture uploads are all paid here — not on a visible gameplay frame.
     // Skipped only for cinematic -> cinematic switches on the shared director,
     // which was fully warmed at boot.
-    if (!keepCine) {
-      const cam = piece.camera ?? camera;
-      try { await compileScene(renderer, scene, cam); } catch (e) { console.warn('[game] warm compile', e); }
-      try { uploadTextures(renderer, scene); } catch (e) { console.warn('[game] warm textures', e); }
-      try { warmRender(renderer, scene, cam); } catch (e) { console.warn('[game] warm render', e); }
-    }
+    // Paced one budget's worth per frame (see pumpGpuWarm) so no single frame
+    // carries the whole compile+draw: the fade just stays black a few frames longer.
+    // Skipped when the stage was mounted from a parked warm build — that path
+    // already compiled + drew every one of its programs while it was invisible.
+    if (!keepCine && !warmTook) await gpuWarm(piece.camera ?? camera);
     overlay.fadeTo(0, FADE_IN);
     audio?.duck?.(1, FADE_IN);
     mark.tReady = performance.now();
@@ -376,6 +468,7 @@ export async function create(ctx) {
       overlay.update(dt);
       audio?.update?.(dt);
       pumpWarm();
+      pumpGpuWarm();
       // game over: stage frozen under the card; Enter retries the stage, Esc returns to the title, auto-retry after 12s
       if (failed) {
         failed.t += dt;
@@ -406,6 +499,7 @@ export async function create(ctx) {
       if (typeof window !== 'undefined') delete window.__campaign;
       window.removeEventListener('blur', onBlur);
       if (warm) { try { warm.abort?.(); } catch {} warm = null; }
+      if (gwarm) { try { gwarm.w.abort(); } catch {} const r = gwarm.resolve; gwarm = null; r(); }
       disposeCurrent();
       try { cine?.disposeCinematics?.(); } catch {}
       audio?.stop?.();

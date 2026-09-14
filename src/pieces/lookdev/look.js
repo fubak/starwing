@@ -141,6 +141,19 @@ export function applyLook(ctx, preset = 'space', opts = {}) {
       push(cur);
       scene.userData.look = look;
     },
+    /**
+     * Deferred builds only: park the rig's scene objects under `target` (instead
+     * of the scene) and run the postponed PMREM env bake. Used by the campaign's
+     * parked-stage warm: the lights must sit inside the parked subtree so the
+     * warm render's light census — every program cache key — matches what
+     * install() will later produce. Returns the baked environment texture;
+     * install() stays idempotent and reparents `adds` into the scene.
+     */
+    mountTo(parent) {
+      for (const o of adds) parent.add(o);
+      if (!envRT) buildEnv(target);   // `target` here is the PRESET (see above), not a node
+      return envRT?.texture ?? null;
+    },
     /** Re-assert globals (env/exposure/fog/grade) after the rig was parked by another stage. */
     reapply() {
       if (envRT) scene.environment = envRT.texture;

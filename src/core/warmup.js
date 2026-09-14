@@ -143,6 +143,142 @@ export function warmRender(renderer, scene, camera) {
   return ms;
 }
 
+/**
+ * INCREMENTAL stage warm (pass 3).
+ *
+ * `compileScene` + `warmRender` above do the whole scene in ONE call each, which
+ * is exactly the right *content* but the wrong *schedule*: the transition frame
+ * that mounts a stage carried the entire compile + one full forced-visible draw
+ * (measured: 1.0-2.1 s of `ren` per stage switch under software GL, i.e. a very
+ * visible hitch/black-frame stretch on real hardware too).
+ *
+ * `createStageWarm()` does the identical work split into small units the
+ * campaign can pace one budget's worth per frame while the transition fade is
+ * still black:
+ *
+ *   1. texture uploads, ~24 per unit
+ *   2. dedicated depth materials (see _depthVariants note above)
+ *   3. compile + draw in chunks of `chunk` drawables
+ *
+ * The chunking trick: EVERY non-drawable object (groups, lights, cameras) is
+ * forced visible for the whole warm and only *drawables* are toggled. That
+ * keeps the light census — and therefore every program cache key — byte for
+ * byte identical to what gameplay will use, which a "hide half the tree"
+ * split would have silently broken (numPointLights is part of the key).
+ *
+ * Each unit binds the same tiny 32x32 target the full-fat path used so the
+ * compiled variants are the composer's linear/NoToneMapping ones.
+ *
+ * `root` (default: the whole scene) restricts the census to one subtree. That is
+ * how a *parked* stage is warmed while another one is still on screen (see
+ * src/game/warm.js): the render still goes through `scene` — programs must be
+ * keyed against the real scene's fog/env — but only the parked subtree's
+ * drawables are toggled, and the caller hides the live stage around each unit.
+ */
+export function createStageWarm(renderer, scene, camera, { chunk = 24, textures = 24, root = null } = {}) {
+  const it = warmSteps(renderer, scene, camera, chunk, textures, root || scene);
+  let done = false;
+  return {
+    get done() { return done; },
+    /** Run one unit. Returns true when the whole warm is finished. */
+    step() {
+      if (done) return true;
+      const r = it.next();
+      if (r.done) done = true;
+      return done;
+    },
+    /** Give up early: the generator's finally block restores all scene state. */
+    abort() { if (!done) { done = true; try { it.return(); } catch {} } },
+  };
+}
+
+function* warmSteps(renderer, scene, camera, chunk, texChunk, root) {
+  const t0 = performance.now();
+  const drawables = [];
+  const others = [];      // groups / lights / bones: forced visible for the whole warm
+  const vis = [];         // [object, prevVisible]
+  const counts = [];      // [instancedMesh, prevCount]
+  const ranges = [];      // [geometry, {start,count}]
+  const culls = [];       // [object]
+  const texes = [];
+  const seenTex = new Set();
+  const shadowAuto = renderer.shadowMap.autoUpdate;
+  if (!_rt) _rt = new THREE.WebGLRenderTarget(32, 32, { depth: true });
+  const prevRT = renderer.getRenderTarget();
+  const prevAutoClear = renderer.autoClear;
+  let restored = false;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    renderer.setRenderTarget(prevRT);
+    renderer.autoClear = prevAutoClear;
+    renderer.shadowMap.autoUpdate = shadowAuto;
+    for (const [o, v] of vis) o.visible = v;
+    for (const [m, c] of counts) m.count = c;
+    for (const [g, r] of ranges) g.drawRange.start = r.start, g.drawRange.count = r.count;
+    for (const o of culls) o.frustumCulled = true;
+    renderer.shadowMap.needsUpdate = true;
+  };
+
+  try {
+    // ---- unit 1: census (cheap traverse; collects textures + drawables)
+    root.traverse((o) => {
+      const isDraw = o.isMesh || o.isPoints || o.isLine || o.isSprite || o.isSkinnedMesh;
+      (isDraw ? drawables : others).push(o);
+      const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+      for (const m of mats) {
+        for (const k in m) { const t = m[k]; if (t && t.isTexture && !seenTex.has(t)) { seenTex.add(t); texes.push(t); } }
+        const u = m.uniforms;
+        if (u) for (const k in u) { const t = u[k]?.value; if (t && t.isTexture && !seenTex.has(t)) { seenTex.add(t); texes.push(t); } }
+      }
+    });
+    // groups/lights visible for the whole warm; drawables start hidden and are
+    // revealed one chunk at a time
+    for (const o of others) if (!o.visible) { vis.push([o, false]); o.visible = true; }
+    for (const o of drawables) {
+      if (o.visible) vis.push([o, true]);
+      o.visible = false;
+      if (o.frustumCulled) { culls.push(o); o.frustumCulled = false; }
+      if (o.isInstancedMesh && o.count < o.instanceMatrix.count) { counts.push([o, o.count]); o.count = o.instanceMatrix.count; }
+      const g = o.geometry;
+      if (g && g.drawRange && g.drawRange.count < Infinity) { ranges.push([g, { ...g.drawRange }]); g.setDrawRange(0, Infinity); }
+    }
+    yield 'census';
+
+    // ---- texture uploads
+    for (let i = 0; i < texes.length; i += texChunk) {
+      for (let j = i; j < Math.min(i + texChunk, texes.length); j++) { try { renderer.initTexture(texes[j]); } catch {} }
+      yield 'tex';
+    }
+
+    // ---- deterministic shadow-depth variants
+    assignDepthMaterials(root);
+    yield 'depth';
+
+    // ---- compile + draw, chunk by chunk
+    renderer.shadowMap.autoUpdate = true;
+    renderer.autoClear = true;
+    for (let i = 0; i < drawables.length; i += chunk) {
+      const end = Math.min(i + chunk, drawables.length);
+      for (let j = i; j < end; j++) drawables[j].visible = true;
+      renderer.setRenderTarget(_rt);
+      try {
+        renderer.compile(scene, camera);
+        yield 'compile';
+        renderer.shadowMap.needsUpdate = true;
+        renderer.render(scene, camera);
+      } catch (e) { /* keep warming the rest */ }
+      renderer.setRenderTarget(prevRT);
+      for (let j = i; j < end; j++) drawables[j].visible = false;
+      yield 'draw';
+    }
+    restore();
+    trace.mark('warm:staged', `${(performance.now() - t0).toFixed(0)}ms ${drawables.length}obj ${texes.length}tex`);
+  } finally {
+    restore();
+  }
+}
+
 /** Force-compile (async, parallel where KHR_parallel_shader_compile exists). */
 export async function compileScene(renderer, scene, camera, capMs = 2500) {
   trace.mark('warm:compile');

@@ -98,7 +98,19 @@ function mergeGodRays(rayMeshes) {
   return mesh;
 }
 
+/** Build the whole hangar in one call (standalone / non-incremental path). */
 export function buildHangar(ctx) {
+  const g = buildHangarSteps(ctx);
+  let r; do { r = g.next(); } while (!r.done);
+  return r.value;
+}
+
+/**
+ * Incremental hangar build: `yield` between sections so the campaign can spread
+ * the ~730 ms of canvas texture bakes, merged geometry and the docked Arwing over
+ * many frames of the previous stage instead of one transition frame.
+ */
+export function* buildHangarSteps(ctx) {
   const { scene } = ctx;
   const { hx, hz, h } = HANGAR;
   const group = new THREE.Group();
@@ -131,6 +143,7 @@ export function buildHangar(ctx) {
     strips.count = k;
   }
   group.add(strips);
+  yield 'floor';
 
   // ---------- walls
   const wt = makeWallTextures();
@@ -164,10 +177,13 @@ export function buildHangar(ctx) {
     for (const g of wallGeos) g.dispose();
   }
   // painted emblem + stencil above the blast door
+  yield 'walls';
   const decal = new THREE.Mesh(new THREE.PlaneGeometry(16, 6), new THREE.MeshStandardMaterial({ map: makeWallDecal(), transparent: true, roughness: 0.7, metalness: 0.1, emissive: 0xffffff, emissiveMap: null, emissiveIntensity: 0 }));
   decal.position.set(0, 9.6, -hz + 0.06); group.add(decal);
   // rear wall (+z, behind the start) gets the same emblem so turning around isn't empty
   const decalB = new THREE.Mesh(decal.geometry, decal.material); decalB.rotation.y = Math.PI; decalB.position.set(0, 8.5, hz - 0.06); group.add(decalB);
+
+  yield 'decals';
 
   // ---------- ceiling with beams
   const ceilMat = new THREE.MeshStandardMaterial({ color: 0x1a2030, roughness: 0.8, metalness: 0.5 });
@@ -195,6 +211,8 @@ export function buildHangar(ctx) {
   }
   pillars.castShadow = true; pillars.receiveShadow = true; group.add(pillars);
 
+  yield 'ceiling';
+
   // ---------- catwalks (both long walls, y=5.5, 2.6 wide) + railings
   const grate = makeGrateTexture(); grate.repeat.set(2, hz * 2 / 1.3);
   const walkMat = new THREE.MeshStandardMaterial({ map: grate, alphaMap: grate, transparent: true, alphaTest: 0.4, color: 0x9fb0c8, roughness: 0.4, metalness: 0.9, side: THREE.DoubleSide, envMapIntensity: 0.8 });
@@ -211,6 +229,8 @@ export function buildHangar(ctx) {
     for (let z = -hz + 1; z < hz; z += 3) { o.position.set(s * (hx - 2.6), 6.05, z); o.updateMatrix(); posts.setMatrixAt(k++, o.matrix); }
     posts.count = k; group.add(posts);
   }
+
+  yield 'catwalks';
 
   // ---------- bay opening (force field + space beyond)
   {
@@ -276,6 +296,7 @@ export function buildHangar(ctx) {
     atmo.position.copy(planet.position); atmo.scale.copy(planet.scale); group.add(atmo);
     animated.push((dt, t) => { planet.material.uniforms.time.value = t; planet.rotation.y = t * 0.01; });
   }
+  yield 'bay';
 
   // ---------- hanging lights + god rays
   const lampMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xfff2d8, emissiveIntensity: 2.2 });
@@ -323,6 +344,8 @@ export function buildHangar(ctx) {
     shaft.rotation.z = -(Math.PI / 2 - 0.35); shaft.position.set(hx - 0.5, 6.2, 0); shaft.scale.set(1, 1, 2.4); pendingRays.push(shaft);
   }
 
+  yield 'lamps';
+
   // ---------- docked Arwing on cradle
   const ship = buildDockedArwing(1.55, 1.6);
   ship.position.set(-6, 1.6, -2); ship.rotation.y = -Math.PI * 0.5 + 0.25; group.add(ship);
@@ -342,6 +365,8 @@ export function buildHangar(ctx) {
     group.add(hose);
   }
 
+  yield 'arwing';
+
   // ---------- cargo crates (obstacles)
   const crateMats = [0, 1, 2].map((v) => { const t = makeCrateTextures(v); return new THREE.MeshStandardMaterial({ map: t.map, roughnessMap: t.roughnessMap, color: 0xffffff, roughness: 0.6, metalness: 0.55, envMapIntensity: 0.9 }); });
   const crateGeo = new RoundedBoxGeometry(1, 1, 1, 3, 0.06);
@@ -358,6 +383,8 @@ export function buildHangar(ctx) {
     });
     for (const s of im) s.m.count = s.n;
   }
+
+  yield 'crates';
 
   // ---------- holo panels (floating projected screens)
   const holoMat = (v) => new THREE.MeshBasicMaterial({ map: makeHoloTexture(v), transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
@@ -378,6 +405,8 @@ export function buildHangar(ctx) {
     for (const g of [...holoBaseGeos, ...holoEmitGeos]) g.dispose();
   }
   animated.push((dt, t) => { for (const [i, p] of holos.entries()) { p.position.y = holoSpots[i][1] + Math.sin(t * 1.3 + i) * 0.06; p.material.opacity = 0.75 + Math.sin(t * 17 + i * 3) * 0.05; } });
+
+  yield 'holos';
 
   // ---------- blast door (end wall, -z), two sliding halves
   // brushed (rougher) door so the orange spill light lands as a soft sheen, not a hot specular bar
@@ -432,12 +461,16 @@ export function buildHangar(ctx) {
     },
   };
 
+  yield 'door';
+
   // ---------- merge all god-ray cones into a single draw call
   {
     const rayMesh = mergeGodRays(pendingRays);
     group.add(rayMesh);
     animated.push((dt, t) => { rayMesh.material.uniforms.time.value = t; });
   }
+
+  yield 'godrays';
 
   // ---------- lighting
   // Kept deliberately small (software-GL friendly, and every point light taxes every fragment):
@@ -455,6 +488,8 @@ export function buildHangar(ctx) {
 
   scene.fog = new THREE.FogExp2(0x0b1626, 0.013);
   scene.background = new THREE.Color(0x05080f);
+
+  yield 'lights';
 
   // ---------- dust motes
   const dustN = 320; const dustPos = new Float32Array(dustN * 3);

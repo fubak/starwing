@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildPilot } from './pilot.js';
-import { buildHangar, HANGAR } from './hangar.js';
+import { buildHangarSteps, HANGAR } from './hangar.js';
 import { makeFx } from './fx.js';
 import { makeHud } from './hud.js';
 import { makeGradePass } from '../lookdev/grade.js';
@@ -15,7 +15,24 @@ export { makeGodRay } from './hangar.js';
 const RUN_SPEED = 7.4, ACCEL = 34, JUMP_V = 7.2, GRAV = -20, ROLL_TIME = 0.55, ROLL_SPEED = 10.5, FIRE_RATE = 0.11;
 const PLAYER_R = 0.42;
 
+/**
+ * Synchronous entry point (standalone piece / non-warm campaign path): drain the
+ * incremental build in one go.
+ */
 export async function create(ctx) {
+  const g = createSteps(ctx);
+  let r; do { r = g.next(); } while (!r.done);
+  return r.value;
+}
+
+/**
+ * Incremental create: `yield` marks a point the campaign may return to the frame
+ * loop. The hangar (procedural canvas textures + merged geometry + the docked
+ * Arwing) is ~730 ms of construction on its own, which is why it is itself a
+ * generator we delegate to — the whole stage build used to land on the single
+ * frame that mounted it.
+ */
+export function* createSteps(ctx) {
   const { scene, camera, renderer, bloom, input, ui, composer } = ctx;
 
   // ---- render setup (restored on dispose)
@@ -29,6 +46,8 @@ export async function create(ctx) {
   bloom.strength = 0.38; bloom.radius = 0.32; bloom.threshold = 0.92;
   renderer.toneMappingExposure = 0.94;
   camera.fov = 54; camera.near = 0.1; camera.far = 1200; camera.updateProjectionMatrix();
+  yield 'look';
+  // RoomEnvironment PMREM bake: ~40ms of GPU+CPU on its own, so it gets its own unit
   const pmrem = new THREE.PMREMGenerator(renderer);
   const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   scene.environment = env; scene.environmentIntensity = 0.5;
@@ -42,15 +61,19 @@ export async function create(ctx) {
   grade.uniforms.uLift.value.setRGB(0.008, 0.016, 0.04); grade.uniforms.uGain.value.setRGB(1.06, 1.0, 0.93);
   grade.uniforms.uVignette.value = 0.42; grade.uniforms.uGrain.value = 0.014;
 
+  yield 'setup';
+
   // ---- world
-  const hangar = buildHangar(ctx);
+  const hangar = yield* buildHangarSteps(ctx);
   const fx = makeFx(scene);
   const opts = ctx.onfoot ?? ctx.opts?.onfoot ?? {};
   const hud = makeHud(ui, { title: opts.hudTitle !== false && !ctx.embedded });
+  yield 'fx';
   // completion promise for the integrator (also emitted on ctx.events as 'onfoot:complete')
   let resolveComplete; const onComplete = new Promise((r) => { resolveComplete = r; });
   const pilot = buildPilot();
   scene.add(pilot.root);
+  yield 'pilot';
 
   // pickups along the demo route + drones
   for (const [x, y, z] of [[2, 1.0, 16], [0.2, 1.0, 12], [-1.4, 2.4, 8], [1.0, 1.0, -6], [-1.0, 1.0, -12], [0.5, 1.0, -20], [2.5, 1.0, -23]]) fx.addPickup(x, y, z);

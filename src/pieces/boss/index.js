@@ -10,6 +10,9 @@ import { Particles, Shards, Beam, Missiles, Bolts, makeShield, makeTextures } fr
 import { Explosions } from './explosions.js';
 import { buildHud } from './hud.js';
 import { makeGradePass } from '../lookdev/grade.js';
+// static import (not dynamic): create() is a generator the campaign steps one
+// phase per frame, and a generator cannot await a module load
+import { makePlanet, resolvePreset } from '../lookdev/index.js';
 
 const BOSS_BASE_Z = -135;
 // hull shield: covers the central hull + cannon arms only; the wing-mounted
@@ -45,7 +48,19 @@ const PLAYER_X = 34, PLAYER_Y_MIN = -16, PLAYER_Y_MAX = 18;
  *                   phase changes are emitted as 'boss:phase' { phase }.
  * Returned piece also exposes `won` (boolean getter) and `debug.S`.
  */
+/** Standalone / non-incremental entry point: drain the phased build in one go. */
 export async function create(ctx, opts = {}) {
+  const g = createSteps(ctx, opts);
+  let r; do { r = g.next(); } while (!r.done);
+  return r.value;
+}
+
+/**
+ * Phased create: each `yield` hands control back so the campaign can spread the
+ * build (sky cube-cam + PMREM bake, planet bake, dreadnought model, Arwing,
+ * fx pools, HUD) over the previous stage's frames. See src/game/warm.js.
+ */
+export function* createSteps(ctx, opts = {}) {
   const { THREE, scene, camera, renderer, composer, bloom, input, ui, audio, rng, size, events } = ctx;
   const embedded = opts.embedded ?? ctx.embedded ?? false;
   bloom.strength = 0.6; bloom.radius = 0.5; bloom.threshold = 0.86;
@@ -60,20 +75,22 @@ export async function create(ctx, opts = {}) {
   const kick = new THREE.DirectionalLight(0xff9a70, 0.6); kick.position.set(500, -200, -300); scene.add(kick);
   const fill = new THREE.HemisphereLight(0x7a66c8, 0x2a3a2a, 0.7); scene.add(fill);
   const planetBounce = new THREE.DirectionalLight(0x9bd45a, 0.55); planetBounce.position.set(-500, -600, -300); scene.add(planetBounce);
-  const sky = buildSky(THREE, scene, renderer, sunDir);
+  yield 'lights';
+  const sky = buildSky(THREE, scene, renderer, sunDir);   // 640px cube-cam + PMREM bake: its own unit
+  yield 'sky';
   // Venom planet: lookdev's shared planet (baked continents / clouds / limb scattering) so it matches the rest of the game
   let planet = null;
   try {
-    const look = await import('../lookdev/index.js');
-    planet = look.makePlanet({ radius: 760, seed: 11, haloScale: 1.05, gpu: true });
+    planet = makePlanet({ radius: 760, seed: 11, haloScale: 1.05, gpu: true });
     planet.lightDir = sunDir.clone();
-    const preset = look.resolvePreset(THREE, 'venom');
+    const preset = resolvePreset(THREE, 'venom');
     planet.setPreset(preset);
     planet.position.set(-1500, -1150, -2300);
     planet.traverse((o) => { o.frustumCulled = false; });
     scene.add(planet);
     sky.hidePlanet?.();
   } catch (e) { planet = null; }
+  yield 'planet';
   // display-space grade (shared lookdev pass): contrast, split-tone, soft vignette, fine grain
   let grade = composer?.passes.find((p) => p.isLookGrade);
   if (!grade && composer) { grade = makeGradePass(); composer.addPass(grade); }
@@ -88,10 +105,12 @@ export async function create(ctx, opts = {}) {
   boss.root.position.set(0, 0, BOSS_BASE_Z);
   scene.add(boss.root);
   const shield = makeShield(THREE, SHIELD_R); boss.root.add(shield); shield.position.set(...SHIELD_C);
-  const arwing = await loadArwing(THREE, 9.5);
+  yield 'boss';
+  const arwing = loadArwing(THREE, 9.5);
   const ship = arwing.group;
   scene.add(ship);
   arwing.setHover(0); arwing.setThrust(0.85);
+  yield 'ship';
 
   // weak-point lights (one per active phase-point, max 2 — point lights are per-fragment cost)
   const wpLights = Array.from({ length: 2 }, () => { const l = new THREE.PointLight(0xffb347, 0, 90, 1.8); scene.add(l); return l; });
@@ -113,6 +132,7 @@ export async function create(ctx, opts = {}) {
   const missiles = new Missiles(THREE, scene, smoke, explosions, 16);
   const bolts = new Bolts(THREE, scene, 30);
   const hud = buildHud(ui, { top: opts.hudTop ?? (embedded ? 70 : 26) });
+  yield 'fx';
 
   // ---------- state
   const S = {

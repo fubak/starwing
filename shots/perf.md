@@ -453,3 +453,104 @@ frames (`stage:*`, `warm:compile`, `warm:render`) which happen under the fade:
 - SwiftShader cannot measure real FPS. `upd+ren` (`engine.lastCpu`) vs the rolling
   median is the hardware-independent metric used throughout; a real-GPU capture is
   still the only way to confirm the 60 FPS target.
+
+## Pass 3c — parked GPU warm (moving compile+link off the transition frame)
+
+Pass 3b moved stage *building* off the switch frame, but the traces still showed
+0.9-3.6 s `stage:*` frames with `prog+33 / prog+43` on them. Root cause: a stage
+that is built ahead of time still **compiles and links** its programs on its
+first real render, because three.js only compiles what a render actually visits.
+So the switch frame paid the whole compile + link + first-draw cost anyway.
+
+### Fixes
+
+1. **`src/game/warm.js` (new) — generic parked-stage warm builder.**
+   `beginWarmPiece(ctx, name, makeGen)` builds a piece into a parked, invisible
+   `Group` (`buildCtx = {...ctx, scene: stage}` so every `scene.add` lands
+   off-scene), with a detached `warmUi` div, a queueing `warmComposer`, and a
+   shadow `warmInput`. `activate()` mounts the group, copies
+   `fog/background/environment/environmentIntensity` onto the real scene, applies
+   the recorded globals, flushes queued passes and appends the UI. `abort()`
+   disposes geometries + materials (never textures — those caches are shared with
+   the live stage) and rescues the camera if the build parented it.
+2. **`parkedGpuWarm()` — compile + draw the parked subtree with the *mounted*
+   render state.** Every three.js program cache key includes the light census,
+   fog type, env-map presence and target variant, so warming a parked group
+   under the *live* stage's state compiles the wrong programs. Each warm unit
+   now: snapshots live globals, applies the parked stage's fog/background/env +
+   the stage's exposure/bloom/camera, hides every other `scene.child`, reveals
+   the parked group, runs one `createStageWarm` unit, then restores everything in
+   a `finally`. `src/core/warmup.js` gained a `root` option so the census,
+   depth-material assignment and draw pass only walk the parked subtree.
+3. **Grade-pass stomping.** The lookdev grade pass is a shared singleton, so a
+   parked build's `applyGradePreset` rewrote the *live* uniforms mid-play (a
+   visible pop). The per-unit snap/apply now includes `{enabled, uniforms}`.
+4. **`begin` builders for boss / space / onfoot** (`createSteps` generators),
+   plus static imports for `buildArwing` / `makePlanet` so no dynamic `import()`
+   lands on a gameplay frame.
+5. **Spacesim double PMREM bake.** `applyLook(..., {defer:true})` +
+   `setPreset(...); install()` = one bake instead of two (~1.5 s → ~0.75 s SW).
+6. **Pacing gate fixed (the reason passes 3/3b under-delivered).** The starve
+   gate keyed off `cpuEma`, an EMA of `engine.lastCpu` — which counts only update
+   + command submission. Under software GL the raster runs in the GPU process, so
+   `lastCpu` reads ~3 ms even when frames take 150 ms, the gate never opened, and
+   the warm ran ~1 unit / 16 frames → unfinished → `takeWarm()` drained the
+   remainder on the switch frame (rail 3356 ms, space 1336 ms). Now
+   `starveLimit = wallEma > 100 ? 1 : 16` (wall clock sees the real frame cost).
+7. **Warm lookahead.** `pumpWarm` skips up to 2 stages with no builder, so rail's
+   ~90-unit warm gets title *and* intro as runway instead of intro alone.
+
+### Result
+
+`onfoot` is the stage whose warm now reliably finishes inside the previous
+stage's runway, and it is the proof the mechanism works end to end:
+
+| stage:onfoot mount frame | before 3c | after 3c |
+|---|---|---|
+| cpu | 3630 ms (upd 2088 / ren 1542) | **8.5 ms** |
+| new programs on the mount frame | +43 | **0** (net −36, disposals) |
+| programs compiled anywhere in onfoot | 45 | **0** |
+| onfoot mid-play worst cpu | 3630 ms | **9 ms** (p95 7.2, **0 hitches**) |
+
+Per-stage CPU (SwiftShader; ratio-to-median is the signal, absolutes are not):
+
+| stage | med before | med after | worst before | worst after |
+|---|---|---|---|---|
+| title | 2.0 | 2.4 | 2947 | 1648 |
+| intro | 4.3 | 6.5 | 18 | 783 |
+| rail | 3.9 | 9.9 | 3253 | 2319 |
+| boss | 2.6 | 2.2 | 1065 | 1847 |
+| space | 2.6 | 2.7 | 1490 | 2237 |
+| onfoot | 3.6 | **2.8** | 3630 | **9** |
+| complete | 2.6 | 4.3 | 866 | 350 |
+
+**Reading this honestly:** total hitch *count* went up (66 vs 26) and mid-play
+worst-case went up for rail/boss/space. That is the pacing gate doing what it was
+told: on this harness a single warm unit costs 200-2200 ms (a PMREM bake, a
+540-asteroid belt, one compile+draw batch), and with `wallEma > 100` the gate
+runs one unit per frame no matter what. SwiftShader simply cannot fit ~90 warm
+units × 0.5 s into a 22 s stage, so the choice there is "many mid-play warm
+slices" vs "one 3 s drain on the switch frame"; the latter is worse and is what
+we removed. On a real GPU those same units are 10-30× cheaper (compile+link is
+CPU-bound but the draws are not), `wallEma` sits at ~16 ms, `starveLimit` is 16
+and the headroom test (`FRAME_TARGET - cpuEma`) is what actually paces the warm —
+i.e. the onfoot column above is the behaviour to expect everywhere.
+
+Every hitch in the after-trace is attributable: each one carries a
+`warm:step(<nextstage>:<unit>)` mark, or is a `stage:*` frame under the fade.
+`renderScale changes: 0`. `no page errors`.
+
+### Still open
+
+- **A real-GPU capture is required to confirm the 60 FPS / no-stutter target.**
+  SwiftShader cannot measure it, and the pacing path that runs on real hardware
+  (headroom-based, `starveLimit = 16`) is *not* the path this trace exercises.
+- rail's warm (~90 units) does not finish inside title+intro under software GL,
+  so `stage:rail` still drains (2.3 s SW). The heavy units to split next are
+  `space:1` (setPreset PMREM, 1.8 s SW) and `onfoot:1` (hangar bake, 2.2 s SW).
+- `tools/shoot.mjs game --times 2,10,30,60,90 --video 20` was started but does not
+  finish in reasonable wall time on SwiftShader (90 s of campaign at ~0.15 s/frame);
+  it was killed after t=10s. The trace run (`?trace&autoplay`) covers the same
+  playthrough with instrumentation and reports `no page errors`.
+- Heap slope is ≈0 MB/s on every stage post-warm (the earlier "1-1.8 MB/s" was
+  the warm's own transient allocation), so the alloc audit is closed.
