@@ -280,7 +280,7 @@ function titleSeq(st, ov, { auto = false, skipAfter, onConfirm } = {}) {
         hero.userData.api.setThrust(1);
         if (c > 1.0) return true;
       } else if (t > 1.2 && (input.wasPressed('confirm') || input.wasPressed('fire') || t > skipAt)) {
-        confirmed = t; st.ctx.audio.tone({ type: 'square', f0: 880, f1: 1320, dur: 0.18, gain: 0.15 });
+        confirmed = t; if (!st.ctx.sfx?.('confirm')) st.ctx.audio.tone({ type: 'square', f0: 880, f1: 1320, dur: 0.18, gain: 0.15 });
         try { onConfirm?.(); } catch (e) { console.warn('cinematics: onConfirm threw', e); }
       }
       ov.setLogo(logoAlpha, logoScale, logoY, glow);
@@ -453,7 +453,7 @@ function completeSeq(st, ov, stats) {
       ov.setBig(seg(t, 0.55, 0.8), lerp(1.5, 1.0, bigIn) * (1 + Math.sin(t * 2) * 0.004));
       ov.setTally(seg(t, 1.1, 1.5));
       ov.tickTally(seg(t, 1.3, 4.6, Ease.linear));
-      if (t > 4.6 && !dinged) { dinged = true; st.ctx.audio.tone({ type: 'triangle', f0: 660, f1: 990, dur: 0.35, gain: 0.15 }); }
+      if (t > 4.6 && !dinged) { dinged = true; if (!st.ctx.sfx?.('confirm')) st.ctx.audio.tone({ type: 'triangle', f0: 660, f1: 990, dur: 0.35, gain: 0.15 }); }
       if (t >= DUR) st.bloomBoost = 0;
       return t >= DUR;
     },

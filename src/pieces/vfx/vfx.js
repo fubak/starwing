@@ -28,8 +28,11 @@ export const PALETTE = {
   charge: new THREE.Color(0.45, 0.75, 1.0),
   fireHot: new THREE.Color(1.0, 0.82, 0.38),
   fireCool: new THREE.Color(1.0, 0.36, 0.06),
-  smokeLit: new THREE.Color(0.46, 0.40, 0.38),
-  smokeDark: new THREE.Color(0.05, 0.04, 0.05),
+  // Smoke shadow was effectively black (0.05), so a plume read as a hole punched
+  // in the sky rather than a lit volume. Lift the shadow to a cool slate that
+  // sits in the same family as the hemisphere ambient, and warm the lit side.
+  smokeLit: new THREE.Color(0.58, 0.52, 0.48),
+  smokeDark: new THREE.Color(0.13, 0.13, 0.155),
   debris: new THREE.Color(0.16, 0.15, 0.17),
   boost: new THREE.Color(0.3, 0.7, 1.0),
   boostHot: new THREE.Color(0.85, 0.95, 1.0),
@@ -482,7 +485,7 @@ export function createVfx(ctx, opts = {}) {
     // --- weapons
     laser(pos, dir, o = {}) {
       const color = o.color ?? PALETTE.playerLaser;
-      const b = lasers.fire({ pos, dir, color, speed: o.speed ?? 190, life: o.life ?? 1.4, scale: o.scale ?? 1, owner: o.owner, damage: o.damage, homing: o.homing, turn: o.turn });
+      const b = lasers.fire({ pos, dir, color, speed: o.speed ?? 190, life: o.life ?? 1.4, scale: o.scale ?? 1, stretch: o.stretch, owner: o.owner, damage: o.damage, homing: o.homing, turn: o.turn });
       if (o.flash !== false) this.muzzleFlash(pos, dir, color, o.scale ?? 1);
       return b;
     },

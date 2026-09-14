@@ -164,6 +164,7 @@ export function* createSteps(ctx) {
       P.rolling = true; P.rollT = 0;
       P.rollDir.set(mag > 0.1 ? V.move.x : -Math.sin(P.yaw), 0, mag > 0.1 ? V.move.z : -Math.cos(P.yaw)).normalize();
       fx.dustPuff(P.pos, 8);
+      if (!(ctx.sfx && ctx.sfx('roll'))) ctx.audio?.noise({ dur: 0.35, gain: 0.2, cutoff: 1400 });
     }
 
     // --- horizontal velocity
@@ -194,10 +195,10 @@ export function* createSteps(ctx) {
 
     // --- jump / gravity
     P.landed = false;
-    if (input.wasPressed('jump') && P.onGround && !P.rolling) { P.vel.y = JUMP_V; P.onGround = false; fx.dustPuff(P.pos, 8); }
+    if (input.wasPressed('jump') && P.onGround && !P.rolling) { P.vel.y = JUMP_V; P.onGround = false; fx.dustPuff(P.pos, 8); if (!(ctx.sfx && ctx.sfx('jump'))) ctx.audio?.tone({ type: 'triangle', f0: 320, f1: 640, dur: 0.16, gain: 0.12 }); }
     P.vel.y += GRAV * dt;
     P.pos.addScaledVector(P.vel, dt);
-    if (P.pos.y <= 0) { if (!P.onGround) { P.landed = true; fx.dustPuff(P.pos, 12); } P.pos.y = 0; P.vel.y = 0; P.onGround = true; }
+    if (P.pos.y <= 0) { if (!P.onGround) { P.landed = true; fx.dustPuff(P.pos, 12); if (!(ctx.sfx && ctx.sfx('land'))) ctx.audio?.noise({ dur: 0.12, gain: 0.16, cutoff: 500 }); } P.pos.y = 0; P.vel.y = 0; P.onGround = true; }
     resolveColliders(hangar.colliders);
 
     // --- blaster
@@ -211,6 +212,10 @@ export function* createSteps(ctx) {
       for (const d of fx.drones) { if (!d.alive) continue; V.tmp.copy(d.g.position).sub(V.muzzle); const dist = V.tmp.length(); V.tmp.divideScalar(dist); const dot = V.tmp.dot(V.dir); if (dot > bestD && dist < 30) { bestD = dot; best = V.tmp.clone(); } }
       if (best) V.dir.copy(best); else V.dir.y = 0.02;
       fx.fireBolt(V.muzzle, V.dir); pilot.fire();
+      // blaster is ~9 shots/s — bank every other shot so the layered 'laser'
+      // def doesn't stack 60+ scheduled notes a second
+      P.sfxAlt = !P.sfxAlt;
+      if (P.sfxAlt) { if (!(ctx.sfx && ctx.sfx('laser'))) ctx.audio?.tone({ type: 'square', f0: 1500, f1: 480, dur: 0.08, gain: 0.09 }); }
     }
 
     // --- door interaction
@@ -219,14 +224,15 @@ export function* createSteps(ctx) {
     hud.setPrompt(canInteract ? 'OPEN BLAST DOOR' : '');
     if (canInteract && (input.isHeld('interact') || input.wasPressed('confirm'))) {
       doorOpened = true; hangar.door.target = 1; hud.flash('DOOR UNLOCKED — PROCEED TO BRIDGE'); fx.sparks(new THREE.Vector3(0, 5, -hz + 1), 20, 0x40ff80);
+      if (!(ctx.sfx && ctx.sfx('door'))) { ctx.audio?.noise({ dur: 0.9, gain: 0.3, cutoff: 350 }); ctx.audio?.tone({ type: 'sawtooth', f0: 60, f1: 40, dur: 0.9, gain: 0.15 }); }
       ctx.events?.emit?.('onfoot:door', { rings: fx.stats.rings, ringsTotal: fx.pickups.length });
     }
-    if (doorOpened && !completed) { doorT += dt; if (doorT > 2.5 || P.pos.z < -hz) { completed = true; const s = { rings: fx.stats.rings, ringsTotal: fx.pickups.length, drones: fx.stats.drones }; ctx.events?.emit?.('onfoot:complete', s); resolveComplete(s); } }
+    if (doorOpened && !completed) { doorT += dt; if (doorT > 2.5 || P.pos.z < -hz) { completed = true; const s = { rings: fx.stats.rings, ringsTotal: fx.pickups.length, drones: fx.stats.drones }; ctx.sfx?.('victory'); ctx.events?.emit?.('onfoot:complete', s); resolveComplete(s); } }
 
     // --- FX / pickups
     fx.update(dt, t, P.pos, hangar.colliders, (kind) => {
-      if (kind === 'ring') { hud.setRings(fx.stats.rings, fx.pickups.length); ctx.events?.emit?.('onfoot:ring', { rings: fx.stats.rings, ringsTotal: fx.pickups.length }); }
-      if (kind === 'drone') { hud.setDrones(fx.stats.drones); ctx.events?.emit?.('onfoot:drone', { drones: fx.stats.drones }); }
+      if (kind === 'ring') { hud.setRings(fx.stats.rings, fx.pickups.length); if (!(ctx.sfx && ctx.sfx('ring'))) ctx.audio?.tone({ type: 'triangle', f0: 1320, f1: 1980, dur: 0.14, gain: 0.14 }); ctx.events?.emit?.('onfoot:ring', { rings: fx.stats.rings, ringsTotal: fx.pickups.length }); }
+      if (kind === 'drone') { hud.setDrones(fx.stats.drones); if (!(ctx.sfx && ctx.sfx('explosionS'))) ctx.audio?.noise({ dur: 0.5, gain: 0.25, cutoff: 700 }); ctx.events?.emit?.('onfoot:drone', { drones: fx.stats.drones }); }
     });
 
     // --- pilot pose

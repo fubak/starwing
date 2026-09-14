@@ -22,6 +22,7 @@
 import { createAudio as createSynth } from './synth.js';
 import { createSequencer, SONGS } from './music.js';
 import { SFX, SFX_ORDER } from './sfx.js';
+import { trace } from '../../core/trace.js';
 
 export const SFX_ALIASES = {
   menu: 'select', cursor: 'select', ui: 'select', move: 'select',
@@ -33,6 +34,9 @@ export const SFX_ALIASES = {
   damage: 'hit', hurt: 'hit', impact: 'hit',
   radio: 'comm', transmission: 'comm', chirp: 'comm',
   warning: 'alarm', danger: 'alarm',
+  win: 'victory', fanfare: 'victory', sting: 'victory',
+  hop: 'jump', touchdown: 'land', pickup: 'ring', collect: 'ring', gem: 'ring',
+  unlock: 'door', open: 'door', gate: 'door',
 };
 export const SFX_NAMES = SFX_ORDER.slice();
 
@@ -51,12 +55,15 @@ export function createAudio(ctx) {
     if (def.duck) synth.duck(def.duck, 0.18 + def.duck * 0.5);
     recent.push({ name: key, t });
     if (recent.length > 24) recent.shift();
+    // trace mark so ?trace runs (and headless probes) can assert which named
+    // sfx actually fired — audio can't be heard in a screenshot
+    trace.mark('sfx', key);
     return true;
   }
 
   return {
     synth, seq, SONGS, SFX, SFX_ORDER, SFX_NAMES, SFX_ALIASES, recent,
-    playMusic(name) { if (!SONGS[name]) return false; synth.resume(); seq.play(name); return true; },
+    playMusic(name) { if (!SONGS[name]) return false; synth.resume(); seq.play(name); trace.mark('music', name); return true; },
     stop() { seq.stop(); },
     sfx,
     has(name) { return !!(SFX[name] || SFX[SFX_ALIASES[name]]); },

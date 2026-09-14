@@ -139,6 +139,53 @@ export const SFX = {
       s.hit('ui', 0.4, t);
     },
   },
+  jump: {
+    label: 'JUMP', key: 'jump', color: '#a8e6ff', duck: 0.05,
+    play(s, t) {
+      s.noise({ t, dur: 0.18, lo: 300, hi: 2400, lo1: 500, hi1: 3600, gain: 0.16, out: 'sfx', a: 0.01 });
+      s.note({ inst: A(TRI, 0.005, 0.14, 0, 0.08, 0.2), f0: 300, f1: 620, t, dur: 0.16, out: 'sfx', unison: 1 });
+      s.hit('ui', 0.2, t);
+    },
+  },
+  land: {
+    label: 'LAND', key: 'land', color: '#c8b890', duck: 0.05,
+    play(s, t) {
+      s.noise({ t, dur: 0.14, lo: 120, hi: 900, lo1: 60, hi1: 300, gain: 0.26, out: 'sfx' });
+      s.note({ inst: A(SIN, 0.002, 0.1, 0, 0.06, 0.3, { sweep: 2 }), f0: 130, f1: 55, t, dur: 0.12, out: 'sfx', unison: 1 });
+    },
+  },
+  ring: {
+    label: 'RING PICKUP', key: 'ring', color: '#ffe86a', duck: 0.08,
+    play(s, t) {
+      // two-tone ascending chime + shimmer tail (Star Fox supply ring)
+      [[0, 1318.5], [0.07, 1975.5]].forEach(([d, f], i) => s.note({ inst: A(TRI, 0.003, 0.14, 0.2, 0.12, 0.2), f0: f, t: t + d, dur: 0.14, out: 'sfx', unison: 1, pan: i ? 0.3 : -0.3 }));
+      s.noise({ t: t + 0.05, dur: 0.3, lo: 6000, hi: 14000, lo1: 3000, hi1: 8000, gain: 0.05, out: 'sfx' });
+      s.hit('ui', 0.35, t);
+    },
+  },
+  door: {
+    label: 'BLAST DOOR', key: 'door', color: '#8fb0ff', duck: 0.3,
+    play(s, t) {
+      s.note({ inst: A(SQ, 0.002, 0.06, 0, 0.03, 0.14), f0: 1200, f1: 900, t, dur: 0.05, out: 'sfx' }); // solenoid clack
+      s.noise({ t: t + 0.06, dur: 1.1, lo: 60, hi: 500, lo1: 30, hi1: 250, gain: 0.5, out: 'sfx', a: 0.05 });
+      s.note({ inst: A(SAW, 0.08, 0.8, 0.7, 0.3, 0.16, { band: [300, 900] }), f0: 55, f1: 38, t: t + 0.06, dur: 1.0, out: 'sfx', unison: 2, detune: 6 });
+      s.hit('boom', 0.35, t + 0.06);
+    },
+  },
+  victory: {
+    label: 'VICTORY STING', key: 'victory', color: '#8affc0', duck: 0.5,
+    play(s, t) {
+      // four-note fanfare pickup: rising major arpeggio, wide unison, cymbal-ish tail
+      const N = [[0, 523.25], [0.12, 659.25], [0.24, 783.99], [0.36, 1046.5], [0.72, 1318.5]];
+      for (const [d, f] of N) {
+        const last = d > 0.7;
+        s.note({ inst: A(SQ, 0.005, last ? 0.9 : 0.14, last ? 0.4 : 0, last ? 0.4 : 0.06, last ? 0.22 : 0.18, { band: [1800, 4200] }), f0: f, t: t + d, dur: last ? 1.2 : 0.14, out: 'sfx', unison: 2, detune: 10, pan: d === 0.12 ? 0.25 : -0.25 });
+        s.note({ inst: A(TRI, 0.005, last ? 1.0 : 0.16, 0.4, 0.3, 0.14), f0: f / 2, t: t + d, dur: last ? 1.3 : 0.16, out: 'sfx', unison: 1 });
+      }
+      s.noise({ t: t + 0.7, dur: 0.9, lo: 5000, hi: 14000, lo1: 2000, hi1: 5000, gain: 0.08, out: 'sfx', a: 0.02 });
+      s.hit('ui', 0.8, t + 0.36);
+    },
+  },
 };
 
-export const SFX_ORDER = ['laser', 'charge', 'lockon', 'boost', 'brake', 'roll', 'explosionS', 'explosionM', 'explosionL', 'hit', 'alarm', 'select', 'confirm', 'comm'];
+export const SFX_ORDER = ['laser', 'charge', 'lockon', 'boost', 'brake', 'roll', 'explosionS', 'explosionM', 'explosionL', 'hit', 'alarm', 'select', 'confirm', 'comm', 'victory', 'jump', 'land', 'ring', 'door'];

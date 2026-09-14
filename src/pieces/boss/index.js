@@ -132,6 +132,10 @@ export function* createSteps(ctx, opts = {}) {
   const missiles = new Missiles(THREE, scene, smoke, explosions, 16);
   const bolts = new Bolts(THREE, scene, 30);
   const hud = buildHud(ui, { top: opts.hudTop ?? (embedded ? 70 : 26) });
+  // incoming-transmission chirp on every comm line (rail's say() does this;
+  // the boss HUD is its own DOM so it needs the hookup here)
+  const _comm = hud.comm.bind(hud);
+  hud.comm = (w, t, d) => { ctx.sfx?.('comm'); _comm(w, t, d); };
   yield 'fx';
 
   // ---------- state
@@ -152,13 +156,17 @@ export function* createSteps(ctx, opts = {}) {
   const worldPos = (obj, out) => { obj.updateWorldMatrix(true, false); return out.setFromMatrixPosition(obj.matrixWorld); };
   const bossHealth = () => { let f = 0; for (const p of [1, 2, 3]) { const ws = boss.weakPoints.filter((w) => w.phase === p); f += ws.reduce((a, w) => a + w.hp, 0) / ws.reduce((a, w) => a + w.maxHp, 0); } return f / 3; };
 
+  // When stitched into the campaign, game.js exposes the rich sfx bank on
+  // ctx.sfx — use it and keep the raw tone/noise calls as the standalone
+  // fallback (running ?piece=boss has no bank).
+  const bank = (n, p) => ctx.sfx?.(n, p) === true;
   const sfx = {
-    laser: () => audio.tone({ type: 'square', f0: 1400, f1: 500, dur: 0.09, gain: 0.08 }),
-    hit: () => audio.tone({ type: 'triangle', f0: 800, f1: 300, dur: 0.06, gain: 0.05 }),
-    boom: (g = 0.4) => { audio.noise({ dur: 1.2, gain: g, cutoff: 500 }); audio.tone({ type: 'sine', f0: 90, f1: 30, dur: 0.8, gain: g * 0.6 }); },
-    warn: () => { audio.tone({ type: 'square', f0: 660, f1: 660, dur: 0.14, gain: 0.08 }); setTimeout(() => audio.tone({ type: 'square', f0: 660, f1: 660, dur: 0.14, gain: 0.08 }), 200); },
-    beam: () => audio.noise({ dur: 1.6, gain: 0.25, cutoff: 2400, q: 2 }),
-    shatter: () => { audio.noise({ dur: 0.6, gain: 0.35, cutoff: 3000 }); audio.tone({ type: 'sawtooth', f0: 300, f1: 60, dur: 0.5, gain: 0.2 }); },
+    laser: () => { if (!bank('laser')) audio.tone({ type: 'square', f0: 1400, f1: 500, dur: 0.09, gain: 0.08 }); },
+    hit: () => { if (!bank('hit')) audio.tone({ type: 'triangle', f0: 800, f1: 300, dur: 0.06, gain: 0.05 }); },
+    boom: (g = 0.4) => { if (bank(g > 0.7 ? 'explosionL' : g > 0.4 ? 'explosionM' : 'explosionS')) return; audio.noise({ dur: 1.2, gain: g, cutoff: 500 }); audio.tone({ type: 'sine', f0: 90, f1: 30, dur: 0.8, gain: g * 0.6 }); },
+    warn: () => { if (bank('alarm')) return; audio.tone({ type: 'square', f0: 660, f1: 660, dur: 0.14, gain: 0.08 }); setTimeout(() => audio.tone({ type: 'square', f0: 660, f1: 660, dur: 0.14, gain: 0.08 }), 200); },
+    beam: () => { if (!bank('charge')) audio.noise({ dur: 1.6, gain: 0.25, cutoff: 2400, q: 2 }); },
+    shatter: () => { if (bank('explosionM')) return; audio.noise({ dur: 0.6, gain: 0.35, cutoff: 3000 }); audio.tone({ type: 'sawtooth', f0: 300, f1: 60, dur: 0.5, gain: 0.2 }); },
   };
 
   // ---------- helpers: damage / shatter
@@ -510,7 +518,7 @@ export function* createSteps(ctx, opts = {}) {
           if (D.real > 4.2 && Math.random() < 0.08) { const wp = pi.c.clone().applyMatrix4(g.matrixWorld); fire.emit(wp, V.b.set((Math.random() - 0.5) * 6, 5, 4), { life: 0.6, size: 4, c0: [3, 1.5, 0.5], c1: [1, 0.2, 0.05] }); }
         }
         if (D.real > 4.8 && !D.won) {
-          D.won = true; S.won = true; hud.win(true); audio.tone({ type: 'triangle', f0: 523, f1: 784, dur: 0.6, gain: 0.1 });
+          D.won = true; S.won = true; hud.win(true); if (!bank('victory')) audio.tone({ type: 'triangle', f0: 523, f1: 784, dur: 0.6, gain: 0.1 });
           const result = { hits: S.hits, score: S.score + Math.max(0, Math.round((90 - S.ft) * 40)), time: S.ft };
           S.score = result.score; opts.onDefeated?.(result); events?.emit?.('boss:defeated', result);
         }

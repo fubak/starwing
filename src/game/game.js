@@ -35,6 +35,11 @@ export async function create(ctx) {
   const cine = await tryLoad('../pieces/cinematics/index.js');
   let audio = null;
   try { audio = audioMod?.createAudio ? audioMod.createAudio(ctx) : null; } catch (e) { console.warn('[game] audio disabled', e); }
+  // Give child stages the rich sfx bank. ctx.audio is only the raw AudioBus
+  // (tone/noise), so stages written standalone fall back to thin blips — boss,
+  // space and onfoot all did. Stages call ctx.sfx(name) when present and keep
+  // their tone/noise calls as the standalone fallback.
+  ctx.sfx = (n, p) => audio?.sfx?.(n, p) ?? false;
   // preload stage modules up front so stage switches are synchronous (no black frames in the fixed-step harness)
   const mods = { rail: await tryLoad('./rail.js'), boss: await tryLoad('../pieces/boss/index.js'), space: await tryLoad('../pieces/spacesim/index.js'), onfoot: await tryLoad('../pieces/onfoot/index.js') };
   let hud = null; // created lazily per gameplay stage (it is a full-screen canvas; cinematics get their own overlay)
@@ -224,6 +229,7 @@ export async function create(ctx) {
       const bonus = 5000 + stats.hits * 60;
       const done = cine.playComplete(ctx, { score: stats.score + bonus, hits: stats.hits, accuracy: acc, bonus });
       audio?.playMusic?.('main');
+      audio?.sfx?.('victory');
       let finished = false; done.then(() => { finished = true; });
       overlay.setFade(0);
       return { update(dt, t) { d.update(dt, t); if (finished) { for (const k in stats) stats[k] = 0; requestStage(0); } }, dispose() {} };
@@ -460,7 +466,7 @@ export async function create(ctx) {
   const start = ORDER.indexOf(q.get('stage') ?? '');
   startStage(start >= 0 ? start : 0);
   // harness hook (tools / probes): current stage name, fail flag, stats, warm progress
-  if (typeof window !== 'undefined') window.__campaign = { get stage() { return currentName; }, get failed() { return !!failed; }, get paused() { return paused; }, stats, get stageT() { return stageT; }, get warm() { return warm ? { name: warm.name, remaining: warm.remaining ?? 0, done: !!warm.done } : null; }, get busy() { return loading || pending !== null; }, skip() { requestStage(idx + 1); } };
+  if (typeof window !== 'undefined') window.__campaign = { get stage() { return currentName; }, get failed() { return !!failed; }, get paused() { return paused; }, stats, get stageT() { return stageT; }, get audio() { return audio; }, get warm() { return warm ? { name: warm.name, remaining: warm.remaining ?? 0, done: !!warm.done } : null; }, get busy() { return loading || pending !== null; }, skip() { requestStage(idx + 1); } };
 
   return {
     update(dt, t) {

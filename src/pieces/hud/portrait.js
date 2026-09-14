@@ -13,6 +13,8 @@ export const CHARACTERS = {
   peppy:  { kind: 'hare', fur: '#b8ab98', furDark: '#7a6a58', furLight: '#e6dccb', muzzle: '#f6f1e8', muzzleDark: '#c8bcad', eye: '#8a5a34', eyeDark: '#3a2010', accent: '#c43a2e', jacket: '#8a3a2e', jacketDark: '#4a1c16', ink: '#2e2018', name: 'PEPPY' },
   falco:  { kind: 'bird', fur: '#3d86ea', furDark: '#1e4aa6', furLight: '#8ec2ff', muzzle: '#f4c541', muzzleDark: '#b07a14', eye: '#eef2f8', eyeDark: '#8ea0b8', accent: '#d83a2e', jacket: '#9a2e26', jacketDark: '#4c1410', ink: '#101a40', name: 'FALCO' },
   slippy: { kind: 'frog', fur: '#5fcd5c', furDark: '#2f8a3a', furLight: '#a9f08e', muzzle: '#e2f5be', muzzleDark: '#a6c47e', eye: '#3a2a1a', eyeDark: '#140c04', accent: '#d83a2e', jacket: '#d1a63c', jacketDark: '#6e4c12', ink: '#0f3a1a', name: 'SLIPPY' },
+  // ROB 64: gunmetal trapezoid head, single amber visor, cheek bolts, antenna
+  rob:    { kind: 'rob',  fur: '#aeb8c8', furDark: '#5c6674', furLight: '#e8eef8', muzzle: '#3a4352', muzzleDark: '#222933', eye: '#ffc93a', eyeDark: '#8a4a10', accent: '#d83a2e', jacket: '#2a3550', jacketDark: '#141c30', ink: '#14181f', name: 'ROB 64' },
 };
 
 const TAU = Math.PI * 2;
@@ -284,6 +286,7 @@ export function createPortrait(size = 164, dpr = Math.min(devicePixelRatio || 1,
     if (c.kind === 'fox') return FOX.head;
     if (c.kind === 'hare') return HARE.head;
     if (c.kind === 'bird') return BIRD.head;
+    if (c.kind === 'rob') return ROB.head;
     return FROG.head;
   }
 
@@ -487,6 +490,55 @@ export function createPortrait(size = 164, dpr = Math.min(devicePixelRatio || 1,
     headset(-1, c);
   }
 
+  // ---------- ROBOT (ROB 64): slab head, glowing visor band, jaw grille, antenna
+  const ROB = {
+    // slightly tapering box, chamfered bottom corners
+    head: sym(-26, [
+      ['C', 18, -26, 24, -18, 24, -8],       // crown -> temple
+      ['C', 25, 2, 24, 10, 22, 14],          // cheek slab
+      ['L', 20, 18], ['L', 14, 18],          // jaw chamfer
+      ['C', 10, 24, 5, 25.5, 0, 25.5],       // chin
+    ]),
+    visor: sym(0, [
+      ['L', 19, -2], ['L', 19, 3],
+      ['C', 14, 6, 7, 7, 0, 7],
+    ]),
+  };
+  function drawRob(c, m, b, lidClose, open, nod) {
+    headsetBand();
+    // ear bolts (behind the head)
+    for (const s of [-1, 1]) {
+      const bolt = () => { g.beginPath(); g.rect(s * 22 - (s < 0 ? 6 : 0), -6, 6, 10); g.closePath(); };
+      cel(bolt, c.furDark, { cx: s * 24, cy: -1, r: 6, depth: 1.6, hi: 0.35 });
+      ink(bolt, 1.2, c.ink);
+    }
+    cel(ROB.head, c.fur, { cx: 0, cy: -2, r: 26, depth: 5, hi: 0.55, hiPush: 0.5 });
+    // brushed-metal plate seams + a warm specular chip
+    g.save(); ROB.head(); g.clip();
+    stroke(() => { g.moveTo(-16, -20); g.lineTo(16, -20); g.moveTo(-20, 8); g.lineTo(20, 8); }, 0.8, rgba(c.ink, 0.5));
+    for (const s of [-1, 1]) fill(ellipse(s * 21, -21, 1.2, 1.2), rgba(c.ink, 0.6)); // rivets
+    g.restore();
+    ink(ROB.head, 1.9, c.ink);
+    // visor: inset dark band with a single amber eye that bobs and pulses while talking
+    cel(ROB.visor, c.muzzleDark, { cx: 0, cy: 1, r: 20, depth: 2.2, hi: 0, shadow: '#0c1018' });
+    ink(ROB.visor, 1.4, c.ink);
+    const glow = 0.45 + 0.55 * Math.min(1, st.mouth * 2.2 + 0.25) + Math.sin(st.t * 6.1) * 0.08;
+    const er = 4.6 + open * 0.35, ey = 0.5 + nod * 0.4 + Math.sin(st.t * 0.9) * 0.5;
+    fill(ellipse(st.look * 0.6, ey, er + 3.5, er * 0.8 + 1.6), rgba(c.eye, 0.22 * glow));
+    fill(ellipse(st.look * 0.6, ey, er, Math.max(0.8, er * 0.62 * (1 - lidClose * 0.85))), rgba(c.eye, 0.55 + 0.4 * glow));
+    fill(ellipse(st.look * 0.6 - 1.2, ey - 1, er * 0.4, er * 0.25), 'rgba(255,244,200,.85)');
+    // jaw grille: vents that open while talking
+    for (let i = -2; i <= 2; i++) {
+      const h = 1.4 + Math.min(4.5, open * (1 - Math.abs(i) * 0.22));
+      fill(() => { g.beginPath(); g.rect(i * 5 - 1.5, 14.5 - h / 2, 3, h); g.closePath(); }, rgba(c.muzzleDark, 0.9));
+    }
+    // antenna + tip light (breathes; bright when talking)
+    stroke(() => { g.moveTo(8, -25); g.lineTo(12 + Math.sin(st.t * 1.8) * 1.2, -38); }, 1.6, c.ink);
+    const tipR = 2.2 + (st.talking ? Math.abs(Math.sin(st.t * 8)) * 0.8 : 0);
+    fill(ellipse(12 + Math.sin(st.t * 1.8) * 1.2, -39.5, tipR, tipR), rgba(c.accent, 0.5 + 0.4 * glow));
+    headset(-1, c);
+  }
+
   // ------------------------------------------------------------------ head dispatch
   function drawHead(c) {
     const m = st.mouth, b = st.brow, blink = st.blink;
@@ -495,6 +547,7 @@ export function createPortrait(size = 164, dpr = Math.min(devicePixelRatio || 1,
     if (c.kind === 'fox') drawFox(c, m, b, lidClose, open, nod);
     else if (c.kind === 'hare') drawHare(c, m, b, lidClose, open, nod);
     else if (c.kind === 'bird') drawBird(c, m, b, lidClose, open, nod);
+    else if (c.kind === 'rob') drawRob(c, m, b, lidClose, open, nod);
     else drawFrog(c, m, b, lidClose, open, nod);
   }
 

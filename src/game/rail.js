@@ -384,7 +384,10 @@ export function beginRail(ctx, game, hudMod) {
       for (const mp of arwing.muzzles) {
         muzzleW.copy(mp).applyMatrix4(arwing.rig.matrixWorld);
         tmp2.copy(target).sub(muzzleW).normalize();
-        vfx.laser(muzzleW, tmp2, { speed: 440, life: 1.1, scale: 1.25, owner: 'player', damage: 1 });
+        // scale 1.25 made a 0.09 m core: ~1 px at 120 m, and the bolts recede
+        // from the chase camera so the axial streak buys nothing on screen.
+        // Chunky Star Fox bolts need cross-section, not length.
+        vfx.laser(muzzleW, tmp2, { speed: 440, life: 1.1, scale: 2.0, stretch: 2.4, owner: 'player', damage: 1 });
       }
       laserSfxT -= 1; if (laserSfxT <= 0) { audio?.sfx('laser'); laserSfxT = 1; }
     }

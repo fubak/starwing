@@ -1,6 +1,8 @@
 // DOM HUD for the boss fight: boss health, phase pips, warning banner,
 // lock-on reticle, shield gauge, screen flash / vignette grading.
 
+import { createPortrait } from '../hud/portrait.js';
+
 export function buildHud(ui, { top: topPx = 26 } = {}) {
   const root = document.createElement('div');
   root.style.cssText = 'position:absolute;inset:0;pointer-events:none;font-family:"Bahnschrift","Eurostile","Avenir Next Condensed","Roboto Condensed","DejaVu Sans Condensed","Arial Narrow",system-ui,sans-serif;color:#e8f4ff;overflow:hidden';
@@ -37,13 +39,11 @@ export function buildHud(ui, { top: topPx = 26 } = {}) {
     .bz-br b{display:block;font-size:34px;color:#fff;letter-spacing:.1em;font-weight:900;text-shadow:0 0 12px rgba(120,180,255,.5)}
     /* comm box: angled console panel with a coloured caller badge + portrait tile, condensed caps caller name */
     .bz-comm{position:absolute;left:28px;bottom:78px;display:flex;align-items:center;gap:14px;padding:8px 26px 8px 10px;background:linear-gradient(180deg,rgba(10,16,40,.86),rgba(4,8,24,.9));border:1px solid rgba(140,190,255,.4);border-left:3px solid #8fd0ff;clip-path:polygon(0 0,calc(100% - 14px) 0,100% 50%,calc(100% - 14px) 100%,0 100%);font-size:17px;letter-spacing:.02em;color:#eaf4ff;opacity:0;transition:opacity .25s;white-space:nowrap;max-width:80vw;box-shadow:0 6px 24px rgba(0,0,0,.45)}
-    .bz-comm i{width:44px;height:44px;flex:none;border-radius:3px;background:radial-gradient(circle at 50% 38%,#ffd9a8 0 22%,#d9782a 23% 40%,#2a4a8a 41%);border:1px solid rgba(255,255,255,.35);box-shadow:inset 0 0 12px rgba(0,0,0,.5)}
+    .bz-comm i{width:52px;height:52px;flex:none;border-radius:3px;background:#0a1226;border:1px solid rgba(255,255,255,.35);box-shadow:inset 0 0 12px rgba(0,0,0,.5);overflow:hidden}
+    .bz-comm i canvas{width:100%;height:100%;display:block}
     .bz-comm b{color:#8fd0ff;letter-spacing:.28em;font-size:11px;font-weight:800;display:block;margin-bottom:3px;text-transform:uppercase}
     .bz-comm span{font-style:italic}
-    .bz-comm.peppy i{background:radial-gradient(circle at 50% 38%,#e8e8e8 0 22%,#8a8a92 23% 40%,#2a4a8a 41%)}
-    .bz-comm.slippy i{background:radial-gradient(circle at 50% 38%,#c8f0a0 0 22%,#4aa040 23% 40%,#2a4a8a 41%)}
-    .bz-comm.falco i{background:radial-gradient(circle at 50% 38%,#a8d8ff 0 22%,#3a78d8 23% 40%,#2a4a8a 41%)}
-    .bz-comm.rob i{background:radial-gradient(circle at 50% 38%,#ffd060 0 16%,#c8ccd8 17% 40%,#2a4a8a 41%)}
+
     .bz-win{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);font-weight:900;font-size:min(56px,4.4vw);letter-spacing:.35em;color:#fff;text-shadow:0 0 30px rgba(120,200,255,.9),0 4px 0 #000;opacity:0;white-space:nowrap}
     .bz-win small{display:block;font-size:16px;letter-spacing:.6em;color:#8fd0ff}
     .bz-win.show{animation:bzwin 1s cubic-bezier(.2,1.4,.4,1) both}
@@ -67,6 +67,10 @@ export function buildHud(ui, { top: topPx = 26 } = {}) {
   const q = (s) => root.querySelector(s);
   const bar = q('.bz-bar i'), barGhost = q('.bz-bar b'), pips = [...root.querySelectorAll('.bz-pips span')], warn = q('.bz-warn'), ret = q('.bz-ret'), retLabel = q('.bz-ret span');
   const flash = q('.bz-flash'), slow = q('.bz-slow'), shield = q('.bz-sh i'), hits = q('.bz-br b'), comm = q('.bz-comm'), win = q('.bz-win'), top = q('.bz-top');
+  // animated cel portrait shared with the main HUD replaces the old flat CSS
+  // gradient badge; it rasterises only while a comm line is actually on screen
+  const portrait = createPortrait(52, Math.min(devicePixelRatio || 1, 2));
+  q('.bz-comm i').appendChild(portrait.canvas);
   let commTimer = 0;
   return {
     setHealth(frac) { bar.style.width = `${Math.max(0, frac) * 100}%`; barGhost.style.width = `${Math.max(0, frac) * 100}%`; },
@@ -77,10 +81,10 @@ export function buildHud(ui, { top: topPx = 26 } = {}) {
     slowmo(a) { slow.style.opacity = a; },
     shield(f) { shield.style.width = `${Math.max(0, f) * 100}%`; },
     hits(n) { hits.textContent = String(n).padStart(3, '0'); },
-    comm(who, text, dur = 3.2) { q('.bz-comm b').textContent = who; q('.bz-comm span').textContent = text; comm.className = `bz-comm ${who.toLowerCase().split(' ')[0]}`; comm.style.opacity = 1; commTimer = dur; },
+    comm(who, text, dur = 3.2) { q('.bz-comm b').textContent = who; q('.bz-comm span').textContent = text; const id = who.toLowerCase().split(' ')[0]; comm.className = `bz-comm ${id}`; portrait.setCharacter(id); portrait.open(); portrait.setTalking(true); comm.style.opacity = 1; commTimer = dur; },
     win(show) { win.classList.toggle('show', show); if (!show) win.style.opacity = 0; },
     hideTop(h) { top.style.opacity = h ? 0 : 1; },
-    update(dt) { if (commTimer > 0) { commTimer -= dt; if (commTimer <= 0) comm.style.opacity = 0; } },
+    update(dt) { if (commTimer > 0) { commTimer -= dt; if (commTimer <= 0) { comm.style.opacity = 0; portrait.setTalking(false); } } if (commTimer > 0) portrait.update(dt); },
     dispose() { root.remove(); },
   };
 }

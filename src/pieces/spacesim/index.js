@@ -191,7 +191,7 @@ export function* createSteps(ctx, opts = {}) {
     b.mesh.lookAt(_v.add(b.mesh.position));
     b.mesh.visible = true; b.life = 1.4;
     muzzleFlash.position.copy(b.mesh.position); muzzleFlash.intensity = 40;
-    audio.tone?.({ type: 'square', f0: 1400, f1: 500, dur: 0.09, gain: 0.08 });
+    if (!(ctx.sfx && ctx.sfx('laser'))) audio.tone?.({ type: 'square', f0: 1400, f1: 500, dur: 0.09, gain: 0.08 });
   }
 
   // ---------------- explosions
@@ -217,7 +217,7 @@ export function* createSteps(ctx, opts = {}) {
     e.t = 0; e.scale = scale; e.s.position.copy(p); e.ring.position.copy(p); e.debris.position.copy(p); e.ring.quaternion.copy(camera.quaternion);
     e.s.visible = e.ring.visible = e.debris.visible = true;
     if (scale > 1) { exLight.position.copy(p); exLight.intensity = 900 * scale; }
-    audio.noise?.({ dur: 0.5, gain: 0.25, cutoff: 600 });
+    if (!(ctx.sfx && ctx.sfx(scale > 1.4 ? 'explosionM' : 'explosionS'))) audio.noise?.({ dur: 0.5, gain: 0.25, cutoff: 600 });
   }
 
   yield 'explosions';
@@ -298,7 +298,7 @@ export function* createSteps(ctx, opts = {}) {
     ship.maneuver = { type, t: 0, dur, q0: ship.quat.clone(), applied: 0, dir: 1 };
     hud.callout(type === 'somersault' ? 'SOMERSAULT' : type === 'uturn' ? 'U-TURN' : 'BARREL ROLL', type === 'barrel' ? 1.0 : 1.7);
     camShake = Math.max(camShake, type === 'barrel' ? 0.2 : 0.4);
-    audio.tone?.({ type: 'sawtooth', f0: 220, f1: type === 'barrel' ? 660 : 440, dur: 0.5, gain: 0.08 });
+    if (!(ctx.sfx && ctx.sfx(type === 'barrel' ? 'roll' : 'boost'))) audio.tone?.({ type: 'sawtooth', f0: 220, f1: type === 'barrel' ? 660 : 440, dur: 0.5, gain: 0.08 });
   }
   const _pose = { pitch: 0, roll: 0, bank: 0 };   // persistent — a fresh object per frame was GC churn
   function maneuverPose(m, k) {
@@ -343,6 +343,9 @@ export function* createSteps(ctx, opts = {}) {
     const ax = input.axes.x, ay = input.axes.y;
     const boostHeld = input.isHeld('boost') && ship.boostMeter > 0.02;
     const brakeHeld = input.isHeld('brake');
+    // boost/brake onset whoosh (edge-triggered; continuous gain rides on ship.boost below)
+    if (input.wasPressed('boost') && ship.boostMeter > 0.02) ctx.sfx?.('boost');
+    if (input.wasPressed('brake')) ctx.sfx?.('brake');
     if (!ship.maneuver) {
       if (input.wasPressed('brake') && ay > 0.5) startManeuver('somersault');
       else if (input.wasPressed('boost') && ay > 0.5) startManeuver('uturn');
@@ -488,6 +491,7 @@ export function* createSteps(ctx, opts = {}) {
       const sc = _v.dot(_v2) - dist / 900;
       if (sc > bestScore) { bestScore = sc; best = i; }
     });
+    if (best !== lockedIdx) ctx.sfx?.('lockon');
     lockedIdx = best;
     hud.state.remaining = drones.filter((d) => d.dead <= 0).length; hud.state.total = drones.length; hud.state.score = mission.score;
     hud.state.targets = drones.filter((d) => d.dead <= 0).map((d) => ({ pos: d.obj.position, dist: d.obj.position.distanceTo(ship.pos), name: d.name, locked: drones.indexOf(d) === lockedIdx }));

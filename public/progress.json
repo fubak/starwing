@@ -1,8 +1,8 @@
 {
  "started": "2026-09-06T11:14:08.452495+00:00",
- "updated": 1789372599,
+ "updated": 1789379659,
  "wave": 2,
- "phase": "polish: models",
+ "phase": "polish: art",
  "pieces": {
   "lookdev": {
    "status": "lose",
@@ -114,8 +114,6 @@
   }
  },
  "log": [
-  "12:00:58 enemies: builder round 1 done \u2014 ENEMIES piece (src/pieces/enemies/) \u2014 round 1, committed as 18be13a.\n\nWhat exists / what I built on: the folder had a su",
-  "12:00:58 enemies: critic round 1 start",
   "12:01:43 hud: builder round 1 done \u2014 hud piece (src/pieces/hud/) continued from the recovered partial work and finished. Files: index.js (showcase timeline, ",
   "12:01:43 hud: critic round 1 start",
   "12:05:58 flight: builder round 1 done \u2014 Built the `flight` piece (src/pieces/flight/: index.js, environment.js, effects.js, arwing.js). Continued from the inter",
@@ -313,7 +311,9 @@
   "07:54:48 stutter round 3 done \u2014 Pass 3c on STARWING stutter. Root cause of the remaining big hitches was that pre-building a stage ahead of time is not enough: three.js only compiles/links a program when a render actually visits the",
   "07:54:48 stutter hunt done",
   "07:56:39 === POLISH WAVE: models, menu, mouse, poly; then art; then perf verify ===",
-  "07:56:39 models agent start"
+  "07:56:39 models agent start",
+  "09:54:19 models done \u2014 All four polish items done, visually verified via rendered PNGs, and committed as f1c1076 'polish: model facing, title logo, mouse control, hero poly' (69 files). Facing audit: can",
+  "09:54:19 art agent start"
  ],
  "playtest": {
   "round": 3,

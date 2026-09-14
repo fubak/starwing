@@ -55,9 +55,15 @@ const FIRE_FRAG = /* glsl */ `
     col = mix(col, vec3(1.00, 0.34, 0.04), smoothstep(0.30, 0.55, heat));
     col = mix(col, vec3(1.00, 0.72, 0.18), smoothstep(0.55, 0.78, heat));
     col = mix(col, vec3(1.00, 0.96, 0.82), smoothstep(0.78, 0.96, heat));
-    // hot interior is self-lit; soot is only lit externally
+    // Hot interior is self-lit; soot is only lit externally.
+    // The gain is per-channel and warm-weighted so the interior CLIPS IN ORDER:
+    // red saturates first, then green, then blue. Under ACES + bloom that gives
+    // the classic filmic fireball (white core -> yellow -> amber -> orange edge)
+    // instead of a flat blown-out white disc, which is what a scalar 2.6x gain
+    // produced on the death cluster (every channel hit 1.0 at the same time and
+    // half the screen went to paper white with no interior detail left).
     float glow = smoothstep(0.08, 0.6, heat);
-    col = col * mix(1.0, 2.6, glow) * uTint;
+    col = col * mix(vec3(1.0), vec3(2.30, 1.72, 1.12), glow) * uTint;
     // fresnel-eroded silhouette + noise dissolve at end of life so the ball breaks into smoke rags
     float dissolve = smoothstep(0.55, 1.0, uAge);
     float edge = smoothstep(0.0, 0.35 + dissolve * 0.5, ndv);
@@ -79,8 +85,12 @@ const RING_FRAG = /* glsl */ `
     float edge = smoothstep(front - w, front, r) * (1.0 - smoothstep(front, front + 0.03, r));
     float haze = smoothstep(front - 0.35, front - 0.05, r) * (1.0 - smoothstep(front - 0.05, front, r)) * 0.35;
     float a = (edge * (0.7 + 0.5 * n) + haze * n) * (1.0 - uAge) * (1.0 - uAge);
-    vec3 col = mix(uColor, vec3(1.0, 0.98, 0.9), edge * 0.6);
-    gl_FragColor = vec4(col * a * 1.8, a);
+    // These are ADDITIVE and up to 12 can overlap during the chain-reaction
+    // death, which bleached the whole dreadnought hull to paper white. Halve
+    // the gain and keep the leading edge warm (not white) so ten stacked rings
+    // read as a lattice of hot shockwaves instead of one flat glare.
+    vec3 col = mix(uColor, vec3(1.0, 0.94, 0.78), edge * 0.35);
+    gl_FragColor = vec4(col * a * 0.95, a);
   }`;
 
 // short hard core flash (billboard), additive; carries the "pop"
@@ -88,8 +98,10 @@ const FLASH_FRAG = /* glsl */ `
   precision highp float; uniform float uAge; uniform vec3 uColor; varying vec2 vUv;
   void main(){ vec2 p = vUv - 0.5; float r = length(p) * 2.0;
     float core = pow(max(0.0, 1.0 - r), 3.0); float rays = pow(max(0.0, 1.0 - r), 1.2) * (0.55 + 0.45 * pow(abs(cos(atan(p.y, p.x) * 3.0)), 6.0));
-    float a = (core * 1.2 + rays * 0.35) * (1.0 - uAge) * (1.0 - uAge);
-    gl_FragColor = vec4(mix(uColor, vec3(1.0), core) * a, a); }`;
+    float a = (core * 1.05 + rays * 0.32) * (1.0 - uAge) * (1.0 - uAge);
+    // stop just short of pure white: the additive flash sitting on top of the
+    // fireballs is what pushed the death cluster over the clip point
+    gl_FragColor = vec4(mix(uColor, vec3(1.0, 0.97, 0.88), core * 0.85) * a, a); }`;
 
 export class Explosions {
   constructor(THREE, scene, { maxBalls = 40, maxRings = 12, maxFlashes = 10, lightDir = new THREE.Vector3(0.6, 0.55, 0.6) } = {}) {

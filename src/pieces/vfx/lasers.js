@@ -50,8 +50,16 @@ precision highp float;
 varying vec3 vColor;
 varying float vFacing;
 void main() {
-  // white-hot centre, tinted rim
-  vec3 col = mix(vColor * 1.6, vec3(1.9), pow(vFacing, 2.5));
+  // Hot centre, saturated rim. The white-hot mix is deliberately hue-preserving:
+  // a flat vec3(1.9) core washed every bolt to a colourless dot at distance
+  // (once ACES + bloom had their way), so the "white" is now the bolt's own
+  // colour lifted towards white per channel — a green bolt stays green-white.
+  // A bolt flying AWAY from the camera is seen almost entirely through its cap,
+  // i.e. vFacing ~ 1 everywhere — so the old 100%-white head-on term erased the
+  // bolt's colour exactly when it mattered most (rail's twin lasers read as
+  // colourless specks). Keep most of the hue even at the hottest point.
+  vec3 hot = mix(vColor, vec3(1.0), 0.15) * 3.4;
+  vec3 col = mix(vColor * 2.4, hot, pow(vFacing, 1.6));
   gl_FragColor = vec4(col, 1.0);
 }
 `;
@@ -71,14 +79,18 @@ export class LaserSystem {
       return m;
     };
     const add = { transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor };
-    this.core = mkInst(new THREE.CapsuleGeometry(0.075, 1.3, 4, 10), new THREE.ShaderMaterial({ vertexShader: CORE_VERT, fragmentShader: CORE_FRAG }), 10);
-    this.glow = mkInst(new THREE.CapsuleGeometry(0.28, 1.5, 4, 12), new THREE.ShaderMaterial({
+    // core:glow radius ratio matters more than absolute size — at 0.075 vs 0.28
+    // the solid core was a hairline inside a big soft halo, so a bolt read as a
+    // pale fuzzy dot. Fatten the core, tighten the halo, and push the halo gain
+    // well above 1 so the additive tint survives being drawn over bright water.
+    this.core = mkInst(new THREE.CapsuleGeometry(0.14, 1.3, 4, 10), new THREE.ShaderMaterial({ vertexShader: CORE_VERT, fragmentShader: CORE_FRAG }), 10);
+    this.glow = mkInst(new THREE.CapsuleGeometry(0.30, 1.5, 4, 12), new THREE.ShaderMaterial({
       vertexShader: GLOW_VERT, fragmentShader: GLOW_FRAG, ...add, side: THREE.FrontSide,
-      uniforms: { uHalf: { value: 1.03 }, uTail: { value: 0 }, uGain: { value: 0.8 } },
+      uniforms: { uHalf: { value: 1.03 }, uTail: { value: 0 }, uGain: { value: 2.0 } },
     }), 11);
     this.trail = mkInst(new THREE.CapsuleGeometry(0.14, 4.2, 4, 10), new THREE.ShaderMaterial({
       vertexShader: GLOW_VERT, fragmentShader: GLOW_FRAG, ...add,
-      uniforms: { uHalf: { value: 2.24 }, uTail: { value: 1 }, uGain: { value: 0.7 } },
+      uniforms: { uHalf: { value: 2.24 }, uTail: { value: 1 }, uGain: { value: 1.15 } },
     }), 9);
     this.group = new THREE.Group();
     this.group.add(this.trail, this.glow, this.core);
@@ -87,12 +99,19 @@ export class LaserSystem {
     this._meshes = [this.core, this.glow, this.trail];
   }
 
-  /** fire({pos, dir, color, speed, life, scale, owner, damage}) */
+  /** fire({pos, dir, color, speed, life, scale, stretch, owner, damage}) */
   fire(o) {
     if (this.bolts.length >= this.capacity) this.bolts.shift();
+    const speed = o.speed ?? 180;
+    // Axial streak. A bolt is only ~1.5 m of geometry; at rail speeds (440 m/s)
+    // it covers 7 m per frame, so it drew as a subpixel dot and the twin lasers
+    // were effectively invisible. Stretch the capsule along its axis in
+    // proportion to per-frame travel (the classic motion-streak cheat) so a fast
+    // bolt reads as a bolt, not a speck. Callers may override with `stretch`.
+    const stretch = o.stretch ?? Math.max(1, Math.min(3.6, speed / 150));
     const b = {
       pos: o.pos.clone(), dir: o.dir.clone().normalize(), color: o.color.clone(),
-      speed: o.speed ?? 180, life: o.life ?? 1.6, age: 0, scale: o.scale ?? 1,
+      speed, life: o.life ?? 1.6, age: 0, scale: o.scale ?? 1, stretch,
       owner: o.owner ?? 'player', damage: o.damage ?? 1, homing: o.homing ?? null, turn: o.turn ?? 6,
       dead: false,
     };
@@ -122,13 +141,14 @@ export class LaserSystem {
       const b = bolts[i];
       this._q.setFromUnitVectors(this._up, b.dir);
       const grow = Math.min(1, b.age * 12); // quick stretch-in from the muzzle
-      this._s.set(b.scale, b.scale * (0.35 + 0.65 * grow), b.scale);
+      const ax = b.stretch * (0.35 + 0.65 * grow);
+      this._s.set(b.scale, b.scale * ax, b.scale);
       this._m.compose(b.pos, this._q, this._s);
       this.core.setMatrixAt(i, this._m);
       this.glow.setMatrixAt(i, this._m);
-      // trail centre sits behind the head
-      this._tmp.copy(b.pos).addScaledVector(b.dir, -1.6 * b.scale * grow);
-      this._s.set(b.scale, b.scale * grow, b.scale);
+      // trail centre sits behind the head (scaled with the streak so it stays attached)
+      this._tmp.copy(b.pos).addScaledVector(b.dir, -1.6 * b.scale * grow * b.stretch);
+      this._s.set(b.scale, b.scale * grow * b.stretch, b.scale);
       this._m.compose(this._tmp, this._q, this._s);
       this.trail.setMatrixAt(i, this._m);
       for (const m of this._meshes) m.userData.color.setXYZ(i, b.color.r, b.color.g, b.color.b);
