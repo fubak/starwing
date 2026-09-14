@@ -1,8 +1,8 @@
 {
  "started": "2026-09-06T11:14:08.452495+00:00",
- "updated": 1789384211,
+ "updated": 1789389769,
  "wave": 2,
- "phase": "polish: perf-verify",
+ "phase": "finished",
  "pieces": {
   "lookdev": {
    "status": "lose",
@@ -114,8 +114,6 @@
   }
  },
  "log": [
-  "12:05:58 flight: builder round 1 done \u2014 Built the `flight` piece (src/pieces/flight/: index.js, environment.js, effects.js, arwing.js). Continued from the inter",
-  "12:05:58 flight: critic round 1 start",
   "12:11:29 ship: critic r1 -> starfox 4/10 \u2014 gap: Fix the boot-time crash in src/pieces/ship/index.js:156-158 (first realtime frame gets a negative/od",
   "12:11:29 ship: builder round 2 start (gap: Fix the boot-time crash in src/pieces/ship/index.js:156-158 (first realtime fram)",
   "12:15:29 audio: builder round 1 done \u2014 AUDIO piece (src/pieces/audio/) completed and committed as aae083f ('audio: round 1').\n\nWhat exists / was built on: the ",
@@ -313,7 +311,9 @@
   "09:54:19 models done \u2014 All four polish items done, visually verified via rendered PNGs, and committed as f1c1076 'polish: model facing, title logo, mouse control, hero poly' (69 files). Facing audit: can",
   "09:54:19 art agent start",
   "11:10:11 art done \u2014 Final art/VFX/audio polish pass on STARWING complete. I surveyed every stage via headless SwiftShader probes (full tools/shoot.mjs game runs don't finish on software GL \u2014 a known l",
-  "11:10:11 perf-verify agent start"
+  "11:10:11 perf-verify agent start",
+  "12:42:49 perf-verify done \u2014 Pass 4 final performance verification is complete, documented in shots/perf.md and committed as 58c2bb0 \"perf: final verification\" (tree clean apart from untracked shot artifacts).",
+  "12:42:49 polish wave done"
  ],
  "playtest": {
   "round": 3,
