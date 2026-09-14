@@ -1,8 +1,8 @@
 {
  "started": "2026-09-06T11:14:08.452495+00:00",
- "updated": 1789372488,
+ "updated": 1789372599,
  "wave": 2,
- "phase": "finished",
+ "phase": "polish: models",
  "pieces": {
   "lookdev": {
    "status": "lose",
@@ -114,8 +114,6 @@
   }
  },
  "log": [
-  "11:50:42 ship: builder round 1 done \u2014 SHIP piece (src/pieces/ship/) \u2014 round 1 delivered and committed (de5d590, 0ea3eb0).\n\nWhat was there: a substantial but u",
-  "11:50:42 ship: critic round 1 start",
   "12:00:58 enemies: builder round 1 done \u2014 ENEMIES piece (src/pieces/enemies/) \u2014 round 1, committed as 18be13a.\n\nWhat exists / what I built on: the folder had a su",
   "12:00:58 enemies: critic round 1 start",
   "12:01:43 hud: builder round 1 done \u2014 hud piece (src/pieces/hud/) continued from the recovered partial work and finished. Files: index.js (showcase timeline, ",
@@ -313,7 +311,9 @@
   "05:47:51 stutter round 2 done \u2014 Pass 3b of the stutter hunt: traced the full campaign in real time, root-caused and fixed 3 stutter sources plus 1 visual regression bug found on the way. Headline result: ZERO late shader compiles in",
   "05:47:51 stutter round 3 start",
   "07:54:48 stutter round 3 done \u2014 Pass 3c on STARWING stutter. Root cause of the remaining big hitches was that pre-building a stage ahead of time is not enough: three.js only compiles/links a program when a render actually visits the",
-  "07:54:48 stutter hunt done"
+  "07:54:48 stutter hunt done",
+  "07:56:39 === POLISH WAVE: models, menu, mouse, poly; then art; then perf verify ===",
+  "07:56:39 models agent start"
  ],
  "playtest": {
   "round": 3,

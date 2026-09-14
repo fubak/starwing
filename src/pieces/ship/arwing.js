@@ -270,26 +270,30 @@ function planarUV(g, scale = 0.3, axes = 'xz') {
 }
 
 /**
- * Fuselage cross-section: 10-gon wedge — spine ridge, flat upper deck chamfers,
- * near-vertical flanks, lower chamfers, keel. (w half-width, ht top, hb bottom)
+ * Fuselage cross-section: 14-gon wedge — spine ridge, flat upper deck chamfers,
+ * near-vertical flanks, lower chamfers, keel. Extra mid-points soften the two
+ * lower chamfer transitions so the silhouette is less faceted but stays a wedge.
+ * (w half-width, ht top, hb bottom)
  */
 function hullRing(z, w, ht, hb, { deck = 0.55, flank = 0.25, belly = 0.6, y = 0 } = {}) {
   const r = [
-    [0, ht], [w * deck, ht * 0.86], [w, ht * flank], [w, -hb * 0.35], [w * belly, -hb], [0, -hb * 1.05],
+    [0, ht], [w * deck, ht * 0.86], [w * 0.985, ht * (flank + (0.86 - flank) * 0.55)], [w, ht * flank],
+    [w, -hb * 0.35], [w * (0.5 + belly * 0.5), -hb * 0.78], [w * belly, -hb], [0, -hb * 1.05],
   ];
   const full = [...r, ...r.slice(1, -1).reverse().map(([x, yy]) => [-x, yy])];
   return full.map(([x, yy]) => [x, yy + y, z]);
 }
 
 /**
- * Wing section: hex airfoil at span-station x. le/te chord in z, t thickness,
- * ridge at 35% chord. Returns ring (closed) in CCW order looking from +x.
+ * Wing section: 8-gon airfoil at span-station x. le/te chord in z, t thickness,
+ * ridge at 35% chord, extra leading-edge midpoints so the camber reads smooth.
+ * Returns ring (closed) in CCW order looking from +x.
  */
 function wingRing(x, y, le, te, t, ridge = 0.35, camber = 0) {
-  const zr = le + (te - le) * ridge, zr2 = le + (te - le) * (ridge + 0.4);
+  const zr = le + (te - le) * ridge, zr2 = le + (te - le) * (ridge + 0.4), lm = le + (te - le) * 0.1;
   return [
-    [x, y, le], [x, y + t * 0.5 + camber, zr], [x, y + t * 0.34 + camber, zr2], [x, y + t * 0.05, te],
-    [x, y - t * 0.30, zr2], [x, y - t * 0.5, zr],
+    [x, y, le], [x, y + t * 0.32 + camber, lm], [x, y + t * 0.5 + camber, zr], [x, y + t * 0.34 + camber, zr2], [x, y + t * 0.05, te],
+    [x, y - t * 0.30, zr2], [x, y - t * 0.5, zr], [x, y - t * 0.28, lm],
   ];
 }
 
@@ -315,7 +319,7 @@ function finGeo(points, thickness) {
   const shape = new THREE.Shape();
   points.forEach(([x, y], i) => (i ? shape.lineTo(x, y) : shape.moveTo(x, y)));
   shape.closePath();
-  const g = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: true, bevelThickness: thickness * 0.45, bevelSize: thickness * 0.45, bevelSegments: 1, curveSegments: 4 });
+  const g = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: true, bevelThickness: thickness * 0.45, bevelSize: thickness * 0.45, bevelSegments: 3, curveSegments: 10 });
   g.translate(0, 0, -thickness / 2);
   return g;
 }
@@ -527,13 +531,19 @@ export function buildArwing(opts = {}) {
   // --- Fuselage: faceted wedge (nose -Z, tail +Z). Needle nose, broad flat mid-body, tapered tail. Length ~7.4
   const hullSections = [
     [-3.95, 0.02, 0.02, 0.02, { deck: 0.5, flank: 0.3 }],
+    [-3.62, 0.075, 0.055, 0.045, { deck: 0.5, flank: 0.3 }],
     [-3.35, 0.15, 0.10, 0.08, { deck: 0.5, flank: 0.3 }],
+    [-2.95, 0.24, 0.14, 0.11, { deck: 0.5, flank: 0.3 }],
     [-2.55, 0.32, 0.17, 0.14, { deck: 0.5, flank: 0.3 }],
     [-1.65, 0.52, 0.24, 0.22, { deck: 0.52, flank: 0.28 }],
     [-0.75, 0.68, 0.30, 0.30, { deck: 0.55, flank: 0.25 }],
+    [-0.2, 0.75, 0.325, 0.33, { deck: 0.57, flank: 0.23 }],
     [0.25, 0.78, 0.33, 0.34, { deck: 0.58, flank: 0.22 }],
+    [0.75, 0.78, 0.33, 0.345, { deck: 0.58, flank: 0.22 }],
     [1.25, 0.76, 0.32, 0.34, { deck: 0.58, flank: 0.22 }],
+    [1.75, 0.70, 0.31, 0.32, { deck: 0.56, flank: 0.24 }],
     [2.25, 0.62, 0.30, 0.30, { deck: 0.55, flank: 0.25 }],
+    [2.6, 0.52, 0.285, 0.28, { deck: 0.52, flank: 0.27 }],
     [2.95, 0.44, 0.27, 0.26, { deck: 0.5, flank: 0.3 }],
     [3.35, 0.34, 0.25, 0.24, { deck: 0.5, flank: 0.3 }],
   ];
@@ -544,16 +554,16 @@ export function buildArwing(opts = {}) {
   const tailCap = new THREE.Mesh(cap(tailRing), matDark); tailCap.position.z = 3.35; rig.add(tailCap);
   // chin intake: dark faceted scoop under the nose
   const chin = facetLoft([
-    podRing(-2.3, 0.05, -0.17, 0, 6, 0.6), podRing(-1.7, 0.16, -0.22, 0, 6, 0.6), podRing(-0.6, 0.20, -0.26, 0, 6, 0.6), podRing(0.5, 0.18, -0.26, 0, 6, 0.6), podRing(1.4, 0.10, -0.24, 0, 6, 0.6),
+    podRing(-2.3, 0.05, -0.17, 0, 10, 0.6), podRing(-2.0, 0.105, -0.2, 0, 10, 0.6), podRing(-1.7, 0.16, -0.22, 0, 10, 0.6), podRing(-0.6, 0.20, -0.26, 0, 10, 0.6), podRing(0.5, 0.18, -0.26, 0, 10, 0.6), podRing(1.4, 0.10, -0.24, 0, 10, 0.6),
   ]);
   planarUV(chin, 0.3, 'zx'); rig.add(new THREE.Mesh(chin, matGrey));
-  const intake = new THREE.Mesh(cap(podRing(0, 0.15, 0, 0, 6, 0.6).map(([x, y]) => [x, y]), true), matDark); intake.position.set(0, -0.22, -1.72); rig.add(intake);
+  const intake = new THREE.Mesh(cap(podRing(0, 0.15, 0, 0, 10, 0.6).map(([x, y]) => [x, y]), true), matDark); intake.position.set(0, -0.22, -1.72); rig.add(intake);
 
   // --- Tail engine: dark housing, chrome lip, blue-white nozzle ring, dark throat
-  const nozzleHousing = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 0.36, 8, 1, true), matDark);
-  nozzleHousing.rotation.x = Math.PI / 2; nozzleHousing.rotation.y = Math.PI / 8; nozzleHousing.position.set(0, -0.0, 3.5); rig.add(nozzleHousing);
-  const nozzleLip = new THREE.Mesh(new THREE.TorusGeometry(0.29, 0.035, 8, 8), matGrey);
-  nozzleLip.rotation.z = Math.PI / 8; nozzleLip.position.set(0, 0, 3.66); rig.add(nozzleLip);
+  const nozzleHousing = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, 0.36, 20, 1, true), matDark);
+  nozzleHousing.rotation.x = Math.PI / 2; nozzleHousing.position.set(0, -0.0, 3.5); rig.add(nozzleHousing);
+  const nozzleLip = new THREE.Mesh(new THREE.TorusGeometry(0.29, 0.035, 12, 28), matGrey);
+  nozzleLip.position.set(0, 0, 3.66); rig.add(nozzleLip);
   const throat = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.26, 0.34, 24, 1, true), new THREE.MeshBasicMaterial({ color: 0x0a1630, side: THREE.BackSide }));
   throat.rotation.x = Math.PI / 2; throat.position.set(0, 0, 3.5); rig.add(throat);
   const nozzleRing = new THREE.Mesh(new THREE.TorusGeometry(0.225, 0.045, 12, 48), ringMat([0.25, 0.5, 1.3], [0.9, 1.0, 1.2]));
@@ -561,14 +571,21 @@ export function buildArwing(opts = {}) {
   const nozzleCore = new THREE.Mesh(new THREE.CircleGeometry(0.19, 32), coreMat(ENG_HOT, ENG_MID, ENG_EDGE));
   nozzleCore.position.set(0, 0, 3.40); rig.add(nozzleCore);
 
-  // --- Canopy: faceted dark-blue bubble forward on the deck
+  // --- Canopy: dark-blue bubble forward on the deck. 9-gon rings x 12 stations
+  // (extra crown points + tighter station spacing) so the bubble reads smooth
+  // against the fresnel, while the chamfered silhouette stays Arwing-faceted.
   const canopyRings = [
-    [-2.05, 0.02, 0.02, 0.22], [-1.65, 0.20, 0.17, 0.25], [-1.15, 0.31, 0.32, 0.27], [-0.55, 0.35, 0.37, 0.30], [0.05, 0.34, 0.33, 0.31], [0.55, 0.28, 0.22, 0.32], [0.85, 0.02, 0.02, 0.32],
-  ].map(([z, w, h, y]) => [[0, y + h, z], [w * 0.55, y + h * 0.82, z], [w, y + h * 0.35, z], [w, y, z], [-w, y, z], [-w, y + h * 0.35, z], [-w * 0.55, y + h * 0.82, z]]);
+    [-2.05, 0.02, 0.02, 0.22], [-1.85, 0.11, 0.10, 0.235], [-1.65, 0.20, 0.17, 0.25], [-1.4, 0.27, 0.26, 0.26],
+    [-1.15, 0.31, 0.32, 0.27], [-0.85, 0.345, 0.355, 0.285], [-0.55, 0.35, 0.37, 0.30], [-0.25, 0.35, 0.365, 0.305],
+    [0.05, 0.34, 0.33, 0.31], [0.35, 0.315, 0.27, 0.315], [0.55, 0.28, 0.22, 0.32], [0.85, 0.02, 0.02, 0.32],
+  ].map(([z, w, h, y]) => [
+    [0, y + h, z], [w * 0.3, y + h * 0.99, z], [w * 0.6, y + h * 0.82, z], [w * 0.9, y + h * 0.55, z], [w, y, z],
+    [-w, y, z], [-w * 0.9, y + h * 0.55, z], [-w * 0.6, y + h * 0.82, z], [-w * 0.3, y + h * 0.99, z],
+  ]);
   const canopy = new THREE.Mesh(facetLoft(canopyRings), matCanopy);
   canopy.renderOrder = 5; rig.add(canopy);
   // canopy frame rails (faceted)
-  const railPts = canopyRings[3].slice(0, 4);
+  const railPts = canopyRings[6].slice(0, 5);
   const railShape = [...railPts.map(([x, y]) => [x, y]), ...railPts.slice(1).reverse().map(([x, y]) => [x * 0.94 + 0.0, y * 0.94 + 0.017])];
   const frame = new THREE.Mesh(new THREE.ExtrudeGeometry((() => { const s = new THREE.Shape(); railShape.forEach(([x, y], i) => (i ? s.lineTo(x, y) : s.moveTo(x, y))); s.closePath(); return s; })(), { depth: 0.05, bevelEnabled: false }), matGrey);
   frame.position.set(0, 0, -0.58); rig.add(frame);
@@ -577,11 +594,11 @@ export function buildArwing(opts = {}) {
   const frame2L = frame2.clone(); frame2L.scale.x = -0.97; rig.add(frame2L);
   // cockpit interior: seat + pilot + dash
   const seat = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.28, 0.42), matDark); seat.position.set(0, 0.36, -0.1); rig.add(seat);
-  const pilotBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.10, 0.16, 4, 10), new THREE.MeshStandardMaterial({ color: 0x3a7d3a, roughness: 0.7 }));
+  const pilotBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.10, 0.16, 6, 14), new THREE.MeshStandardMaterial({ color: 0x3a7d3a, roughness: 0.7 }));
   pilotBody.position.set(0, 0.42, -0.26); rig.add(pilotBody);
-  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.105, 16, 12), new THREE.MeshStandardMaterial({ color: 0xf3f3f5, roughness: 0.25, metalness: 0.1 }));
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.105, 20, 16), new THREE.MeshStandardMaterial({ color: 0xf3f3f5, roughness: 0.25, metalness: 0.1 }));
   helmet.position.set(0, 0.58, -0.28); rig.add(helmet);
-  const visor = new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), new THREE.MeshStandardMaterial({ color: 0x1a3a70, roughness: 0.1, metalness: 0.4 }));
+  const visor = new THREE.Mesh(new THREE.SphereGeometry(0.09, 20, 16, 0, Math.PI * 2, 0, Math.PI * 0.55), new THREE.MeshStandardMaterial({ color: 0x1a3a70, roughness: 0.1, metalness: 0.4 }));
   visor.position.set(0, 0.58, -0.32); visor.rotation.x = -Math.PI / 2; rig.add(visor);
   const dash = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.10, 0.26), matDark); dash.position.set(0, 0.34, -0.9); rig.add(dash);
   const dashGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.30, 0.05), new THREE.MeshBasicMaterial({ color: 0x40d0ff })); dashGlow.position.set(0, 0.40, -0.8); dashGlow.rotation.x = -0.9; rig.add(dashGlow);
@@ -589,12 +606,14 @@ export function buildArwing(opts = {}) {
   // --- Dorsal: blue spine ridge behind the canopy + antenna
   const spine = new THREE.Mesh(facetLoft([
     [[-0.11, 0.30, 0.9], [0, 0.40, 0.9], [0.11, 0.30, 0.9]],
+    [[-0.11, 0.305, 1.45], [0, 0.415, 1.45], [0.11, 0.305, 1.45]],
     [[-0.10, 0.31, 2.0], [0, 0.42, 2.0], [0.10, 0.31, 2.0]],
+    [[-0.08, 0.29, 2.55], [0, 0.38, 2.55], [0.08, 0.29, 2.55]],
     [[-0.06, 0.27, 3.1], [0, 0.34, 3.1], [0.06, 0.27, 3.1]],
   ], { closed: false }), matBlue);
   rig.add(spine);
-  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.012, 0.45, 6), matDark); antenna.position.set(0, 0.55, 2.6); rig.add(antenna);
-  const antennaLight = new THREE.Mesh(new THREE.SphereGeometry(0.022, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff4040 })); antennaLight.position.set(0, 0.78, 2.6); rig.add(antennaLight);
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.012, 0.45, 10), matDark); antenna.position.set(0, 0.55, 2.6); rig.add(antenna);
+  const antennaLight = new THREE.Mesh(new THREE.SphereGeometry(0.022, 12, 10), new THREE.MeshBasicMaterial({ color: 0xff4040 })); antennaLight.position.set(0, 0.78, 2.6); rig.add(antennaLight);
 
   // --- G-diffuser nacelles: faceted pods low on each flank; thick delta wings grow from them.
   const PODX = 1.10, PODY = -0.12, PODZ = 0.55, PODR = 0.27;
@@ -605,21 +624,22 @@ export function buildArwing(opts = {}) {
   const DROOP = 0.10, FOLD = 0.14; // inner wing slight anhedral; outer wing kinks up (the Arwing silhouette)
   for (const s of [-1, 1]) {
     const px = s * PODX;
-    // nacelle body (8-gon, rotated so a flat faces up)
+    // nacelle body (14-gon rings so the flank cylinders read round up close)
     const pod = facetLoft([
-      podRing(PODZ - 1.75, 0.03, PODY, px), podRing(PODZ - 1.45, 0.12, PODY, px), podRing(PODZ - 0.9, 0.22, PODY, px), podRing(PODZ - 0.2, PODR, PODY, px),
-      podRing(PODZ + 0.7, PODR, PODY, px), podRing(PODZ + 1.5, PODR * 0.96, PODY, px), podRing(PODZ + 2.05, PODR * 0.86, PODY, px), podRing(PODZ + 2.3, PODR * 0.72, PODY, px),
+      podRing(PODZ - 1.75, 0.03, PODY, px, 14), podRing(PODZ - 1.45, 0.12, PODY, px, 14), podRing(PODZ - 0.9, 0.22, PODY, px, 14), podRing(PODZ - 0.2, PODR, PODY, px, 14),
+      podRing(PODZ + 0.25, PODR * 1.01, PODY, px, 14), podRing(PODZ + 0.7, PODR, PODY, px, 14), podRing(PODZ + 1.1, PODR * 0.99, PODY, px, 14),
+      podRing(PODZ + 1.5, PODR * 0.96, PODY, px, 14), podRing(PODZ + 2.05, PODR * 0.86, PODY, px, 14), podRing(PODZ + 2.3, PODR * 0.72, PODY, px, 14),
     ]);
     planarUV(pod, 0.3, 'zy');
     rig.add(new THREE.Mesh(pod, matHull));
     // blue nose cone on the nacelle
-    const podCap = facetLoft([podRing(PODZ - 1.77, 0.02, PODY, px), podRing(PODZ - 1.45, 0.125, PODY, px), podRing(PODZ - 1.1, 0.19, PODY, px), podRing(PODZ - 1.0, 0.0, PODY, px)]);
+    const podCap = facetLoft([podRing(PODZ - 1.77, 0.02, PODY, px, 14), podRing(PODZ - 1.58, 0.085, PODY, px, 14), podRing(PODZ - 1.45, 0.125, PODY, px, 14), podRing(PODZ - 1.1, 0.19, PODY, px, 14), podRing(PODZ - 1.0, 0.0, PODY, px, 14)]);
     rig.add(new THREE.Mesh(podCap, matBlue));
     // red trim band + rear housing + blue glow ring
-    const podBand = new THREE.Mesh(new THREE.CylinderGeometry(PODR * 0.98, PODR * 0.98, 0.10, 8, 1, true), matRed);
-    podBand.rotation.x = Math.PI / 2; podBand.rotation.y = Math.PI / 8; podBand.position.set(px, PODY, PODZ + 1.75); rig.add(podBand);
-    const podHouse = new THREE.Mesh(new THREE.CylinderGeometry(PODR * 0.72, PODR * 0.8, 0.22, 8, 1, true), matDark);
-    podHouse.rotation.x = Math.PI / 2; podHouse.rotation.y = Math.PI / 8; podHouse.position.set(px, PODY, PODZ + 2.38); rig.add(podHouse);
+    const podBand = new THREE.Mesh(new THREE.CylinderGeometry(PODR * 0.98, PODR * 0.98, 0.10, 18, 1, true), matRed);
+    podBand.rotation.x = Math.PI / 2; podBand.position.set(px, PODY, PODZ + 1.75); rig.add(podBand);
+    const podHouse = new THREE.Mesh(new THREE.CylinderGeometry(PODR * 0.72, PODR * 0.8, 0.22, 18, 1, true), matDark);
+    podHouse.rotation.x = Math.PI / 2; podHouse.position.set(px, PODY, PODZ + 2.38); rig.add(podHouse);
     const podRing_ = new THREE.Mesh(new THREE.TorusGeometry(0.155, 0.045, 12, 40), ringMat(GD_ORANGE, GD_HOT));
     podRing_.position.set(px, PODY, PODZ + 2.46); rig.add(podRing_);
     const podThroat = new THREE.Mesh(new THREE.CircleGeometry(0.13, 24), coreMat(GD_HOT, GD_MID, GD_EDGE));
@@ -645,14 +665,18 @@ export function buildArwing(opts = {}) {
     rig.add(pivot); flapPivots.push(pivot);
     const outer = new THREE.Mesh(wingGeo([
       { x: -0.1, y: 0, le: -1.05, te: 1.45, t: 0.20, ridge: 0.32 },
+      { x: 0.55, y: -0.01, le: -0.8, te: 1.42, t: 0.165, ridge: 0.32 },
       { x: 1.1, y: -0.02, le: -0.55, te: 1.35, t: 0.13, ridge: 0.32 },
+      { x: 1.75, y: -0.035, le: -0.18, te: 1.32, t: 0.1, ridge: 0.32 },
       { x: 2.35, y: -0.05, le: 0.15, te: 1.3, t: 0.07, ridge: 0.32 },
     ], s), matWing);
     pivot.add(outer); wings.push(outer);
     // blue leading edge + deep-blue tip chevron
     const outerEdge = new THREE.Mesh(wingGeo([
       { x: 0.0, y: 0.004, le: -1.03, te: -0.55, t: 0.17, ridge: 0.6 },
+      { x: 0.55, y: -0.006, le: -0.79, te: -0.32, t: 0.14, ridge: 0.6 },
       { x: 1.1, y: -0.016, le: -0.53, te: -0.05, t: 0.11, ridge: 0.6 },
+      { x: 1.7, y: -0.032, le: -0.17, te: 0.24, t: 0.085, ridge: 0.6 },
       { x: 2.3, y: -0.046, le: 0.16, te: 0.5, t: 0.06, ridge: 0.6 },
     ], s), matBlue);
     pivot.add(outerEdge);
@@ -679,14 +703,14 @@ export function buildArwing(opts = {}) {
     strip.position.set(-s * 0.043, 0.4, 1.05); finG.add(strip); gdStrips.push(strip);
     const strip2 = strip.clone(); strip2.position.x = s * 0.043; finG.add(strip2); gdStrips.push(strip2);
     // fin tip lamp
-    const nav = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 8), new THREE.MeshBasicMaterial({ color: s < 0 ? new THREE.Color(3, 0.3, 0.3) : new THREE.Color(0.3, 3, 0.8) }));
+    const nav = new THREE.Mesh(new THREE.SphereGeometry(0.035, 12, 10), new THREE.MeshBasicMaterial({ color: s < 0 ? new THREE.Color(3, 0.3, 0.3) : new THREE.Color(0.3, 3, 0.8) }));
     nav.position.set(0, 0.76, 1.33); finG.add(nav);
     const finDisc = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3), discMat([1.2, 0.36, 0.08], [1.2, 0.8, 0.5], 0.35)); finDisc.position.set(0, 0.4, 1.05); finDisc.renderOrder = 12; finG.add(finDisc); gdDiscs.push(finDisc);
 
     // --- Twin laser cannon under the nacelle nose
-    const cannon = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.5, 8), matDark);
+    const cannon = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.5, 14), matDark);
     cannon.rotation.x = Math.PI / 2; cannon.position.set(px, PODY - 0.26, -0.95); rig.add(cannon);
-    const cannonTip = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.3, 8), matGrey);
+    const cannonTip = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.3, 12), matGrey);
     cannonTip.rotation.x = Math.PI / 2; cannonTip.position.set(px, PODY - 0.26, -1.8); rig.add(cannonTip);
     const cannonMount = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.22, 0.5), matGrey);
     cannonMount.position.set(px, PODY - 0.14, -0.6); rig.add(cannonMount);
@@ -694,7 +718,9 @@ export function buildArwing(opts = {}) {
     // --- Upper fins: canted well outward, swept, blue tips, thick faceted
     const upFin = new THREE.Mesh(wingGeo([
       { x: 0.0, y: 0, le: -0.15, te: 1.05, t: 0.10, ridge: 0.35 },
+      { x: 0.28, y: 0, le: 0.12, te: 1.02, t: 0.08, ridge: 0.35 },
       { x: 0.55, y: 0, le: 0.35, te: 1.0, t: 0.06, ridge: 0.35 },
+      { x: 0.8, y: 0, le: 0.55, te: 0.98, t: 0.045, ridge: 0.35 },
       { x: 1.05, y: 0, le: 0.72, te: 0.95, t: 0.03, ridge: 0.35 },
     ], s), matWing);
     upFin.rotation.set(0, 0, s * (Math.PI / 2 - 0.72)); upFin.position.set(s * 0.42, 0.22, 1.75); rig.add(upFin);

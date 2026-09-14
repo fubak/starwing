@@ -52,6 +52,7 @@ export class Engine {
 
     this.trace = trace;
     this.input = new Input(autoplay);
+    this.input.el = this.renderer.domElement; // pointer-lock + context-menu surface for mouse control
     this.audio = new AudioBus();
     this.size = new THREE.Vector2();
     this.stats = new Stats(this);

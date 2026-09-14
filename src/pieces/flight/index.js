@@ -171,6 +171,7 @@ export async function create(ctx) {
   const focus = new THREE.Vector3();
   camera.near = 0.5; camera.far = 6000; camera.fov = 60; camera.updateProjectionMatrix();
 
+  input.mouse.steer = true; // mouse steers the ship (ignored while the script drives)
   // ---------- autoplay script (16 s loop: weave, boost+roll, brake, hard turns) ----------
   input.script = (t) => {
     const buttons = [];
@@ -281,6 +282,7 @@ export async function create(ctx) {
 
   function dispose() {
     input.script = null;
+    input.mouse.steer = false;
     look?.dispose?.();
     bloom.strength = savedBloom.strength; bloom.radius = savedBloom.radius; bloom.threshold = savedBloom.threshold;
     renderer.toneMappingExposure = savedExposure;

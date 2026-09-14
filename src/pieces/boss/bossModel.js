@@ -304,7 +304,7 @@ export function buildBoss(THREE, rng) {
     const fin = new THREE.Mesh(loft(THREE, chamferRect(0.8, 7, 0.6), [{ z: -22, sx: 1, sy: 0.4, oy: 4 }, { z: -14, sx: 1, sy: 1, oy: 7 }, { z: -6, sx: 1, sy: 0.55, oy: 5 }], { uvScale: 12 }), plateMat);
     fin.position.set(side * 96, 2, 0); wg.add(fin);
     const finStripe = new THREE.Mesh(new THREE.BoxGeometry(1.1, 2.4, 9), accentMat); finStripe.position.set(side * 96, 12.6, -14); wg.add(finStripe);
-    const tipLight = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 6), redLightMat); tipLight.position.set(side * 96, 14.4, -14); wg.add(tipLight); runningLights.push(tipLight);
+    const tipLight = new THREE.Mesh(new THREE.SphereGeometry(0.7, 14, 10), redLightMat); tipLight.position.set(side * 96, 14.4, -14); wg.add(tipLight); runningLights.push(tipLight);
     // underslung wing engine nacelle (clean cylinder + bell + rim)
     const nac = new THREE.Mesh(new THREE.CylinderGeometry(4.4, 4.9, 24, 24), plateMat); nac.rotation.x = Math.PI / 2; nac.position.set(side * 62, -1.8, -12); wg.add(nac);
     const nacBand = new THREE.Mesh(new THREE.TorusGeometry(4.55, 0.5, 8, 28), accentMat); nacBand.position.set(side * 62, -1.8, -4); wg.add(nacBand);
@@ -314,8 +314,8 @@ export function buildBoss(THREE, rng) {
     // shield generator pylons (phase 1)
     for (const [wx, wz] of [[60, -4], [84, -8]]) {
       const base = new THREE.Group(); base.position.set(side * wx, 4.5 + (wx > 70 ? -0.8 : 0), wz); wg.add(base);
-      const ped = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 4.6, 2.6, 8), darkMat); ped.position.y = 0.6; base.add(ped);
-      const pedRing = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.35, 8, 8), goldMat); pedRing.rotation.x = Math.PI / 2; pedRing.position.y = 1.9; base.add(pedRing);
+      const ped = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 4.6, 2.6, 16), darkMat); ped.position.y = 0.6; base.add(ped);
+      const pedRing = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.35, 10, 24), goldMat); pedRing.rotation.x = Math.PI / 2; pedRing.position.y = 1.9; base.add(pedRing);
       const ring = new THREE.Mesh(new THREE.TorusGeometry(4.3, 0.42, 8, 32), trimMat); ring.rotation.x = Math.PI / 2; ring.position.y = 4.6; base.add(ring);
       for (let k = 0; k < 4; k++) {
         const strut = new THREE.Mesh(new THREE.BoxGeometry(0.8, 5.2, 1.4), plateMat);
@@ -340,9 +340,9 @@ export function buildBoss(THREE, rng) {
   const brow = new THREE.Mesh(loft(THREE, chamferRect(11.5, 1.4, 0.8), [{ z: 34, sx: 0.8, sy: 1, oy: 22.6 }, { z: 46, sx: 1, sy: 1, oy: 22.8 }, { z: 50, sx: 0.9, sy: 0.7, oy: 22.4 }], { uvScale: 16 }), darkMat); tower.add(brow);
   const browStripe = new THREE.Mesh(new THREE.BoxGeometry(18, 0.6, 3), accentMat); browStripe.position.set(0, 24.3, 44); tower.add(browStripe);
   // sensor mast
-  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.6, 16, 6), trimMat); antenna.position.set(0, 30, 14); tower.add(antenna);
-  const dish = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 0.4, 1.2, 12, 1, true), plateMat); dish.position.set(0, 27, 12); dish.rotation.x = -0.9; dish.material.side = THREE.DoubleSide; tower.add(dish);
-  const antLight = new THREE.Mesh(new THREE.SphereGeometry(0.6, 8, 6), redLightMat); antLight.position.set(0, 38.3, 14); tower.add(antLight); runningLights.push(antLight);
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.6, 16, 12), trimMat); antenna.position.set(0, 30, 14); tower.add(antenna);
+  const dish = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 0.4, 1.2, 24, 1, true), plateMat); dish.position.set(0, 27, 12); dish.rotation.x = -0.9; dish.material.side = THREE.DoubleSide; tower.add(dish);
+  const antLight = new THREE.Mesh(new THREE.SphereGeometry(0.6, 14, 10), redLightMat); antLight.position.set(0, 38.3, 14); tower.add(antLight); runningLights.push(antLight);
   // core eye inside an iris of 6 armour petals
   const coreMat = makeWeakPointMaterial(THREE, PALETTE.core);
   const core = new THREE.Mesh(new THREE.SphereGeometry(4.6, 32, 24), coreMat); core.position.set(0, 15, 42.4); tower.add(core);
@@ -413,7 +413,7 @@ export function buildBoss(THREE, rng) {
 
   // ---- turrets (track the player)
   const turrets = [];
-  const turretBase = new THREE.CylinderGeometry(1.7, 2.0, 1.2, 10), turretHead = new THREE.SphereGeometry(1.4, 12, 8), barrelGeo = new THREE.CylinderGeometry(0.24, 0.24, 4.4, 6);
+  const turretBase = new THREE.CylinderGeometry(1.7, 2.0, 1.2, 18), turretHead = new THREE.SphereGeometry(1.4, 22, 16), barrelGeo = new THREE.CylinderGeometry(0.24, 0.24, 4.4, 12);
   for (const [tx, ty, tz, parent] of [[-15, HH + 3.9, 22, hullFront], [15, HH + 3.9, 22, hullFront], [-18, -HH - 0.5, -20, hullRear], [18, -HH - 0.5, -20, hullRear], [-48, 6.0, -14, wingL], [48, 6.0, -14, wingR], [0, HH + 3.9, -50, hullRear]]) {
     const g = new THREE.Group(); g.position.set(tx, ty, tz); parent.add(g);
     g.add(new THREE.Mesh(turretBase, trimMat));
@@ -438,7 +438,7 @@ export function buildBoss(THREE, rng) {
   greebles.instanceMatrix.needsUpdate = true; hullRear.add(greebles);
 
   // ---- running lights along the dorsal plate edge
-  const lightGeo = new THREE.SphereGeometry(0.45, 8, 6);
+  const lightGeo = new THREE.SphereGeometry(0.45, 12, 8);
   const lights = new THREE.InstancedMesh(lightGeo, redLightMat, 36);
   for (let i = 0; i < 36; i++) {
     const side = i % 2 ? 1 : -1; const z = -54 + (i >> 1) * 5.5;

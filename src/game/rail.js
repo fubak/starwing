@@ -271,7 +271,8 @@ export function beginRail(ctx, game, hudMod) {
 
     hud.show(); hud.setLives(S.lives); hud.setBombs(S.bombs); hud.setShield(1);
     overlay.objective('OBJECTIVE', 'CLEAR THE CORNERIAN SKIES');
-    overlay.hint('<b>WASD</b> FLY &nbsp; <b>SPACE</b> FIRE &nbsp; <b>SHIFT</b> BOOST &nbsp; <b>CTRL</b> BRAKE &nbsp; <b>Q/E</b> ROLL &nbsp; <b>B</b> BOMB', 9);
+    overlay.hint('<b>WASD / MOUSE</b> FLY &nbsp; <b>SPACE / LMB</b> FIRE &nbsp; <b>SHIFT</b> BOOST &nbsp; <b>CTRL</b> BRAKE &nbsp; <b>Q/E</b> ROLL &nbsp; <b>B / RMB</b> BOMB', 9);
+    input.mouse.steer = true;   // mouse aims the ship (click once for pointer lock)
     audio?.playMusic('main');
 
     // ---------- autoplay script (weave, boost + roll, brake, bomb)
@@ -453,6 +454,7 @@ export function beginRail(ctx, game, hudMod) {
   function dispose() {
     for (const off of offs) off();
     input.script = null;
+    input.mouse.steer = false;
     hud.setLock(null); hud.setRadar([]); hud.hideComm();
     trail.dispose?.(); wingL.dispose?.(); wingR.dispose?.();
     vfx.dispose(); em.dispose(); world.dispose(); look.dispose();

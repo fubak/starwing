@@ -88,7 +88,17 @@ export class Overlay {
   setLogo(vis, scale = 1, y = 26, glow = 1) {
     this.logoWrap.style.opacity = clamp01(vis).toFixed(3);
     this.logoWrap.style.top = `${y}%`;
-    this.logoWrap.style.transform = `translate(-50%,-50%) scale(${scale.toFixed(4)})`;
+    // Keep the entire wordmark inside the safe frame at any aspect ratio: the wrap
+    // is min(70vw,900px) wide holding a 1800x620 canvas, centred at (50%, y%).
+    // The zoom-in sequence asks for scale ~1.8 which overflows <1600px windows
+    // horizontally and clips the top edge on 4:3 / short windows — so clamp the
+    // rendered box to ~92vw wide and keep its top edge inside a ~3.5vh margin.
+    const vw = this.root.clientWidth || innerWidth, vh = this.root.clientHeight || innerHeight;
+    const baseW = Math.min(vw * 0.7, 900), AR = 620 / 1800;
+    const capW = (vw * 0.92) / baseW;
+    const capH = Math.max(0.2, ((Math.max(y, 8) / 100 - 0.035) * 2 * vh) / (baseW * AR));
+    const s = Math.min(scale, capW, capH);
+    this.logoWrap.style.transform = `translate(-50%,-50%) scale(${s.toFixed(4)})`;
     this.logoGlow.style.opacity = clamp01((glow - 1) * 0.9).toFixed(3);
   }
   setSub(a) { this.sub.style.opacity = clamp01(a).toFixed(3); }

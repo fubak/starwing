@@ -245,6 +245,7 @@ export function* createSteps(ctx, opts = {}) {
   }
 
   // ---------- autoplay script (reads live state so it always fights well)
+  input.mouse.steer = true; // mouse aims the ship during the boss run too
   let scriptMem = { roll: 0, wasRolling: false };
   input.script = (t) => {
     const p = S.player; const buttons = [];
@@ -585,6 +586,7 @@ export function* createSteps(ctx, opts = {}) {
     debug: { S, boss, bolts, ship, worldPos },
     dispose() {
       input.script = null;
+      input.mouse.steer = false;
       hud.dispose(); sky.dispose(); arwing.dispose();
       if (planet) { scene.remove(planet); planet.disposePlanet?.(); }
       smoke.dispose(); fire.dispose(); sparks.dispose(); shards.dispose(); explosions.dispose(); for (const b of beams) b.dispose(); missiles.dispose(); bolts.dispose();

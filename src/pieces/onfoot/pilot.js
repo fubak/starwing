@@ -2,6 +2,7 @@
 // comm headset), flight jacket + flak vest, articulated limbs, tail, and
 // run/idle/jump/roll animation with anticipation/overshoot springs.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makeFurTexture, makeFabricTexture } from './textures.js';
 
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -30,8 +31,8 @@ function mat(color, opts = {}) {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.05, envMapIntensity: 0.7, ...opts });
 }
 
-function capsule(r, len, m, segs = 8) {
-  const g = new THREE.CapsuleGeometry(r, len, 4, segs);
+function capsule(r, len, m, segs = 14) {
+  const g = new THREE.CapsuleGeometry(r, len, 6, segs);
   const mesh = new THREE.Mesh(g, m);
   mesh.castShadow = true; mesh.receiveShadow = true;
   return mesh;
@@ -41,7 +42,7 @@ function box(w, h, d, m) {
   mesh.castShadow = true; mesh.receiveShadow = true;
   return mesh;
 }
-function sphere(r, m, ws = 16, hs = 12) {
+function sphere(r, m, ws = 20, hs = 14) {
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(r, ws, hs), m);
   mesh.castShadow = true; mesh.receiveShadow = true;
   return mesh;
@@ -53,7 +54,7 @@ function rounded(w, h, d, r, m) {
   shape.lineTo(x + w, y + h - r); shape.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
   shape.lineTo(x + r, y + h); shape.quadraticCurveTo(x, y + h, x, y + h - r);
   shape.lineTo(x, y + r); shape.quadraticCurveTo(x, y, x + r, y);
-  const g = new THREE.ExtrudeGeometry(shape, { depth: d - r * 2, bevelEnabled: true, bevelThickness: r, bevelSize: r, bevelSegments: 3, curveSegments: 4 });
+  const g = new THREE.ExtrudeGeometry(shape, { depth: d - r * 2, bevelEnabled: true, bevelThickness: r, bevelSize: r, bevelSegments: 4, curveSegments: 8 });
   g.translate(0, 0, -(d - r * 2) / 2);
   const mesh = new THREE.Mesh(g, m);
   mesh.castShadow = true; mesh.receiveShadow = true;
@@ -102,7 +103,7 @@ export function buildPilot() {
     for (let i = 0; i < 3; i++) {
       const seg = new THREE.Group(); parent.add(seg); if (i > 0) seg.position.z = -0.17;
       const r = i === 2 ? 0.075 : 0.09 - i * 0.005;
-      const m = sphere(r, i === 2 ? M.furWhite : M.fur, 12, 10); m.scale.set(1, 1, 1.4); m.position.z = -0.1; seg.add(m);
+      const m = sphere(r, i === 2 ? M.furWhite : M.fur, 18, 14); m.scale.set(1, 1, 1.4); m.position.z = -0.1; seg.add(m);
       tailSegs.push(seg); parent = seg;
     } }
 
@@ -117,59 +118,59 @@ export function buildPilot() {
   const packLight = box(0.12, 0.02, 0.02, M.glow); packLight.position.set(0, 0.35, -0.275); torso.add(packLight);
   // shoulder pads
   for (const s of [-1, 1]) {
-    const pad = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), M.red);
+    const pad = new THREE.Mesh(new THREE.SphereGeometry(0.1, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), M.red);
     pad.position.set(s * 0.25, 0.5, 0); pad.castShadow = true; torso.add(pad);
   }
   // scarf collar + tails
-  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.115, 0.05, 8, 16), M.red);
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.115, 0.05, 12, 28), M.red);
   collar.rotation.x = Math.PI / 2; collar.position.y = 0.55; collar.castShadow = true; torso.add(collar);
   const scarfTail = capsule(0.035, 0.24, M.red); scarfTail.position.set(0.06, 0.4, -0.2); scarfTail.rotation.x = 0.4; torso.add(scarfTail);
   const scarfTail2 = capsule(0.03, 0.18, M.red); scarfTail2.position.set(-0.03, 0.42, -0.21); scarfTail2.rotation.x = 0.6; torso.add(scarfTail2);
 
   // ---- head: Fox McCloud-style vulpine head
   const neck = new THREE.Group(); neck.position.y = 0.57; torso.add(neck);
-  const neckFur = sphere(0.075, M.fur, 12, 8); neckFur.position.y = 0.05; neck.add(neckFur);
+  const neckFur = sphere(0.075, M.fur, 18, 12); neckFur.position.y = 0.05; neck.add(neckFur);
   // stylised proportions: head is scaled up (~1.2x) so the face reads at third-person distance
   const head = new THREE.Group(); head.position.y = 0.18; head.scale.setScalar(1.22); neck.add(head);
-  const cranium = sphere(0.17, M.fur, 24, 18); cranium.scale.set(1.0, 0.98, 1.06); head.add(cranium);
+  const cranium = sphere(0.17, M.fur, 32, 24); cranium.scale.set(1.0, 0.98, 1.06); head.add(cranium);
   // cheek / jaw fur (white), muzzle, nose
-  for (const s of [-1, 1]) { const cheek = sphere(0.085, M.furWhite, 14, 10); cheek.position.set(s * 0.085, -0.055, 0.09); cheek.scale.set(1.0, 0.85, 1.0); head.add(cheek); }
-  const muzzle = sphere(0.075, M.furWhite, 14, 10); muzzle.position.set(0, -0.055, 0.16); muzzle.scale.set(1.15, 0.8, 1.45); head.add(muzzle);
-  const nose = sphere(0.028, M.nose, 10, 8); nose.position.set(0, -0.035, 0.265); nose.scale.set(1.2, 0.9, 1); head.add(nose);
+  for (const s of [-1, 1]) { const cheek = sphere(0.085, M.furWhite, 20, 14); cheek.position.set(s * 0.085, -0.055, 0.09); cheek.scale.set(1.0, 0.85, 1.0); head.add(cheek); }
+  const muzzle = sphere(0.075, M.furWhite, 20, 14); muzzle.position.set(0, -0.055, 0.16); muzzle.scale.set(1.15, 0.8, 1.45); head.add(muzzle);
+  const nose = sphere(0.028, M.nose, 14, 10); nose.position.set(0, -0.035, 0.265); nose.scale.set(1.2, 0.9, 1); head.add(nose);
   const mouth = box(0.05, 0.008, 0.02, M.nose); mouth.position.set(0, -0.09, 0.245); head.add(mouth);
   // eyes: whites, green irises, pupils, brow ridges
   for (const s of [-1, 1]) {
     const eyeG = new THREE.Group(); eyeG.position.set(s * 0.068, 0.02, 0.135); eyeG.rotation.y = s * 0.35; head.add(eyeG);
-    const white = sphere(0.04, M.eyeWhite, 14, 10); white.scale.set(1.0, 1.25, 0.55); eyeG.add(white);
-    const iris = sphere(0.022, M.iris, 12, 8); iris.position.z = 0.02; iris.scale.set(1, 1.25, 0.5); eyeG.add(iris);
-    const pupil = sphere(0.011, M.pupil, 8, 6); pupil.position.z = 0.03; pupil.scale.set(1, 1.6, 0.4); eyeG.add(pupil);
-    const lid = new THREE.Mesh(new THREE.SphereGeometry(0.044, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.42), M.fur); lid.position.set(0, 0.005, 0); lid.scale.set(1.0, 1.25, 0.6); lid.rotation.x = -0.25; eyeG.add(lid);
+    const white = sphere(0.04, M.eyeWhite, 18, 12); white.scale.set(1.0, 1.25, 0.55); eyeG.add(white);
+    const iris = sphere(0.022, M.iris, 16, 10); iris.position.z = 0.02; iris.scale.set(1, 1.25, 0.5); eyeG.add(iris);
+    const pupil = sphere(0.011, M.pupil, 12, 8); pupil.position.z = 0.03; pupil.scale.set(1, 1.6, 0.4); eyeG.add(pupil);
+    const lid = new THREE.Mesh(new THREE.SphereGeometry(0.044, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.42), M.fur); lid.position.set(0, 0.005, 0); lid.scale.set(1.0, 1.25, 0.6); lid.rotation.x = -0.25; eyeG.add(lid);
     const brow = box(0.06, 0.012, 0.02, M.nose); brow.position.set(0, 0.06, 0.0); brow.rotation.z = -s * 0.2; eyeG.add(brow);
   }
   // ears (outer orange cone, inner dark cone, white tuft)
   const ears = [];
   for (const s of [-1, 1]) {
     const ear = new THREE.Group(); ear.position.set(s * 0.095, 0.15, -0.02); ear.rotation.z = -s * 0.28; ear.rotation.x = -0.15; head.add(ear);
-    const outer = new THREE.Mesh(new THREE.ConeGeometry(0.058, 0.19, 10), M.fur); outer.position.y = 0.08; outer.castShadow = true; ear.add(outer);
-    const inner = new THREE.Mesh(new THREE.ConeGeometry(0.036, 0.14, 8), M.nose); inner.position.set(0, 0.07, 0.02); inner.scale.z = 0.5; ear.add(inner);
-    const tuft = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.06, 6), M.furWhite); tuft.position.set(0, 0.03, 0.03); ear.add(tuft);
+    const outer = new THREE.Mesh(new THREE.ConeGeometry(0.058, 0.19, 16), M.fur); outer.position.y = 0.08; outer.castShadow = true; ear.add(outer);
+    const inner = new THREE.Mesh(new THREE.ConeGeometry(0.036, 0.14, 12), M.nose); inner.position.set(0, 0.07, 0.02); inner.scale.z = 0.5; ear.add(inner);
+    const tuft = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.06, 10), M.furWhite); tuft.position.set(0, 0.03, 0.03); ear.add(tuft);
     ears.push(ear);
   }
   // tuft of head fur
-  const tuft = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.11, 8), M.fur); tuft.position.set(0.02, 0.15, 0.09); tuft.rotation.x = 0.9; tuft.rotation.z = -0.3; head.add(tuft);
+  const tuft = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.11, 12), M.fur); tuft.position.set(0.02, 0.15, 0.09); tuft.rotation.x = 0.9; tuft.rotation.z = -0.3; head.add(tuft);
   // comm headset: band, earcups, mic boom, green eyepiece
-  const band = new THREE.Mesh(new THREE.TorusGeometry(0.178, 0.014, 8, 32, Math.PI), M.dark); band.rotation.set(0, Math.PI / 2, Math.PI); band.position.set(0, 0.05, 0); band.scale.set(1, 1, 1.06); head.add(band);
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.178, 0.014, 10, 40, Math.PI), M.dark); band.rotation.set(0, Math.PI / 2, Math.PI); band.position.set(0, 0.05, 0); band.scale.set(1, 1, 1.06); head.add(band);
   for (const s of [-1, 1]) {
-    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.035, 16), M.dark); cup.rotation.z = Math.PI / 2; cup.position.set(s * 0.175, -0.01, 0.0); cup.castShadow = true; head.add(cup);
-    const cupGlow = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.012, 12), M.glow); cupGlow.rotation.z = Math.PI / 2; cupGlow.position.set(s * 0.196, -0.01, 0); head.add(cupGlow);
+    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.035, 20), M.dark); cup.rotation.z = Math.PI / 2; cup.position.set(s * 0.175, -0.01, 0.0); cup.castShadow = true; head.add(cup);
+    const cupGlow = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.012, 16), M.glow); cupGlow.rotation.z = Math.PI / 2; cupGlow.position.set(s * 0.196, -0.01, 0); head.add(cupGlow);
   }
-  const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.19, 6), M.metal); boom.position.set(0.14, -0.06, 0.12); boom.rotation.set(0.3, 0, -1.1); head.add(boom);
-  const mic = sphere(0.014, M.dark, 8, 6); mic.position.set(0.06, -0.1, 0.2); head.add(mic);
+  const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.19, 8), M.metal); boom.position.set(0.14, -0.06, 0.12); boom.rotation.set(0.3, 0, -1.1); head.add(boom);
+  const mic = sphere(0.014, M.dark, 12, 8); mic.position.set(0.06, -0.1, 0.2); head.add(mic);
   const visorArm = box(0.012, 0.012, 0.16, M.metal); visorArm.position.set(0.15, 0.03, 0.08); head.add(visorArm);
   const visor = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.065), M.visorGlass); visor.position.set(0.075, 0.03, 0.2); visor.rotation.y = 0.35; head.add(visor);
-  const visorRim = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.006, 6, 16), M.metal); visorRim.position.copy(visor.position).add(new THREE.Vector3(0, 0, -0.004)); visorRim.rotation.y = 0.35; visorRim.scale.set(1.05, 0.7, 1); head.add(visorRim);
-  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.16, 6), M.metal); antenna.position.set(-0.175, 0.09, -0.03); antenna.rotation.z = 0.15; head.add(antenna);
-  const antTip = sphere(0.014, M.glow, 8, 6); antTip.position.set(-0.187, 0.175, -0.03); head.add(antTip);
+  const visorRim = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.006, 10, 24), M.metal); visorRim.position.copy(visor.position).add(new THREE.Vector3(0, 0, -0.004)); visorRim.rotation.y = 0.35; visorRim.scale.set(1.05, 0.7, 1); head.add(visorRim);
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.16, 8), M.metal); antenna.position.set(-0.175, 0.09, -0.03); antenna.rotation.z = 0.15; head.add(antenna);
+  const antTip = sphere(0.014, M.glow, 12, 8); antTip.position.set(-0.187, 0.175, -0.03); head.add(antTip);
 
   // arms
   const arms = {};
@@ -179,15 +180,31 @@ export function buildPilot() {
     const upper = capsule(0.065, 0.22, M.jacket); upper.position.y = -0.15; shoulder.add(upper);
     const elbow = new THREE.Group(); elbow.position.y = -0.3; shoulder.add(elbow);
     const fore = capsule(0.055, 0.2, M.jacket); fore.position.y = -0.13; elbow.add(fore);
-    const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.065, 0.07, 12), M.dark); cuff.position.y = -0.22; cuff.castShadow = true; elbow.add(cuff);
+    const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.065, 0.07, 16), M.dark); cuff.position.y = -0.22; cuff.castShadow = true; elbow.add(cuff);
     const hand = rounded(0.09, 0.1, 0.07, 0.025, M.dark); hand.position.y = -0.3; elbow.add(hand);
+    // articulated glove: knuckle row of three curled fingers + a thumb nub so the
+    // hands read as hands, not mittens — one merged geometry per hand so it costs
+    // a single draw call, riding the hand mesh
+    {
+      const geoms = [];
+      const bake = (gx, gy, gz, rx = 0, rz = 0, r = 0.013, len = 0.03) => {
+        const g = new THREE.CapsuleGeometry(r, len, 4, 8);
+        g.rotateX(rx); g.rotateZ(rz); g.translate(gx, gy, gz); geoms.push(g);
+      };
+      for (const f of [-1, 0, 1]) { bake(f * 0.026, -0.056, 0.024, -0.55); bake(f * 0.026, -0.087, 0.04, -1.1, 0, 0.0115, 0.026); }
+      bake(-s * 0.04, -0.057, 0.026, -0.35, s * 0.8, 0.014, 0.034);
+      const fingers = new THREE.Mesh(mergeGeometries(geoms.map((g) => g.index ? g.toNonIndexed() : g), false), M.dark);
+      geoms.forEach((g) => g.dispose());
+      fingers.castShadow = true; fingers.receiveShadow = true;
+      hand.add(fingers);
+    }
     arms[name] = { shoulder, elbow, hand };
   }
   // blaster in right hand
   const gun = new THREE.Group(); gun.position.set(0, -0.32, 0.03); arms.R.elbow.add(gun);
   const grip = box(0.04, 0.1, 0.05, M.dark); gun.add(grip);
   const barrel = box(0.05, 0.06, 0.26, M.metal); barrel.position.set(0, 0.06, 0.1); gun.add(barrel);
-  const barrelTip = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.025, 0.08, 10), M.dark); barrelTip.rotation.x = Math.PI / 2; barrelTip.position.set(0, 0.06, 0.26); gun.add(barrelTip);
+  const barrelTip = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.025, 0.08, 14), M.dark); barrelTip.rotation.x = Math.PI / 2; barrelTip.position.set(0, 0.06, 0.26); gun.add(barrelTip);
   const gunGlow = box(0.056, 0.02, 0.12, M.glow); gunGlow.position.set(0, 0.075, 0.12); gun.add(gunGlow);
   const muzzleO = new THREE.Object3D(); muzzleO.position.set(0, 0.06, 0.32); gun.add(muzzleO);
   // muzzle flash: small star-shaped burst (two crossed quads) rather than an additive sphere;
@@ -205,7 +222,7 @@ export function buildPilot() {
     const hip = new THREE.Group(); hip.position.set(s * 0.11, -0.05, 0); hips.add(hip);
     const thigh = capsule(0.105, 0.28, M.pants); thigh.position.y = -0.2; hip.add(thigh);
     const knee = new THREE.Group(); knee.position.y = -0.42; hip.add(knee);
-    const kneePad = sphere(0.085, M.dark, 12, 8); kneePad.position.set(0, 0.0, 0.03); kneePad.scale.set(1, 0.9, 0.8); knee.add(kneePad);
+    const kneePad = sphere(0.085, M.dark, 16, 12); kneePad.position.set(0, 0.0, 0.03); kneePad.scale.set(1, 0.9, 0.8); knee.add(kneePad);
     const shin = capsule(0.085, 0.24, M.pants); shin.position.y = -0.18; knee.add(shin);
     const boot = rounded(0.2, 0.15, 0.34, 0.05, M.dark); boot.position.set(0, -0.42, 0.05); knee.add(boot);
     const bootTrim = box(0.17, 0.03, 0.31, M.red); bootTrim.position.set(0, -0.36, 0.05); knee.add(bootTrim);

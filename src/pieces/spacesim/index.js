@@ -256,6 +256,7 @@ export function* createSteps(ctx, opts = {}) {
   yield 'hud';
 
   // ---------------- autoplay script
+  input.mouse.steer = true; // all-range flight: mouse steers yaw/pitch (ignored while the script drives)
   input.script = (t) => {
     const B = [];
     let x = 0, y = 0;
@@ -472,7 +473,9 @@ export function* createSteps(ctx, opts = {}) {
       const rr = d.r * (0.38 + 0.62 * (0.5 + 0.5 * Math.sin(t * 0.26 + d.phase * 1.7)));
       d.obj.position.set(anchor.x + Math.cos(a) * rr, anchor.y + Math.sin(a * 1.7 + d.tilt) * 55, anchor.z + Math.sin(a) * rr * 0.85);
       _v.copy(d.obj.position).sub(d.prev);
-      if (_v.lengthSq() > 1e-6 && dt > 0) { _v2.copy(d.obj.position).add(_v); d.obj.lookAt(_v2); d.obj.rotateZ(Math.sin(a * 3) * 0.4); }
+      // drone nose/eye is -Z (thruster ring + trail are +Z): lookAt puts +Z toward
+      // the point, so aim +Z at pos - vel = nose (-Z) faces the direction of travel
+      if (_v.lengthSq() > 1e-6 && dt > 0) { _v2.copy(d.obj.position).sub(_v); d.obj.lookAt(_v2); d.obj.rotateZ(Math.sin(a * 3) * 0.4); }
       d.hit *= 1 - damp(8, dt);
       droneKit.animate(d.obj, t, d.hit);
     }
@@ -572,6 +575,7 @@ export function* createSteps(ctx, opts = {}) {
     scene.traverse((o) => { if (o.isMesh || o.isPoints || o.isLine || o.isSprite) { o.geometry?.dispose?.(); const mats = Array.isArray(o.material) ? o.material : [o.material]; for (const mm of mats) mm?.dispose?.(); } });
     scene.clear();
     input.script = null;
+    input.mouse.steer = false;
   }
 
   return {

@@ -231,7 +231,10 @@ export function* createSteps(ctx) {
 
     // --- pilot pose
     pilot.root.position.copy(P.pos);
-    pilot.root.rotation.y = P.yaw;
+    // the pilot model faces +Z (muzzle/visor forward, tail/backpack on -Z) while the
+    // controller's yaw convention is forward = (-sin yaw, -cos yaw) = -Z — so the
+    // rig turns a half-turn past the heading or the pilot runs with his back leading.
+    pilot.root.rotation.y = P.yaw + Math.PI;
     P.speedN = THREE.MathUtils.lerp(P.speedN, hspeed / RUN_SPEED, 1 - Math.exp(-dt * 12));
     pilot.animate(dt, { speed: P.speedN, airborne: !P.onGround, rolling: P.rolling, rollT: P.rollT, turn: P.turn, aiming: P.aiming > 0.2, landed: P.landed, accel: P.accel });
 

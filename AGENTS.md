@@ -21,7 +21,8 @@ at Nintendo first-party (Star Fox) visual and feel quality.
 
 ## Input bindings
 move WASD/arrows, fire Space/J, bomb B, boost Shift, brake Ctrl, roll Q/E, pause Esc, confirm Enter. `input.axes.x/y`, `input.isHeld('fire')`, `input.wasPressed('bomb')`.
-Every piece MUST set `ctx.input.script = (t) => ({x, y, buttons:[...]})` with a scripted demo so `--autoplay` shows the piece off (and so critics see motion).
+Mouse: in flight stages (rail, boss, space, flight) moving the mouse steers the ship — cursor offset from centre = stick deflection (`input.mouse.steer`, opt-in per stage, small dead zone + response curve). LMB = fire and also 'confirm' (a click = start/skip), RMB/MMB = bomb; the first click on the canvas grabs pointer lock (deltas then drive a virtual stick), Esc releases it. Right-click context menu is suppressed on the canvas.
+Every piece MUST set `ctx.input.script = (t) => ({x, y, buttons:[...]})` with a scripted demo so `--autoplay` shows the piece off (and so critics see motion). The script path bypasses physical input entirely, so captures stay deterministic.
 
 ## Quality bar (what the critic compares against)
 Star Fox on Switch 2 (Nintendo first-party): clean stylised-realistic shading, strong art direction, saturated but controlled palette, chunky readable silhouettes, glowing G-diffusers, crisp laser bolts, volumetric-feeling atmosphere/sky, confident camera, snappy animation with anticipation/overshoot, screen-filling explosions, cinematic framing, beautiful HUD typography. No default-grey materials, no untextured flat planes, no z-fighting, no visible seams, no NaNs, no console errors.

@@ -176,7 +176,10 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
     if (dc < cfg.keepOut && dc > 1e-3) _p.copy(cam).addScaledVector(_b, cfg.keepOut / dc);
 
     e.group.position.copy(_p); e.pos.copy(_p); e.fwd.copy(_t);
-    _m.lookAt(_p, _b.copy(_p).add(_t), _u); _q.setFromRotationMatrix(_m);
+    // Matrix4.lookAt maps local +Z to (eye - target): craft models nose on +Z, so
+    // eye sits AHEAD on the path and target is the position -> +Z = +tangent =
+    // the direction of travel (nose-first flight, engines trailing).
+    _m.lookAt(_b.copy(_p).add(_t), _p, _u); _q.setFromRotationMatrix(_m);
     e.group.quaternion.copy(_q);
     e.group.rotateZ(e.bank + Math.sin(time * 1.7 + e.phase) * 0.04);
     if (s.ring !== undefined) e.group.rotateZ(Math.sign(e.wave.ringW) * 0.5); // lean into the orbit

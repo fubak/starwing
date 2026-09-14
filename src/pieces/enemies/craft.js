@@ -239,11 +239,11 @@ function assembleCraft(kind, cache, mats) {
   return group;
 }
 
-const cyl = (rt, rb, h, n = 8) => new THREE.CylinderGeometry(rt, rb, h, n);
-const cone = (r, h, n = 8) => new THREE.ConeGeometry(r, h, n);
+const cyl = (rt, rb, h, n = 14) => new THREE.CylinderGeometry(rt, rb, h, n);
+const cone = (r, h, n = 14) => new THREE.ConeGeometry(r, h, n);
 const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-const sph = (r, w = 16, h = 12) => new THREE.SphereGeometry(r, w, h);
-const torus = (R, r, arc = Math.PI * 2, seg = 24) => new THREE.TorusGeometry(R, r, 8, seg, arc);
+const sph = (r, w = 22, h = 16) => new THREE.SphereGeometry(r, w, h);
+const torus = (R, r, arc = Math.PI * 2, seg = 28) => new THREE.TorusGeometry(R, r, 10, seg, arc);
 /** Tapered slab: a box whose far-X end is narrower/thinner (wing plank). */
 function slab(len, rootChord, tipChord, rootT, tipT) {
   const g = new THREE.BoxGeometry(len, 1, 1, 1, 1, 1);
@@ -298,13 +298,13 @@ function vulture(k) {
     [0.75, 0.12, 1.55], [0.75, -0.15, 1.5], [0.75, 0.0, 1.1], [2.6, -0.32, -0.55], [4.35, -0.95, -1.75], [4.35, -1.1, -1.95], [2.6, -0.5, -0.8],
   ]), { p: [0, 0, 0] });
   // canopy: long dark eye-slit dome, sunk into the spine
-  k.add('glass', sph(0.5, 14, 10), { p: [0, 0.72, 1.35], s: [0.9, 0.5, 1.9] });
+  k.add('glass', sph(0.5, 24, 18), { p: [0, 0.72, 1.35], s: [0.9, 0.5, 1.9] });
   // single dorsal fin (purple)
   k.add('accent', hullS([[0.07, 0.8, -0.6], [0.07, 0.85, -2.4], [0.0, 2.1, -2.75], [0.0, 2.0, -2.2], [0.05, 0.9, -1.2]]));
   // ONE engine: big central bell with a dark throat and a glow disc
-  k.add('trim', cyl(0.72, 0.9, 0.9, 12), { p: [0, 0, -2.75], r: [HX, 0, 0], s: [1.15, 1, 1] });
-  k.add('core', cyl(0.62, 0.78, 0.2, 12), { p: [0, 0, -3.15], r: [HX, 0, 0], s: [1.15, 1, 1] });
-  k.add('glow', cyl(0.5, 0.5, 0.14, 12), { p: [0, 0, -3.22], r: [HX, 0, 0], s: [1.15, 1, 1] });
+  k.add('trim', cyl(0.72, 0.9, 0.9, 20), { p: [0, 0, -2.75], r: [HX, 0, 0], s: [1.15, 1, 1] });
+  k.add('core', cyl(0.62, 0.78, 0.2, 20), { p: [0, 0, -3.15], r: [HX, 0, 0], s: [1.15, 1, 1] });
+  k.add('glow', cyl(0.5, 0.5, 0.14, 20), { p: [0, 0, -3.22], r: [HX, 0, 0], s: [1.15, 1, 1] });
   // glowing wingtip cannon slits (small, crisp)
   k.mirror('glow', () => box(0.5, 0.06, 0.12), { p: [4.0, -0.95, -1.7] });
   k.engine(0, 0, -3.35, 0.75);
@@ -327,14 +327,14 @@ function hornet(k) {
     [4.6, 0.85, 2.3], [4.6, 0.85, 1.75], [4.5, 1.2, 2.0], [3.4, 0.75, 0.4], [3.4, 1.15, 1.0],
   ]), { p: [0, 0, 0] });
   // two huge compound eyes: flush glowing acid-green lenses in dark sockets — the single unmistakable glow
-  k.mirror('core', () => sph(0.4, 12, 10), { p: [0.55, 0.15, 1.7], s: [1, 0.9, 1] });
-  k.mirror('glow', () => sph(0.32, 12, 10), { p: [0.6, 0.15, 1.82], s: [1, 0.85, 1.05] });
+  k.mirror('core', () => sph(0.4, 18, 14), { p: [0.55, 0.15, 1.7], s: [1, 0.9, 1] });
+  k.mirror('glow', () => sph(0.32, 18, 14), { p: [0.6, 0.15, 1.82], s: [1, 0.85, 1.05] });
   // twin mandible tusks (gunmetal) — chunky, forward
   k.mirror('trim', () => hull([[0.6, -0.5, 1.6], [0.25, -0.45, 1.7], [0.45, -0.15, 1.7], [0.45, -0.75, 1.7], [0.3, -0.55, 3.3]]), { p: [0, 0, 0] });
   // stinger engine: one bell with dark throat and glow
-  k.add('trim', cyl(0.42, 0.62, 0.9, 10), { p: [0, 0.05, -2.95], r: [HX, 0, 0] });
-  k.add('core', cyl(0.36, 0.5, 0.2, 10), { p: [0, 0.05, -3.35], r: [HX, 0, 0] });
-  k.add('glow', cyl(0.3, 0.3, 0.14, 10), { p: [0, 0.05, -3.42], r: [HX, 0, 0] });
+  k.add('trim', cyl(0.42, 0.62, 0.9, 18), { p: [0, 0.05, -2.95], r: [HX, 0, 0] });
+  k.add('core', cyl(0.36, 0.5, 0.2, 18), { p: [0, 0.05, -3.35], r: [HX, 0, 0] });
+  k.add('glow', cyl(0.3, 0.3, 0.14, 18), { p: [0, 0.05, -3.42], r: [HX, 0, 0] });
   k.engine(0, 0.05, -3.55, 0.6);
   return { radius: 3.1, hp: 2, style: { stripeZ: 0.2, stripeW: 0.35, tipX: 10.5 } };
 }
@@ -352,7 +352,7 @@ function mantis(k) {
     [0.35, 0.3, 2.6], [0.85, 0.75, 1.0], [0.85, 0.75, -1.4], [0, 1.35, 0.3], [0, 1.3, -1.6], [0, 0.95, 1.9], [0.6, 0.6, -2.5], [0, 0.8, -2.7],
   ]));
   k.add('accent', hullS([[0.5, 0.35, 2.75], [0.9, 0.85, 1.3], [0, 1.15, 1.2], [0, 0.6, 2.9], [0.9, 0.55, 2.0], [0.4, 0.95, 2.3]]));
-  k.add('glass', sph(0.5, 14, 10), { p: [0, 1.12, 0.6], s: [0.8, 0.45, 1.5] });
+  k.add('glass', sph(0.5, 24, 18), { p: [0, 1.12, 0.6], s: [0.8, 0.45, 1.5] });
   // twin forward claws (gunmetal) — chunky tusks growing out of the leading edge
   k.mirror('trim', () => hull([[2.7, 0.25, 0.0], [3.6, 0.2, -0.3], [3.1, -0.35, -0.2], [2.9, 0.0, 0.3], [3.2, -0.05, 3.6]]), { p: [0, 0, 0] });
   // tip beacons (crisp slits, not nubs)
@@ -360,9 +360,9 @@ function mantis(k) {
   // three engine bells across the trailing edge, one continuous glowing row
   const th = [[0, 0.5], [1.7, -0.05], [-1.7, -0.05]];
   for (const [x, y] of th) {
-    k.add('trim', cyl(0.42, 0.55, 0.8, 10), { p: [x, y, -2.85], r: [HX, 0, 0] });
-    k.add('core', cyl(0.36, 0.46, 0.18, 10), { p: [x, y, -3.2], r: [HX, 0, 0] });
-    k.add('glow', cyl(0.3, 0.3, 0.12, 10), { p: [x, y, -3.27], r: [HX, 0, 0] });
+    k.add('trim', cyl(0.42, 0.55, 0.8, 18), { p: [x, y, -2.85], r: [HX, 0, 0] });
+    k.add('core', cyl(0.36, 0.46, 0.18, 18), { p: [x, y, -3.2], r: [HX, 0, 0] });
+    k.add('glow', cyl(0.3, 0.3, 0.12, 18), { p: [x, y, -3.27], r: [HX, 0, 0] });
     k.engine(x, y, -3.4, 0.55);
   }
   return { radius: 3.9, hp: 5, style: { stripeZ: 0.6, stripeW: 0.6, tipX: 8.4 } };
