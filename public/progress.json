@@ -1,6 +1,6 @@
 {
  "started": "2026-09-06T11:14:08.452495+00:00",
- "updated": 1789339192,
+ "updated": 1789372488,
  "wave": 2,
  "phase": "finished",
  "pieces": {
@@ -114,14 +114,6 @@
   }
  },
  "log": [
-  "11:14:08 enemies: builder round 1 start",
-  "11:14:08 vfx: builder round 1 start",
-  "11:14:08 hud: builder round 1 start",
-  "11:14:08 spacesim: builder round 1 start",
-  "11:14:08 onfoot: builder round 1 start",
-  "11:14:08 boss: builder round 1 start",
-  "11:14:08 cinematics: builder round 1 start",
-  "11:14:08 audio: builder round 1 start",
   "11:50:42 ship: builder round 1 done \u2014 SHIP piece (src/pieces/ship/) \u2014 round 1 delivered and committed (de5d590, 0ea3eb0).\n\nWhat was there: a substantial but u",
   "11:50:42 ship: critic round 1 start",
   "12:00:58 enemies: builder round 1 done \u2014 ENEMIES piece (src/pieces/enemies/) \u2014 round 1, committed as 18be13a.\n\nWhat exists / what I built on: the folder had a su",
@@ -313,7 +305,15 @@
   "20:38:26 === PERF PASS 2: 60fps target + seamless transitions ===",
   "22:39:52 perf2-1 done \u2014 Perf pass 2 committed (cca4ed8). Core win: seamless stage transitions via (a) a shared cinematic Director kept alive across title/intro/complete and parked duri",
   "22:39:52 perf2-2 done \u2014 Perf pass 2 committed (cca4ed8). Core win: seamless stage transitions via (a) a shared cinematic Director kept alive across title/intro/complete and parked duri",
-  "22:39:52 perf pass 2 workflow done"
+  "22:39:52 perf pass 2 workflow done",
+  "00:48:10 === PERF PASS 3: trace-driven stutter hunt ===",
+  "00:48:10 stutter round 1 start",
+  "03:11:52 stutter round 1 done \u2014 Pass 3 stutter hunt complete. Built a frame-time tracer (src/core/trace.js, ?trace) + tools/trace.mjs Playwright walker (real-time, --autoplay, :5174 no-HMR) that dumps shots/trace.json with per-stage",
+  "03:11:52 stutter round 2 start",
+  "05:47:51 stutter round 2 done \u2014 Pass 3b of the stutter hunt: traced the full campaign in real time, root-caused and fixed 3 stutter sources plus 1 visual regression bug found on the way. Headline result: ZERO late shader compiles in",
+  "05:47:51 stutter round 3 start",
+  "07:54:48 stutter round 3 done \u2014 Pass 3c on STARWING stutter. Root cause of the remaining big hitches was that pre-building a stage ahead of time is not enough: three.js only compiles/links a program when a render actually visits the",
+  "07:54:48 stutter hunt done"
  ],
  "playtest": {
   "round": 3,
