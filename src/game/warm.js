@@ -115,7 +115,7 @@ export function beginWarmPiece(ctx, name, makeGen, opts = {}) {
   const b = {
     get done() { return done; },
     get remaining() { return Math.max(0, total - phase); },
-    get stepName() { return built ? `${name}:gpu${phase}` : `${name}:${phase}`; },
+    get stepName() { return built ? `${name}:gpu${phase}${pgw?.lastType ? ':' + pgw.lastType : ''}` : `${name}:${phase}`; },
     step() {
       if (done) return;
       if (built) {                            // build finished -> compile/draw units
@@ -227,6 +227,8 @@ export function parkedGpuWarm(ctx, stage, globals = null) {
   const hidden = [];
   return {
     get done() { return !!gw && gw.done; },
+    /** unit kind of the most recent inner step — trace attribution only */
+    get lastType() { return gw?.lastType ?? null; },
     /** Run one unit; returns true when the whole warm is finished. */
     step() {
       if (!gw) gw = createStageWarm(renderer, scene, camera, { root: stage });

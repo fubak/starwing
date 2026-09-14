@@ -554,3 +554,111 @@ Every hitch in the after-trace is attributable: each one carries a
   playthrough with instrumentation and reports `no page errors`.
 - Heap slope is ≈0 MB/s on every stage post-warm (the earlier "1-1.8 MB/s" was
   the warm's own transient allocation), so the alloc audit is closed.
+
+---
+
+## Pass 4 — final verification
+
+Method: `node tools/trace.mjs` (full real-time campaign walk, 960×540, SwiftShader,
+`--hitch 3`), `node tools/shoot.mjs game --times 2,10,30,60,90 --video 15 --autoplay`,
+`npx vite build`. Traces kept: `shots/trace.json` (before), `shots/trace_p4c.json`
+(mid-pass), `shots/trace_p4final.json` (after, 676 frames / 472 marks).
+Remember the harness rule: **SwiftShader absolute ms are meaningless**, ratios,
+program counts and draw-call counts are the signal.
+
+### Numbers (after, `shots/trace_p4final.json`)
+
+| stage | cpu med | p95 | p99 | worst | hitches | calls med |
+|---|---|---|---|---|---|---|
+| title | 2.4 | 437.4 | 1191.3 | 1191 | **0** | 66 |
+| intro | 4.2 | 12.4 | 621.4 | 621 | 10 | 179 |
+| rail | 4.8 | 984.1 | 3331.9 | 3332 | 22 | 104 |
+| boss | 3.1 | 294.9 | 925.3 | 1760 | 15 | 259 |
+| space | 2.9 | 734.4 | 2220.8 | 2221 | 20 | 116 |
+| onfoot | 2.6 | 5.6 | 9.7 | 10 | 3 | 239 |
+| complete | 3.6 | 17.0 | 537.7 | 538 | 5 | 199 |
+
+- **Programs: 94 → 63** live at the end of the campaign (31 dead variants were
+  being compiled and never drawn — see the `compile()` bug below).
+- **Programs per frame during play: ≤ 7** anywhere except frame 0 (12, boot) and
+  the `stage:rail` mount frame (33, under the black fade). Before this pass single
+  frames compiled **+63 / +47 / +48**.
+- **Draw calls (pure gameplay frames, no warm slice):** onfoot 297 max (was 345 —
+  the only budget violation found), everything else ≤ 274. **Tris: 0.21 M max**
+  (space) — the ≤1.5 M budget is not close to being a problem.
+- **renderScale changes: 0** in every trace. **No page errors** in any run.
+- **Heap:** growth median 449 KB/frame, p95 2670 KB/frame *during warm*; post-warm
+  slope ≈0 (unchanged from pass 3b's alloc audit).
+- Hitch attribution: every hitch carries a mark — `warm:step(<stage>:<unit>)`,
+  `warm:slow(...)`, `warm:gpu(<n>u <ms>ms)` or a `stage:*` fade frame — except two
+  pure-raster frames in space (mirror + bloom on software GL).
+- `npx vite build` → `✓ built in 1.92s` (only the pre-existing >500 kB chunk warning).
+- Capture: `shots/game/{t002,t010,t030,t060,t090}.png` + video, plus
+  `shots/game_p4cine/{t004,t006,t014,t020}.png` for the cinematics (t006 = title
+  screen, t014 = intro hangar). Zero errors, no visual regression. Note the video
+  and the first two PNGs of a fresh `shoot.mjs` run can be black: on SwiftShader
+  the boot + fade takes longer than t=2 s of *wall* time — it is a harness artifact,
+  not a black frame in the game (verified by the later capture).
+
+### Fixes in this pass
+
+1. **`WebGLRenderer.compile()` ignores visibility (three r0.170.0).** `compile()`
+   gathers lights with `traverseVisible` but walks materials with a plain
+   `scene.traverse()` (`node_modules/three/build/three.module.js` ~line 29801).
+   The staged warm called it once per chunk, so the *first* chunk compiled every
+   material of the whole parked stage — one frame with +63 programs (0.8–1.5 s SW)
+   and 15 later units compiling nothing, plus programs for variants that are never
+   drawn. Removed the per-chunk `compile()` (`src/core/warmup.js` ~line 285):
+   `render()` respects visibility and compiles lazily exactly what it draws, so the
+   chunk loop alone spreads the compiles. → ≤7 programs/frame, 94 → 63 programs.
+2. **Warm chunks are now budgeted by *new materials*, not drawables**
+   (`src/core/warmup.js` `createStageWarm({ chunk, textures, mats = 6 })`, chunk
+   planner at ~line 272). Shader compiles are per material and the stages'
+   material variety is front-loaded, so a flat 24-drawable stride bunched all the
+   cost into the first units. A chunk also **only re-renders the shadow map when it
+   revealed a `castShadow` drawable** — a chunk of sprites/non-casters cannot make a
+   new depth program, and that pass is a full-res (up to 2048²) re-render, the most
+   expensive thing in a warm unit.
+3. **onfoot draw calls 345 → 297** (inside the ≤300 budget). The pilot rig had ~65
+   shadow casters, mostly jewelry (eyes, headset, glove fingers, trim, gun detail)
+   whose silhouette is unreadable at 1024² shadow-map resolution:
+   `src/pieces/onfoot/pilot.js` (~line 235) now drops `castShadow` for any mesh
+   whose scaled bounding sphere is < 0.135 m (105 → 62 casters), and the docked
+   Arwing's 3 gear struts + 3 pads stopped casting (`src/pieces/onfoot/arwing.js`
+   ~line 23) since the merged hull already shadows the whole gear footprint (pads
+   still *receive*). 57 casters, 297 calls, 105 607 tris; verified visually in
+   `shots/onfoot/t001,t003,t006,t010.png` — no visible change.
+4. **Full hitch attribution.** `pumpGpuWarm` slices ran under the black fade with
+   no mark, so title/complete showed "unexplained" hitches. `src/game/game.js`
+   (~line 389) now marks `warm:gpu <units>u <ms>ms[ done]`, and the parked-stage
+   warm reports its inner unit kind (`src/game/warm.js` line 118 `stepName`,
+   line 230 `lastType`) so a hitch reads `boss:gpu13:draw` instead of `boss:gpu13`.
+
+### Residual (one item, measured and bounded)
+
+- **rail compiles 4 programs mid-play, once, ~22 s into the stage**
+  (`trace_p4final` frames 206/207: 3 programs — MeshPhysical/MeshStandard/Sprite —
+  then 1 ShaderMaterial the next frame; both after the boss warm has finished at
+  frame 182, so they are *not* warm slices). Reproduced deterministically with a
+  program-cache-key differ (`shots/_p4_rail_compile.mjs`): the frame coincides with
+  the first **mantis** wave (rail timeline t=18.0) becoming visible and with the
+  first lock-on (`sfx(lockon)` on the following frame, i.e. vfx's lock-on
+  ball/beam/reticle drawing for the first time). No `em:pool-miss` mark, so it is
+  not a pooled-craft rebuild — it is a first-draw of a material variant the parked
+  warm did not cover. Cost on real hardware is ~4 compiles ≈ tens of ms, once per
+  playthrough; on SwiftShader it reads as ~1 s. Left in place deliberately: the
+  candidate fixes (force the whole enemy pool + lock-on fx through one extra warm
+  render, or drive the water-mirror pass during the warm) are not surgical and this
+  is a verification pass.
+- Two traps for the next person measuring this:
+  - a hand-written probe that calls `renderer.render(scene, camera)` **compiles a
+    whole second set of programs**: rendering to the canvas puts
+    `outputColorSpace=srgb` in the cache key, while the game renders into the
+    composer target (`srgb-linear`). A "47 uncompiled programs!" result from such a
+    probe is an artifact, not a warm hole.
+  - the standalone `?stage=<name>` route starts with far fewer programs than the
+    campaign route (31 vs 79 at rail) — it does not get the parked build, so every
+    program-count experiment must run the real campaign URL.
+- Unchanged from pass 3: **a real-GPU capture is still the only way to confirm the
+  60 FPS / no-stutter target.** SwiftShader forces `starveLimit = 1` (every frame
+  is over budget), which is not the pacing path real hardware takes.

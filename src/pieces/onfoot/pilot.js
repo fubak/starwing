@@ -232,6 +232,18 @@ export function buildPilot() {
 
   body.position.y = 0.02;
 
+  // Perf: every `castShadow` mesh costs a draw in the 1024^2 spot shadow pass —
+  // the rig has ~65 of them, most of it jewelry (eyes, headset, glove fingers,
+  // trim, gun details) whose silhouette contribution is unreadable at shadow-map
+  // resolution. Keep casting on the big masses only (torso/head/limbs/boots);
+  // anything whose own bounding sphere is under ~13.5 cm stops casting.
+  root.traverse((o) => {
+    if (!o.isMesh || !o.castShadow || !o.geometry) return;
+    if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+    const s = Math.max(Math.abs(o.scale.x), Math.abs(o.scale.y), Math.abs(o.scale.z), 1e-6);
+    if (o.geometry.boundingSphere.radius * s < 0.135) o.castShadow = false;
+  });
+
   // --- animation state
   const st = {
     phase: 0, speed: 0, lean: 0, leanV: 0, tilt: 0, tiltV: 0,

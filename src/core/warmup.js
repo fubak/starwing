@@ -158,7 +158,18 @@ export function warmRender(renderer, scene, camera) {
  *
  *   1. texture uploads, ~24 per unit
  *   2. dedicated depth materials (see _depthVariants note above)
- *   3. compile + draw in chunks of `chunk` drawables
+ *   3. compile + draw in chunks of at most `chunk` drawables AND at most
+ *      `mats` *newly seen* materials (pass 4). The drawable count alone was the
+ *      wrong budget: shader compiles are per material, and the parked stages'
+ *      material variety is front-loaded, so a flat 24-drawable chunk compiled
+ *      47-63 programs in ONE unit (measured 0.8-1.5 s on software GL) while the
+ *      following 15 units compiled nothing. Capping *new materials* per unit is
+ *      what actually flattens the compile cost across frames.
+ *
+ * A unit also only re-renders the shadow map when its chunk revealed a new
+ * `castShadow` drawable — a chunk of sprites/points/non-casters cannot produce a
+ * new depth program, and the shadow pass is a full-resolution (up to 2048^2)
+ * re-render, i.e. the single most expensive thing in a warm unit.
  *
  * The chunking trick: EVERY non-drawable object (groups, lights, cameras) is
  * forced visible for the whole warm and only *drawables* are toggled. That
@@ -175,16 +186,18 @@ export function warmRender(renderer, scene, camera) {
  * keyed against the real scene's fog/env — but only the parked subtree's
  * drawables are toggled, and the caller hides the live stage around each unit.
  */
-export function createStageWarm(renderer, scene, camera, { chunk = 24, textures = 24, root = null } = {}) {
-  const it = warmSteps(renderer, scene, camera, chunk, textures, root || scene);
-  let done = false;
+export function createStageWarm(renderer, scene, camera, { chunk = 24, textures = 24, mats = 6, root = null } = {}) {
+  const it = warmSteps(renderer, scene, camera, chunk, textures, root || scene, mats);
+  let done = false, last = null;
   return {
     get done() { return done; },
+    /** unit kind of the most recent step ('census'|'tex'|'depth'|'compile'|'draw') — trace attribution only */
+    get lastType() { return last; },
     /** Run one unit. Returns true when the whole warm is finished. */
     step() {
       if (done) return true;
       const r = it.next();
-      if (r.done) done = true;
+      if (r.done) done = true; else last = r.value;
       return done;
     },
     /** Give up early: the generator's finally block restores all scene state. */
@@ -192,7 +205,7 @@ export function createStageWarm(renderer, scene, camera, { chunk = 24, textures 
   };
 }
 
-function* warmSteps(renderer, scene, camera, chunk, texChunk, root) {
+function* warmSteps(renderer, scene, camera, chunk, texChunk, root, matBudget = 6) {
   const t0 = performance.now();
   const drawables = [];
   const others = [];      // groups / lights / bones: forced visible for the whole warm
@@ -255,21 +268,46 @@ function* warmSteps(renderer, scene, camera, chunk, texChunk, root) {
     assignDepthMaterials(root);
     yield 'depth';
 
+    // ---- plan the compile/draw chunks: <= `chunk` drawables and <= `matBudget`
+    // NEW materials each, remembering whether the chunk adds a shadow caster.
+    const groups = [];
+    {
+      const seenMat = new Set();
+      let s = 0, fresh = 0, caster = false;
+      for (let i = 0; i < drawables.length; i++) {
+        const o = drawables[i];
+        const ms = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+        for (const m of ms) if (m && !seenMat.has(m)) { seenMat.add(m); fresh++; }
+        if (o.castShadow) caster = true;
+        if (i + 1 - s >= chunk || fresh >= matBudget) { groups.push({ s, e: i + 1, caster }); s = i + 1; fresh = 0; caster = false; }
+      }
+      if (s < drawables.length) groups.push({ s, e: drawables.length, caster });
+    }
+
     // ---- compile + draw, chunk by chunk
-    renderer.shadowMap.autoUpdate = true;
+    //
+    // NOTE (pass 4): there is deliberately NO `renderer.compile()` here.
+    // `WebGLRenderer.compile()` gathers lights with `traverseVisible` but walks
+    // materials with plain `scene.traverse()` — it ignores visibility. So a
+    // per-chunk compile() call compiled EVERY material of the parked stage on the
+    // very first chunk (measured: one frame with prog+63 / prog+47 / prog+48,
+    // 0.8-1.5 s on software GL) and the chunking bought nothing. `render()` does
+    // respect visibility, and it compiles lazily exactly what it draws, so the
+    // chunk loop alone spreads the compiles — one chunk = a few new materials =
+    // a few new programs, on its own frame.
     renderer.autoClear = true;
-    for (let i = 0; i < drawables.length; i += chunk) {
-      const end = Math.min(i + chunk, drawables.length);
-      for (let j = i; j < end; j++) drawables[j].visible = true;
+    for (const g of groups) {
+      for (let j = g.s; j < g.e; j++) drawables[j].visible = true;
       renderer.setRenderTarget(_rt);
       try {
-        renderer.compile(scene, camera);
-        yield 'compile';
-        renderer.shadowMap.needsUpdate = true;
+        // shadow pass only when this chunk actually revealed a caster: no caster
+        // => no new depth program, and a 2048^2 re-render is pure waste.
+        renderer.shadowMap.autoUpdate = g.caster;
+        renderer.shadowMap.needsUpdate = g.caster;
         renderer.render(scene, camera);
       } catch (e) { /* keep warming the rest */ }
       renderer.setRenderTarget(prevRT);
-      for (let j = i; j < end; j++) drawables[j].visible = false;
+      for (let j = g.s; j < g.e; j++) drawables[j].visible = false;
       yield 'draw';
     }
     restore();

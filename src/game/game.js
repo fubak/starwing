@@ -390,10 +390,15 @@ export async function create(ctx) {
     if (!gwarm) return;
     const budget = gwarm.budget;
     const t0 = performance.now();
+    let units = 0;
     try {
       do {
-        if (gwarm.w.step()) { const r = gwarm.resolve; gwarm = null; r(); return; }
+        units++;
+        if (gwarm.w.step()) { const r = gwarm.resolve; gwarm = null; trace.mark('warm:gpu', `${units}u ${(performance.now() - t0).toFixed(0)}ms done`); r(); return; }
       } while (performance.now() - t0 < budget);
+      // Attribution: these slices run under the black fade, but a trace hitch with
+      // no mark is an unexplained hitch — always name the frame we spent time on.
+      trace.mark('warm:gpu', `${units}u ${(performance.now() - t0).toFixed(0)}ms`);
     } catch (e) {
       console.warn('[game] warm step failed', e);
       const r = gwarm.resolve; try { gwarm.w.abort(); } catch {} gwarm = null; r();
