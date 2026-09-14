@@ -21,6 +21,54 @@ import { trace } from './trace.js';
 
 let _rt = null;
 
+// ---------------------------------------------------------------------------
+// Shadow-depth program determinism.
+//
+// The shadow pass draws casters with a SHARED `_depthMaterial` singleton whose
+// `map` / `alphaMap` / `alphaTest` / `side` fields are mutated per caster.
+// But `WebGLRenderer.setProgram` only recomputes the program cache key when a
+// *checked* flag changes (lights, fog, instancing, morphs, clipping, ...) —
+// `map`/`alphaTest`/`side` are NOT checked. So a mapped caster's depth variant
+// is only ever compiled when a `getProgram` call happens to coincide with that
+// state — pure draw-order luck. Observed: the docked Arwing's merged hull
+// (FrontSide + map, alphaTest=0) drew into the onfoot spot shadow map 100+
+// times before its (mapUv=uv, flipSided) depth variant was keyed and compiled
+// ~26 s into the stage — a ~30-40 ms hitch mid-play on real hardware.
+//
+// Fix: give every castShadow mesh a DEDICATED MeshDepthMaterial (deduped per
+// source material via WeakMap). A fresh material instance has an empty
+// `materialProperties.programs` map, so `getProgram` MUST compute its key on
+// the first warm shadow draw — every needed depth variant compiles here,
+// deterministically, for any content. Identical keys still share the one
+// compiled WebGLProgram, so nothing is duplicated. The renderer keeps copying
+// map/alphaMap/alphaTest/side/displacement state onto custom depth materials
+// per draw, so behaviour is identical to the shared singleton.
+const _depthVariants = new WeakMap();
+function warmDepthMaterialFor(material) {
+  let d = _depthVariants.get(material);
+  if (!d) {
+    d = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+    _depthVariants.set(material, d);
+  }
+  return d;
+}
+
+/**
+ * Assign a dedicated depth material to every castShadow mesh under `root`
+ * (deduped per source material). Call on any subtree that is built AFTER the
+ * stage warm — e.g. a mid-play pool-miss rebuild — so its depth program is
+ * compiled on its first shadow draw instead of waiting for the shared
+ * depth material's draw-order luck.
+ */
+export function assignDepthMaterials(root) {
+  root.traverse((o) => {
+    if (!o.isMesh || !o.castShadow || o.customDepthMaterial || !o.material) return;
+    o.customDepthMaterial = Array.isArray(o.material)
+      ? new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking })
+      : warmDepthMaterialFor(o.material);
+  });
+}
+
 /** Upload every texture reachable from any material under `root` now. */
 export function uploadTextures(renderer, root) {
   const seen = new Set();
@@ -64,6 +112,10 @@ export function warmRender(renderer, scene, camera) {
       if (g && g.drawRange && g.drawRange.count < Infinity) { ranges.push([g, { ...g.drawRange }]); g.setDrawRange(0, Infinity); }
     }
   });
+
+  // Dedicated depth material on every caster -> each depth program is keyed +
+  // compiled on the first shadow draw below (see note at _depthVariants above).
+  assignDepthMaterials(scene);
 
   renderer.shadowMap.needsUpdate = true;
   if (!_rt) _rt = new THREE.WebGLRenderTarget(32, 32, { depth: true });

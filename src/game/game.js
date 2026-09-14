@@ -249,7 +249,20 @@ export async function create(ctx) {
   // activate() just reparents it and installs the deferred look — the fade
   // covers a millisecond-scale swap instead of a multi-hundred-ms build.
   let warm = null; // { name, step(), done, activate(), abort() }
+  // Warm-build pacing. The prebuild is amortised over the *whole* previous stage
+  // (tens of seconds for a few dozen units) so there is no reason to ever let a
+  // build unit land on a frame that cannot absorb it. Two signals:
+  //   cpuEma  — smoothed cost of the game's own frame (update+render ms)
+  //   stepEma — smoothed cost of ONE build unit
+  // A unit only starts if cpuEma + stepEma still fits inside FRAME_TARGET, so
+  // heavy units (terrain chunks, enemy craft) slide to frames with headroom
+  // instead of stacking on top of an already-busy frame.
+  const FRAME_TARGET = 11;         // ms of CPU we are willing to spend per frame
+  let cpuEma = 4;
+  let stepEma = 0;
   function pumpWarm() {
+    const cpu = ctx.engine?.lastCpu ?? cpuEma;
+    cpuEma += (cpu - cpuEma) * 0.06;
     if (disposed || loading || paused || failed) return;
     if (!current && pending === null) return;              // still booting
     const ti = pending !== null ? pending : idx + 1;
@@ -264,17 +277,24 @@ export async function create(ctx) {
       if (!b) return;
       b.name = want; // tag directly: getters (done/remaining) must stay live
       warm = b;
+      stepEma = 0;   // unknown unit cost for a new builder: first unit runs, then we learn
     }
     try {
       if (!warm.done) {
-        trace.mark('warm:step', `${warm.name}:${warm.remaining ?? 0}`);
-        if (ctx.engine?.fixedStep) warm.step();            // deterministic: exactly one unit per frame
-        else {
-          const t0 = performance.now();
+        if (ctx.engine?.fixedStep) {
+          trace.mark('warm:step', `${warm.name}:${warm.remaining ?? 0}`);
+          warm.step();                                     // deterministic: exactly one unit per frame
+        } else {
+          // Frames with no headroom skip the build entirely rather than hitch.
+          let budget = FRAME_TARGET - cpuEma;
+          if (budget < stepEma * 0.85) return;
+          trace.mark('warm:step', `${warm.name}:${warm.remaining ?? 0}`);
           do {
             const s0 = performance.now(); warm.step(); const ms = performance.now() - s0;
+            stepEma = stepEma ? stepEma + (ms - stepEma) * 0.25 : ms;
+            budget -= ms;
             if (ms > 10) trace.mark('warm:slow', `${warm.name}:${warm.stepName ?? warm.remaining ?? 0} ${ms.toFixed(0)}ms`);
-          } while (!warm.done && performance.now() - t0 < 2);
+          } while (!warm.done && budget > stepEma * 1.1);
         }
       }
     } catch (e) {

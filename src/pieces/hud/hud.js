@@ -8,6 +8,19 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const el = (tag, cls, parent, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; parent?.appendChild(e); return e; };
 const mkCanvas = (w, h, dpr) => { const c = document.createElement('canvas'); c.width = w * dpr; c.height = h * dpr; c.style.width = w + 'px'; c.style.height = h + 'px'; return c; };
 
+// Per-context CanvasGradient cache: the gauge/radar fills recreate identical
+// gradient objects every frame — on the JS heap each createLinearGradient /
+// createRadialGradient / createConicGradient is an object + native resource,
+// so caching them removes a solid chunk of per-frame GC churn and raster cost.
+const _gradCache = new Map(); // CanvasRenderingContext2D -> Map<key, CanvasGradient>
+const cachedGrad = (g, key, make) => {
+  let m = _gradCache.get(g);
+  if (!m) { m = new Map(); _gradCache.set(g, m); }
+  let gr = m.get(key);
+  if (!gr) { gr = make(); m.set(key, gr); }
+  return gr;
+};
+
 // easing: overshoot (back-out) and smooth in
 const easeOutBack = (t, s = 1.7) => { t = clamp(t, 0, 1) - 1; return t * t * ((s + 1) * t + s) + 1; };
 const easeInCubic = (t) => { t = clamp(t, 0, 1); return t * t * t; };
@@ -180,24 +193,24 @@ export function createHud(ctx, opts = {}) {
     // drop shadow
     g.save(); g.translate(0, 3); shape(1.5); g.fillStyle = 'rgba(0,4,16,.55)'; g.fill(); g.restore();
     // outer metal lip
-    shape(3); const lip = g.createLinearGradient(0, 0, 0, 40); lip.addColorStop(0, '#8fa9cc'); lip.addColorStop(0.35, '#3a5275'); lip.addColorStop(0.7, '#1a2740'); lip.addColorStop(1, '#5a7499');
+    shape(3); const lip = cachedGrad(g, 'lip', () => { const t = g.createLinearGradient(0, 0, 0, 40); t.addColorStop(0, '#8fa9cc'); t.addColorStop(0.35, '#3a5275'); t.addColorStop(0.7, '#1a2740'); t.addColorStop(1, '#5a7499'); return t; });
     g.fillStyle = lip; g.fill();
     g.lineWidth = 1; g.strokeStyle = `rgba(${tint},${0.45 + glow * 0.45})`; g.stroke();
     // inner trough
-    shape(0); const tr = g.createLinearGradient(0, 0, 0, 40); tr.addColorStop(0, '#02060f'); tr.addColorStop(0.5, '#071427'); tr.addColorStop(1, '#0a1a30');
+    shape(0); const tr = cachedGrad(g, 'trough', () => { const t = g.createLinearGradient(0, 0, 0, 40); t.addColorStop(0, '#02060f'); t.addColorStop(0.5, '#071427'); t.addColorStop(1, '#0a1a30'); return t; });
     g.fillStyle = tr; g.fill();
     g.save(); shape(0); g.clip();
     // inner shadow at top of trough + faint floor highlight
-    const ish = g.createLinearGradient(0, 0, 0, 40); ish.addColorStop(0, 'rgba(0,0,0,.7)'); ish.addColorStop(0.25, 'rgba(0,0,0,0)'); ish.addColorStop(0.9, 'rgba(120,190,255,.06)'); ish.addColorStop(1, 'rgba(120,190,255,.14)');
+    const ish = cachedGrad(g, 'ish', () => { const t = g.createLinearGradient(0, 0, 0, 40); t.addColorStop(0, 'rgba(0,0,0,.7)'); t.addColorStop(0.25, 'rgba(0,0,0,0)'); t.addColorStop(0.9, 'rgba(120,190,255,.06)'); t.addColorStop(1, 'rgba(120,190,255,.14)'); return t; });
     g.fillStyle = ish; g.fillRect(-10, -10, 400, 60);
     g.restore();
   }
   /** glassy liquid fill shading: bright top bead, core, dark base, bottom bounce */
   function glassFill(g, x, y, w, h, grad) {
     g.fillStyle = grad; g.fillRect(x, y, w, h);
-    const sheen = g.createLinearGradient(0, y, 0, y + h);
-    sheen.addColorStop(0, 'rgba(255,255,255,.75)'); sheen.addColorStop(0.12, 'rgba(255,255,255,.45)'); sheen.addColorStop(0.4, 'rgba(255,255,255,.04)');
-    sheen.addColorStop(0.62, 'rgba(0,0,0,.08)'); sheen.addColorStop(0.9, 'rgba(0,0,0,.42)'); sheen.addColorStop(1, 'rgba(255,255,255,.18)');
+    const sheen = cachedGrad(g, `sheen:${y},${h}`, () => { const t = g.createLinearGradient(0, y, 0, y + h);
+      t.addColorStop(0, 'rgba(255,255,255,.75)'); t.addColorStop(0.12, 'rgba(255,255,255,.45)'); t.addColorStop(0.4, 'rgba(255,255,255,.04)');
+      t.addColorStop(0.62, 'rgba(0,0,0,.08)'); t.addColorStop(0.9, 'rgba(0,0,0,.42)'); t.addColorStop(1, 'rgba(255,255,255,.18)'); return t; });
     g.fillStyle = sheen; g.fillRect(x, y, w, h);
   }
 
@@ -218,10 +231,10 @@ export function createHud(ctx, opts = {}) {
     if (st.shieldGhost > s + 0.002) { g.fillStyle = 'rgba(255,90,60,.75)'; g.fillRect(fx, fy, inner * st.shieldGhost + skew, fh); }
     // fill
     const fw = inner * s;
-    const grad = g.createLinearGradient(x0, 0, x0 + inner, 0);
-    if (low) { grad.addColorStop(0, '#ff5a3c'); grad.addColorStop(1, '#ffb347'); }
-    else { grad.addColorStop(0, '#12c48e'); grad.addColorStop(0.5, '#3fe0ff'); grad.addColorStop(1, '#b6f9ff'); }
-    glassFill(g, fx, fy, fw + skew, fh, grad);
+    const fillGrad = low
+      ? cachedGrad(g, 'fillLow', () => { const t = g.createLinearGradient(x0, 0, x0 + inner, 0); t.addColorStop(0, '#ff5a3c'); t.addColorStop(1, '#ffb347'); return t; })
+      : cachedGrad(g, 'fillOk', () => { const t = g.createLinearGradient(x0, 0, x0 + inner, 0); t.addColorStop(0, '#12c48e'); t.addColorStop(0.5, '#3fe0ff'); t.addColorStop(1, '#b6f9ff'); return t; });
+    glassFill(g, fx, fy, fw + skew, fh, fillGrad);
     // leading-edge bright cap
     if (fw > 2) { const cap = g.createLinearGradient(fx + fw + skew - 12, 0, fx + fw + skew, 0); cap.addColorStop(0, 'rgba(255,255,255,0)'); cap.addColorStop(1, 'rgba(255,255,255,.9)'); g.fillStyle = cap; g.fillRect(fx + fw + skew - 12, fy, 12, fh); }
     // segment dividers: bevelled (dark line + light line)
@@ -245,25 +258,28 @@ export function createHud(ctx, opts = {}) {
     g.restore();
     // half-way index mark on the lip
     g.fillStyle = '#e8f7ff'; g.beginPath(); g.moveTo(x0 + skew + inner * 0.5 + 2, y0 - 6); g.lineTo(x0 + skew + inner * 0.5 + 5, y0 - 3); g.lineTo(x0 + skew + inner * 0.5 - 1, y0 - 3); g.closePath(); g.fill();
-    warn.style.opacity = low ? String(0.6 + 0.4 * Math.sin(st.t * 10)) : '0';
-    warn.style.transform = low ? `translateY(${Math.sin(st.t * 20) * 1.5}px) scale(${1 + 0.03 * Math.sin(st.t * 10)})` : 'none';
+    if (low) {
+      warn.style.opacity = String(0.6 + 0.4 * Math.sin(st.t * 10));
+      warn.style.transform = `translateY(${Math.sin(st.t * 20) * 1.5}px) scale(${1 + 0.03 * Math.sin(st.t * 10)})`;
+      st.warnOn = true;
+    } else if (st.warnOn) { st.warnOn = false; warn.style.opacity = '0'; warn.style.transform = 'none'; }
     if (low && !st.criticalShown) { st.criticalShown = true; if (!st.banner) api.banner('WARNING', 'SHIELD CRITICAL', 1.1, 'alert'); }
-    if (st.banner) warn.style.opacity = '0';
+    if (st.banner && warn.style.opacity !== '0') warn.style.opacity = '0';
     if (!low) st.criticalShown = false;
 
     // lives & bombs
     const lg = livesCv.getContext('2d'); lg.setTransform(dpr, 0, 0, dpr, 0, 0); lg.clearRect(0, 0, 120, 18);
+    const lifeGrad = cachedGrad(lg, 'life', () => { const t = lg.createLinearGradient(0, 2, 0, 15); t.addColorStop(0, '#ffffff'); t.addColorStop(1, '#8fd0ff'); return t; });
     for (let i = 0; i < 3; i++) {
       const x = 12 + i * 28, on = i < st.lives;
       lg.shadowColor = 'rgba(120,220,255,.9)'; lg.shadowBlur = on ? 6 : 0;
-      const gr = lg.createLinearGradient(0, 2, 0, 15); gr.addColorStop(0, '#ffffff'); gr.addColorStop(1, '#8fd0ff');
-      lg.fillStyle = on ? gr : 'rgba(120,180,220,.25)';
+      lg.fillStyle = on ? lifeGrad : 'rgba(120,180,220,.25)';
       lg.beginPath(); lg.moveTo(x, 2); lg.lineTo(x + 10, 15); lg.lineTo(x, 11); lg.lineTo(x - 10, 15); lg.closePath(); lg.fill();
     }
     const bgc = bombCv.getContext('2d'); bgc.setTransform(dpr, 0, 0, dpr, 0, 0); bgc.clearRect(0, 0, 80, 18);
     for (let i = 0; i < 3; i++) {
       const on = i < st.bombs, cx = 10 + i * 24;
-      const gr = bgc.createRadialGradient(cx - 2, 7, 0.5, cx, 9, 6); gr.addColorStop(0, '#fff6c8'); gr.addColorStop(0.5, '#ffd75e'); gr.addColorStop(1, '#b57a10');
+      const gr = cachedGrad(bgc, `bomb:${i}`, () => { const t = bgc.createRadialGradient(cx - 2, 7, 0.5, cx, 9, 6); t.addColorStop(0, '#fff6c8'); t.addColorStop(0.5, '#ffd75e'); t.addColorStop(1, '#b57a10'); return t; });
       bgc.fillStyle = on ? gr : 'rgba(255,215,94,.2)'; bgc.shadowColor = 'rgba(255,190,60,.9)'; bgc.shadowBlur = on ? 6 : 0;
       bgc.beginPath(); bgc.arc(cx, 9, 5.5, 0, Math.PI * 2); bgc.fill(); bgc.shadowBlur = 0;
       if (on) { bgc.fillStyle = '#fff'; bgc.fillRect(cx - 1, 1, 2, 4); }
@@ -283,8 +299,8 @@ export function createHud(ctx, opts = {}) {
     g.save(); shape(-1.5); g.clip();
     const fx = cx - bw / 2, fy = y + 1.5, fh = bh - 3;
     const c0 = brake ? '#ff5a3c' : '#2f7dff', c1 = brake ? '#ffb347' : '#8ff4ff';
-    const grad = g.createLinearGradient(fx, 0, fx + bw, 0); grad.addColorStop(0, c0); grad.addColorStop(1, c1);
-    glassFill(g, fx, fy, bw * v, fh, grad);
+    const fillGrad = cachedGrad(g, `bfill:${brake}`, () => { const t = g.createLinearGradient(fx, 0, fx + bw, 0); t.addColorStop(0, c0); t.addColorStop(1, c1); return t; });
+    glassFill(g, fx, fy, bw * v, fh, fillGrad);
     if (st.boostGlow > 0.02) {
       g.fillStyle = `rgba(255,255,255,${0.35 * st.boostGlow})`;
       const off = (st.t * 220) % 24;
@@ -292,25 +308,38 @@ export function createHud(ctx, opts = {}) {
     }
     for (let i = 1; i < 10; i++) { const x = fx + (bw / 10) * i; g.fillStyle = 'rgba(2,8,20,.9)'; g.fillRect(x - 1, fy, 2, fh); g.fillStyle = 'rgba(255,255,255,.14)'; g.fillRect(x + 1, fy, 0.7, fh); }
     g.restore();
-    if (st.boostGlow > 0.02) { const gl = g.createLinearGradient(0, y + bh + 3, 0, y + bh + 14); gl.addColorStop(0, brake ? `rgba(255,90,60,${0.5 * st.boostGlow})` : `rgba(90,180,255,${0.5 * st.boostGlow})`); gl.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gl; g.fillRect(fx + 12, y + bh + 3, bw * v - 12, 11); }
-    boostLbl.textContent = brake ? 'BRAKE' : 'BOOST';
-    boostLbl.className = 'sw-label' + (st.boostMode === 'boost' ? ' hot' : brake ? ' brake' : '');
+    // under-fill glow: the gradient's alpha follows boostGlow — quantise to 20
+    // steps so the cached gradient object is reused almost every frame.
+    if (st.boostGlow > 0.02) {
+      const gi = Math.min(20, Math.round(st.boostGlow * 20));
+      const gl = cachedGrad(g, `bglow:${brake}:${gi}`, () => { const t = g.createLinearGradient(0, y + bh + 3, 0, y + bh + 14); t.addColorStop(0, brake ? `rgba(255,90,60,${0.5 * (gi / 20)})` : `rgba(90,180,255,${0.5 * (gi / 20)})`); t.addColorStop(1, 'rgba(0,0,0,0)'); return t; });
+      g.fillStyle = gl; g.fillRect(fx + 12, y + bh + 3, bw * v - 12, 11);
+    }
+    const lbl = brake ? 'BRAKE' : 'BOOST';
+    if (boostLbl.textContent !== lbl) boostLbl.textContent = lbl;
+    const lblCls = 'sw-label' + (st.boostMode === 'boost' ? ' hot' : brake ? ' brake' : '');
+    if (boostLbl.className !== lblCls) boostLbl.className = lblCls;
   }
 
   function drawRadar(dt) {
     st.radarSweep = (st.radarSweep + dt * 1.6) % (Math.PI * 2);
     const g = rdg, S = 170, c = S / 2, R = 76; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, S, S);
     g.save(); g.beginPath(); g.arc(c, c, R, 0, Math.PI * 2); g.clip();
-    const bgg = g.createRadialGradient(c, c, 10, c, c, R); bgg.addColorStop(0, 'rgba(10,40,90,.85)'); bgg.addColorStop(1, 'rgba(2,10,28,.9)');
+    const bgg = cachedGrad(g, 'rbg', () => { const t = g.createRadialGradient(c, c, 10, c, c, R); t.addColorStop(0, 'rgba(10,40,90,.85)'); t.addColorStop(1, 'rgba(2,10,28,.9)'); return t; });
     g.fillStyle = bgg; g.fillRect(0, 0, S, S);
     g.strokeStyle = 'rgba(90,190,255,.28)'; g.lineWidth = 1;
     for (const r of [R * 0.33, R * 0.66]) { g.beginPath(); g.arc(c, c, r, 0, Math.PI * 2); g.stroke(); }
     g.beginPath(); g.moveTo(c, c - R); g.lineTo(c, c + R); g.moveTo(c - R, c); g.lineTo(c + R, c); g.stroke();
     g.strokeStyle = 'rgba(90,190,255,.14)'; for (let i = -R; i <= R; i += 12) { g.beginPath(); g.moveTo(c + i, c - R); g.lineTo(c + i, c + R); g.moveTo(c - R, c + i); g.lineTo(c + R, c + i); g.stroke(); }
-    // sweep
+    // sweep — one cached conic gradient, rotated via the transform (creating
+    // a CanvasGradient every frame was pure GC churn)
     const a = st.radarSweep;
-    const sw = g.createConicGradient ? g.createConicGradient(a - Math.PI / 2, c, c) : null;
-    if (sw) { sw.addColorStop(0, 'rgba(120,230,255,.55)'); sw.addColorStop(0.18, 'rgba(120,230,255,0)'); sw.addColorStop(1, 'rgba(120,230,255,0)'); g.fillStyle = sw; g.fillRect(0, 0, S, S); }
+    if (g.createConicGradient) {
+      const sw = cachedGrad(g, 'sweep', () => { const t = g.createConicGradient(-Math.PI / 2, c, c); t.addColorStop(0, 'rgba(120,230,255,.55)'); t.addColorStop(0.18, 'rgba(120,230,255,0)'); t.addColorStop(1, 'rgba(120,230,255,0)'); return t; });
+      g.save(); g.translate(c, c); g.rotate(a); g.translate(-c, -c);
+      g.fillStyle = sw; g.fillRect(0, 0, S, S);
+      g.restore();
+    }
     g.strokeStyle = 'rgba(200,245,255,.9)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(c, c); g.lineTo(c + Math.cos(a - Math.PI / 2) * R, c + Math.sin(a - Math.PI / 2) * R); g.stroke();
     // blips
     for (const b of st.radar) {
@@ -512,16 +541,20 @@ export function createHud(ctx, opts = {}) {
   function update(dt) {
     dt = Math.min(dt, 0.05); st.t += dt;
     const sc = Math.min(size.x / W, size.y / H) || 1;
-    root.style.setProperty('--s', sc.toFixed(4));
+    if (sc !== st._scaleShown) { st._scaleShown = sc; root.style.setProperty('--s', sc.toFixed(4)); }
     if (st.introT < 0) { st.introT += dt; if (st.introT >= 0) st.introT = 0; }
     drawShield(dt); drawBoost(dt); drawRadar(dt); drawReticle(dt);
-    portrait.update(dt);
+    // The portrait re-rasterises ~200 clipped cel paths + gradients per frame —
+    // only worth it while the comm window is actually on screen.
+    if (st.commAge >= 0) portrait.update(dt);
     updateSay(dt);
     animate(dt);
     // score roll-up
     if (st.scoreShown !== st.score) { st.scoreShown = Math.abs(st.score - st.scoreShown) < 3 ? st.score : Math.round(lerp(st.scoreShown, st.score, Math.min(1, dt * 10))); scoreEl.innerHTML = '<span>SCORE</span>' + String(st.scoreShown).padStart(6, '0'); }
     // damage vignette
-    st.dmg = Math.max(0, st.dmg - dt * 2.5); dmg.style.opacity = String(st.dmg);
+    st.dmg = Math.max(0, st.dmg - dt * 2.5);
+    const dShow = Math.round(st.dmg * 100);
+    if (dShow !== st._dmgShown) { st._dmgShown = dShow; dmg.style.opacity = String(st.dmg); }
   }
 
   function dispose() { root.remove(); }

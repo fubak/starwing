@@ -201,6 +201,11 @@ export function beginRail(ctx, game, hudMod) {
     scene.fog.density = FOG_DENSITY;
     camera.fov = 60; camera.near = 0.5; camera.far = 7000; camera.updateProjectionMatrix();
     camera.up.set(0, 1, 0);
+    // A warm-built HUD is created while the PREVIOUS stage is still live; the
+    // stage switch's resetShared() then strips every ui child it doesn't know —
+    // detaching this root. Re-attach before unhiding (no-op on the sync path,
+    // where the HUD is created after the reset).
+    if (!hud.root.isConnected) ui.appendChild(hud.root);
     game.hud = hud; hud.root.style.display = '';
 
     // ---------- events

@@ -17,6 +17,8 @@ export function makeFx(scene) {
   const boltCoreMat = new THREE.MeshBasicMaterial({ color: 0x2ad0ff, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false });
   const boltCores = new THREE.InstancedMesh(boltCoreGeo, boltCoreMat, MAXB); boltCores.count = 0; boltCores.frustumCulled = false; group.add(boltCores);
   const boltList = [];
+  const boltFree = []; // pooled bolt records — fireBolt/death used to allocate per shot
+  for (let i = 0; i < MAXB; i++) boltFree.push({ p: new THREE.Vector3(), d: new THREE.Vector3(0, 0, 1), life: 0 });
   const boltLight = new THREE.PointLight(0x5fe8ff, 0, 8, 2); group.add(boltLight);
 
   // ---- particles (sprites)
@@ -36,51 +38,76 @@ export function makeFx(scene) {
     vertexColors: true,
   });
   const points = new THREE.Points(pGeo, pMat); points.frustumCulled = false; group.add(points);
-  const parts = []; // {p,v,life,maxLife,size,col,grav,drag}
-  const spawnParticle = (p, v, life, size, col, grav = 0, drag = 0) => { if (parts.length >= MAXP) parts.shift(); parts.push({ p: p.clone(), v: v.clone(), life, maxLife: life, size, col, grav, drag }); };
+  // Particle slots are pooled records — spawn/death churned `p.clone()` /
+  // `v.clone()` / object literals before, now it's a freelist pop.
+  const parts = []; // live slots {p,v,life,maxLife,size,col,grav,drag}
+  const partFree = [];
+  for (let i = 0; i < MAXP; i++) partFree.push({ p: new THREE.Vector3(), v: new THREE.Vector3(), col: new THREE.Color(), life: 0, maxLife: 1, size: 1, grav: 0, drag: 0 });
+  const spawnParticle = (p, v, life, size, col, grav = 0, drag = 0) => {
+    const s = partFree.pop() ?? parts.shift();
+    s.p.copy(p); s.v.copy(v); s.life = s.maxLife = life; s.size = size; s.col.copy(col); s.grav = grav; s.drag = drag;
+    parts.push(s);
+  };
+  // scratch for emitters — spawnParticle copies, so these never persist
+  const _pv = new THREE.Vector3(), _vv = new THREE.Vector3(), _pc = new THREE.Color();
+  const _pcHot = new THREE.Color(0xfff2c0), _pcSoot = new THREE.Color(0x3a2418), _pcDust = new THREE.Color(0x3a4a66);
 
   // ---- shockwave rings
   // Shockwave rings are thin, tone-mapped and capped in opacity so they read as a crisp
   // expanding line rather than a screen-eating disc.
   const ringGeo = new THREE.RingGeometry(0.86, 1.0, 48);
+  // pooled ring meshes — one Mesh + MeshBasicMaterial per impact was per-shot
+  // GC churn (and a fresh material meant a fresh materialProperties entry)
   const rings = [];
+  const ringFree = [];
+  for (let i = 0; i < 10; i++) {
+    const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    m.visible = false; group.add(m); ringFree.push(m);
+  }
   const spawnRing = (pos, color, maxR = 3, life = 0.45, peak = 0.55) => {
-    const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: peak, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    m.position.copy(pos); m.lookAt(pos.clone().add(new THREE.Vector3(0, 1, 0))); group.add(m); rings.push({ m, t: 0, life, maxR, peak });
+    let m = ringFree.pop();
+    if (!m) { const old = rings.shift(); if (!old) return; m = old.m; }   // pool dry: steal oldest
+    m.visible = true; m.material.color.set(color); m.material.opacity = peak;
+    m.position.copy(pos); m.lookAt(_pv.copy(pos).setY(pos.y + 1)); rings.push({ m, t: 0, life, maxR, peak });
   };
   const flash = new THREE.PointLight(0xffc080, 0, 14, 2); group.add(flash);
 
   function explode(pos, color = 0xffa040) {
-    const c = new THREE.Color(color);
+    const c = _pc.set(color);
     for (let i = 0; i < 40; i++) {
-      const d = new THREE.Vector3().randomDirection(); const sp = 3 + Math.random() * 7;
-      spawnParticle(pos, d.multiplyScalar(sp), 0.45 + Math.random() * 0.5, 0.16 + Math.random() * 0.3, i % 3 === 0 ? new THREE.Color(0xfff2c0) : c, -4, 2.5);
+      _vv.randomDirection(); const sp = 3 + Math.random() * 7;
+      spawnParticle(pos, _vv.multiplyScalar(sp), 0.45 + Math.random() * 0.5, 0.16 + Math.random() * 0.3, i % 3 === 0 ? _pcHot : c, -4, 2.5);
     }
-    for (let i = 0; i < 14; i++) spawnParticle(pos, new THREE.Vector3().randomDirection().multiplyScalar(1.2), 0.9, 1.0 + Math.random() * 0.8, new THREE.Color(0x3a2418), 0.6, 1.5);
+    for (let i = 0; i < 14; i++) spawnParticle(pos, _vv.randomDirection().multiplyScalar(1.2), 0.9, 1.0 + Math.random() * 0.8, _pcSoot, 0.6, 1.5);
     spawnRing(pos, color, 3.2, 0.45, 0.6); spawnRing(pos, 0xfff0d0, 1.6, 0.25, 0.5);
     flash.position.copy(pos); flash.color.set(color); flash.intensity = 60;
     shake = 0.3;
   }
   function sparks(pos, n, color) {
-    const c = new THREE.Color(color);
-    for (let i = 0; i < n; i++) spawnParticle(pos, new THREE.Vector3().randomDirection().multiplyScalar(2 + Math.random() * 4), 0.22 + Math.random() * 0.25, 0.06 + Math.random() * 0.07, c, -8, 1);
+    const c = _pc.set(color);
+    for (let i = 0; i < n; i++) spawnParticle(pos, _vv.randomDirection().multiplyScalar(2 + Math.random() * 4), 0.22 + Math.random() * 0.25, 0.06 + Math.random() * 0.07, c, -8, 1);
   }
   function dustPuff(pos, n = 10) {
-    for (let i = 0; i < n; i++) spawnParticle(pos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.05, (Math.random() - 0.5) * 0.4)), new THREE.Vector3((Math.random() - 0.5) * 2.5, 0.6 + Math.random(), (Math.random() - 0.5) * 2.5), 0.5, 0.35 + Math.random() * 0.3, new THREE.Color(0x3a4a66), 0, 4);
+    for (let i = 0; i < n; i++) {
+      _pv.set(pos.x + (Math.random() - 0.5) * 0.4, pos.y + 0.05, pos.z + (Math.random() - 0.5) * 0.4);
+      _vv.set((Math.random() - 0.5) * 2.5, 0.6 + Math.random(), (Math.random() - 0.5) * 2.5);
+      spawnParticle(_pv, _vv, 0.5, 0.35 + Math.random() * 0.3, _pcDust, 0, 4);
+    }
   }
   function collectBurst(pos, color) {
-    const c = new THREE.Color(color);
+    const c = _pc.set(color);
     // small golden sparkle fountain + one thin ring; deliberately restrained so the pilot
     // stays readable while the HUD counter does the celebrating
-    for (let i = 0; i < 18; i++) { const a = (i / 18) * Math.PI * 2; spawnParticle(pos, new THREE.Vector3(Math.cos(a) * 2.2, 1.6 + Math.random() * 1.6, Math.sin(a) * 2.2), 0.5, 0.12 + Math.random() * 0.06, c, -6, 2); }
+    for (let i = 0; i < 18; i++) { const a = (i / 18) * Math.PI * 2; spawnParticle(pos, _vv.set(Math.cos(a) * 2.2, 1.6 + Math.random() * 1.6, Math.sin(a) * 2.2), 0.5, 0.12 + Math.random() * 0.06, c, -6, 2); }
     spawnRing(pos, color, 1.3, 0.35, 0.5);
   }
 
   let shake = 0;
 
   function fireBolt(origin, dir) {
-    if (boltList.length >= MAXB) boltList.shift();
-    boltList.push({ p: origin.clone(), d: dir.clone().normalize(), life: 1.2 });
+    const b = boltFree.pop() ?? boltList.shift();
+    b.p.copy(origin); b.d.copy(dir).normalize(); b.life = 1.2;
+    boltList.push(b);
     boltLight.position.copy(origin); boltLight.intensity = 10;
     sparks(origin, 3, 0x9dfcff);
     shake = Math.max(shake, 0.06);
@@ -137,7 +164,7 @@ export function makeFx(scene) {
       // walls / colliders
       if (!dead) for (const c of colliders) if (b.p.x > c.min.x && b.p.x < c.max.x && b.p.y > c.min.y && b.p.y < c.max.y && b.p.z > c.min.z && b.p.z < c.max.z) { sparks(b.p, 12, 0x9dfcff); spawnRing(b.p, 0x5fe8ff, 0.8, 0.25); dead = true; break; }
       if (!dead && (Math.abs(b.p.x) > 13.6 || Math.abs(b.p.z) > 29.5 || b.p.y < 0 || b.p.y > 13.5)) { sparks(b.p, 12, 0x9dfcff); spawnRing(b.p, 0x5fe8ff, 0.8, 0.25); dead = true; }
-      if (dead) boltList.splice(i, 1);
+      if (dead) { boltList[i] = boltList[boltList.length - 1]; boltList.pop(); boltFree.push(b); }
     }
     bolts.count = boltCores.count = boltList.length;
     for (let i = 0; i < boltList.length; i++) {
@@ -150,22 +177,25 @@ export function makeFx(scene) {
 
     // particles
     for (let i = parts.length - 1; i >= 0; i--) {
-      const p = parts[i]; p.life -= dt; if (p.life <= 0) { parts.splice(i, 1); continue; }
+      const p = parts[i]; p.life -= dt;
+      if (p.life <= 0) { parts[i] = parts[parts.length - 1]; parts.pop(); partFree.push(p); continue; }
       p.v.y += p.grav * dt; p.v.multiplyScalar(Math.exp(-p.drag * dt)); p.p.addScaledVector(p.v, dt);
       if (p.p.y < 0.02) { p.p.y = 0.02; p.v.y = Math.abs(p.v.y) * 0.4; }
     }
     for (let i = 0; i < MAXP; i++) {
       const p = parts[i];
       if (!p) { pAlpha[i] = 0; pSize[i] = 0; continue; }
-      const k = p.life / p.maxLife;
-      pPos.set([p.p.x, p.p.y, p.p.z], i * 3); pCol.set([p.col.r, p.col.g, p.col.b], i * 3); pSize[i] = p.size * (0.6 + 0.4 * k); pAlpha[i] = Math.min(1, k * 2);
+      const k = p.life / p.maxLife, i3 = i * 3;
+      pPos[i3] = p.p.x; pPos[i3 + 1] = p.p.y; pPos[i3 + 2] = p.p.z;
+      pCol[i3] = p.col.r; pCol[i3 + 1] = p.col.g; pCol[i3 + 2] = p.col.b;
+      pSize[i] = p.size * (0.6 + 0.4 * k); pAlpha[i] = Math.min(1, k * 2);
     }
     pGeo.attributes.position.needsUpdate = pGeo.attributes.color.needsUpdate = pGeo.attributes.size.needsUpdate = pGeo.attributes.alpha.needsUpdate = true;
     pGeo.setDrawRange(0, Math.max(1, parts.length));
 
     for (let i = rings.length - 1; i >= 0; i--) {
       const r = rings[i]; r.t += dt; const k = r.t / r.life;
-      if (k >= 1) { group.remove(r.m); r.m.material.dispose(); rings.splice(i, 1); continue; }
+      if (k >= 1) { r.m.visible = false; ringFree.push(r.m); rings[i] = rings[rings.length - 1]; rings.pop(); continue; }
       const e = 1 - Math.pow(1 - k, 3); r.m.scale.setScalar(0.2 + e * r.maxR); r.m.material.opacity = (1 - k) * r.peak;
     }
 

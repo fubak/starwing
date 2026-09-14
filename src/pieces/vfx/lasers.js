@@ -84,6 +84,7 @@ export class LaserSystem {
     this.group.add(this.trail, this.glow, this.core);
     this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._s = new THREE.Vector3();
     this._up = new THREE.Vector3(0, 1, 0); this._tmp = new THREE.Vector3();
+    this._meshes = [this.core, this.glow, this.trail];
   }
 
   /** fire({pos, dir, color, speed, life, scale, owner, damage}) */
@@ -101,8 +102,11 @@ export class LaserSystem {
 
   /** hitTest(b) -> truthy when bolt should be removed; called per bolt per frame. */
   update(dt, hitTest) {
-    const alive = [];
-    for (const b of this.bolts) {
+    // compact in place — a fresh `alive` array per frame was GC churn
+    const bolts = this.bolts;
+    let n = 0;
+    for (let i = 0; i < bolts.length; i++) {
+      const b = bolts[i];
       b.age += dt;
       if (b.homing && !b.homing.dead) {
         this._tmp.copy(b.homing.pos).sub(b.pos).normalize();
@@ -111,12 +115,11 @@ export class LaserSystem {
       b.pos.addScaledVector(b.dir, b.speed * dt);
       if (b.age > b.life || b.dead) continue;
       if (hitTest && hitTest(b)) continue;
-      alive.push(b);
+      bolts[n++] = b;
     }
-    this.bolts = alive;
-    const n = alive.length;
+    bolts.length = n;
     for (let i = 0; i < n; i++) {
-      const b = alive[i];
+      const b = bolts[i];
       this._q.setFromUnitVectors(this._up, b.dir);
       const grow = Math.min(1, b.age * 12); // quick stretch-in from the muzzle
       this._s.set(b.scale, b.scale * (0.35 + 0.65 * grow), b.scale);
@@ -128,9 +131,9 @@ export class LaserSystem {
       this._s.set(b.scale, b.scale * grow, b.scale);
       this._m.compose(this._tmp, this._q, this._s);
       this.trail.setMatrixAt(i, this._m);
-      for (const m of [this.core, this.glow, this.trail]) m.userData.color.setXYZ(i, b.color.r, b.color.g, b.color.b);
+      for (const m of this._meshes) m.userData.color.setXYZ(i, b.color.r, b.color.g, b.color.b);
     }
-    for (const m of [this.core, this.glow, this.trail]) {
+    for (const m of this._meshes) {
       m.count = n; m.instanceMatrix.needsUpdate = true; m.userData.color.needsUpdate = true;
     }
   }

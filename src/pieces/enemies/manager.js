@@ -19,6 +19,7 @@ import * as THREE from 'three';
 import { buildEnemyCraft, disposeCraft, CRAFT_KINDS, CRAFT_SCALE } from './craft.js';
 import { BoltPool, ExplosionPool, SpritePool, Trail } from './fx.js';
 import { trace } from '../../core/trace.js';
+import { assignDepthMaterials } from '../../core/warmup.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _t = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _m = new THREE.Matrix4(), _e = new THREE.Euler();
@@ -107,7 +108,9 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
     const p = pool[kind];
     if (p && p.length) return p.pop();
     trace.mark('em:pool-miss', kind);   // pool exhausted: building inline costs a few ms — visible in traces
-    return buildPooled(kind);
+    const it = buildPooled(kind);
+    assignDepthMaterials(it.g);         // built after the stage warm: depth programs compile on first draw, not on luck
+    return it;
   }
   function freeCraft(item) { const g = item.g; g.visible = false; g.scale.set(1, 1, 1); g.quaternion.identity(); for (const m of g.userData.flashMats ?? []) { m.emissive.setRGB(0, 0, 0); m.emissiveIntensity = 0; } for (const t of item.trails) t.reset(); }
 

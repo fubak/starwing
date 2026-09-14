@@ -177,6 +177,9 @@ export class Engine {
     const r0 = performance.now();
     this.composer.render(dt);
     const r1 = performance.now();
+    // CPU cost of the whole frame (update + render submissions), no GPU wait —
+    // hardware-independent signal for throttling background work (warm builds).
+    this.lastCpu = (r0 - f0) + (r1 - r0);
     trace.frame(this, wall, r0 - f0, r1 - r0);
     this.stats.update();
     this._adaptiveScale(dt, this.fixedStep ? r1 - r0 : (this.stats._ms || 16));

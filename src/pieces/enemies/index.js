@@ -69,10 +69,10 @@ export async function create(ctx) {
   events.on('enemy:hit', () => { score += 10; });
 
   // ---- autoplay script: chase the locked target with a little lag, fire in bursts, sweep the sky between targets
-  const scriptAim = new THREE.Vector2();
+  const scriptAim = new THREE.Vector2(), _ndc = new THREE.Vector2(), _firePos = new THREE.Vector3();
   input.script = (tt) => {
     const L = hud.locked;
-    if (L) { scriptAim.lerp(L.ndc, 0.2); } else { scriptAim.lerp(new THREE.Vector2(Math.sin(tt * 0.6) * 0.45, Math.sin(tt * 0.9 + 1) * 0.25), 0.06); }
+    if (L) { scriptAim.lerp(L.ndc, 0.2); } else { scriptAim.lerp(_ndc.set(Math.sin(tt * 0.6) * 0.45, Math.sin(tt * 0.9 + 1) * 0.25), 0.06); }
     const burst = (tt % 1.6) < 1.2;
     return { x: THREE.MathUtils.clamp(scriptAim.x * 1.4, -1, 1), y: THREE.MathUtils.clamp(scriptAim.y * 1.4, -1, 1), buttons: burst || L ? ['fire'] : [] };
   };
@@ -109,7 +109,7 @@ export async function create(ctx) {
     fireCd -= dt;
     if (input.isHeld('fire') && fireCd <= 0) {
       fireCd = 0.1; side = -side;
-      const origin = new THREE.Vector3(side * 3.2, -2.4, -3).applyQuaternion(camQ0).add(camera.position);
+      const origin = _firePos.set(side * 3.2, -2.4, -3).applyQuaternion(camQ0).add(camera.position);
       em.playerFire(origin, target, 460);
     }
 

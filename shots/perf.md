@@ -298,3 +298,158 @@ SwiftShader (~2-4 ms on real hardware). Heap churn 349 -> 278 KB/frame median.
   intentional amortized rail-build cost, well under the 33 ms floor.
 - ~280 KB/frame of remaining GC churn (particle vectors, pools) — visible as occasional
   ~5 ms spikes here, likely sub-ms on real HW. Watch the sawtooth on a real GPU profile.
+
+---
+
+# Pass 3b — stutter hunt, round 2
+
+Re-ran the full-campaign real-time trace (`node tools/trace.mjs`) against the
+state left by pass 3. Two things were still stuttering: the one remaining
+`MeshDepthMaterial` compile ~26 s into onfoot, and per-frame allocation churn of
+2-3 MB/s on every gameplay stage (heap sawtooth -> GC pauses on real hardware).
+
+## Root cause 1 — the "random" late shadow-depth compile
+
+Five progressive Playwright probes decoded the program cache key of the late
+compile and pinned it to one object: `merged-partx2` (the docked Arwing's merged
+hull — `FrontSide`, has `map`, `alphaTest = 0`, non-instanced, `castShadow`).
+A `renderBufferDirect` spy showed it drawing into the onfoot spot-light shadow
+pass from **t = 2.6 s** onward, ~134 times, yet its depth variant
+(`mapUv=uv, mask1=1, flipSided`) only compiled at **t ≈ 28 s**. A separate census
+probe proved the scene light set was constant the whole time, so it was not a
+light-census recompile.
+
+Mechanism (verified against `three/src/renderers/webgl/WebGLShadowMap.js`, r170):
+the shadow pass draws every caster with a **shared `_depthMaterial` singleton**
+whose `map` / `alphaMap` / `alphaTest` / `side` fields are mutated per caster.
+But `WebGLRenderer.setProgram` only recomputes the program cache key when a
+*checked* field changes (lights, fog, instancing, morphs, clipping, ...), and
+`map` / `alphaTest` / `side` are **not** checked fields. So a mapped caster's
+depth variant is only ever keyed and compiled when a `getProgram` call happens
+to coincide with that mutated state — pure draw-order luck. It fires eventually,
+mid-play, as a ~30-40 ms hitch on real hardware.
+
+**Fix** (`src/core/warmup.js`): `assignDepthMaterials(root)` gives every
+`castShadow` mesh a **dedicated** `MeshDepthMaterial`, deduped per source
+material via a `WeakMap`. A fresh material has an empty
+`materialProperties.programs` map, so `getProgram` *must* compute its key on the
+first warm shadow draw — every needed depth variant therefore compiles inside
+the warm block, deterministically, for any content. Identical keys still share
+the one compiled `WebGLProgram`, so nothing is duplicated, and the renderer keeps
+copying `map`/`alphaMap`/`alphaTest`/`side`/displacement onto custom depth
+materials every draw, so the shadows are pixel-identical. Called from
+`warmRender()` and from `enemies/manager.js` `obtainCraft()` so a mid-play
+pool-miss rebuild is covered too.
+
+## Root cause 2 — per-frame allocation churn (GC sawtooth)
+
+Baseline alloc rates (bytes gained per second, post-warm frames only) were
+title 0.07, intro 6.23, rail 0.94, boss 2.01, space 1.43, onfoot 3.03,
+complete 2.27 MB/s, with 90%+ of frames growing the heap. CDP heap sampling was
+too coarse to localise, so the hot paths were found by source audit:
+
+- **`src/pieces/hud/hud.js`** — the gauges/radar rebuilt ~8 `CanvasGradient`
+  objects *per frame* (each one a JS object + a native raster resource). Added a
+  per-context gradient cache (`cachedGrad`, 11 sites). The radar's conic sweep
+  gradient was recreated every frame just to change its angle — now built once
+  and rotated via the canvas transform. The comm **portrait** (a ~200-path
+  cel-shaded rasteriser: gradients, 29 hatch strokes, 50 scanline rects,
+  vignette, gloss) ran every frame even when the comm window was off screen —
+  now gated on `st.commAge >= 0`. Redundant DOM style/text writes deduped
+  (`--s`, boost label/class, warn opacity/transform, damage vignette).
+- **`src/pieces/onfoot/fx.js`** — the particle write loop did
+  `pPos.set([x,y,z], i*3)`, i.e. **400 array literals per frame**; now direct
+  typed-array element writes. Bolts, particles and impact rings allocated fresh
+  records / `Vector3.clone()` / a `Mesh` + `MeshBasicMaterial` per impact — all
+  now freelist pools with hoisted scratch `Vector3`/`Color`.
+- **`src/pieces/vfx/lasers.js`** — built a fresh `alive` array plus two array
+  literals every frame; now compacts the bolt list in place with a hoisted
+  `_meshes` array.
+- **`src/pieces/enemies/index.js`** — `new THREE.Vector2/Vector3` per aim
+  update and per shot; now `_ndc` / `_firePos` scratch.
+
+## Root cause 3 — warm-build slices landing on already-busy frames
+
+`pumpWarm()` burned a flat 2 ms every frame regardless of what the frame was
+already costing, which produced 14 of the baseline's hitches during the intro.
+Added `engine.lastCpu` (`src/core/engine.js`) — the update+render CPU cost of the
+frame, no GPU wait, so it is a *hardware-independent* signal — and made the pump
+cost-aware: it tracks an EMA of the game's own frame cost (`cpuEma`) *and* of one
+build unit (`stepEma`), and **skips the build entirely** on a frame whose
+remaining budget can't fit a unit (`FRAME_TARGET = 11 ms`). Heavy units (terrain
+chunks, enemy craft) now slide to frames with headroom instead of stacking. The
+prebuild is amortised over a whole 22 s stage for a few dozen units, so there is
+plenty of slack to be picky.
+
+## Bug found on the way: warm-built HUD was being detached
+
+`resetShared()` strips every `ctx.ui` child it doesn't own. Because the warm HUD
+is created while the *previous* stage is still live, the stage switch detached
+its root, and `activate()` then un-hid a node that was no longer in the
+document — a completely invisible HUD (no shield, boost, radar, reticle, score).
+This only became reproducible once pass 3b's pacing let the rail warm finish
+earlier. Fixed in `rail.js` `activate()`: re-append the root if
+`!hud.root.isConnected` (no-op on the synchronous path, where the HUD is created
+after the reset).
+
+## Results
+
+Late shader compiles during gameplay — the headline number:
+
+| stage | pass 3 late compiles | pass 3b |
+|---|---|---|
+| intro | 0 | **0** |
+| rail | 0 | **0** |
+| boss | 0 | **0** |
+| space | 0 | **0** |
+| onfoot | **1** (MeshDepthMaterial, ~26 s in) | **0** |
+| complete | 0 | **0** |
+
+Every compile in the campaign now lands inside a `stage:*` / `warm:compile`
+transition frame, under the black fade. Program count is flat across all of
+gameplay (`prog start -> end` only moves on transition frames).
+
+Allocation rate, post-warm frames, same seed and walk:
+
+| stage | before MB/s | after MB/s |
+|---|---|---|
+| title | 0.07 | 0.07 |
+| intro | 6.23 | **3.62** |
+| rail | 0.94 | **0.38** |
+| boss | 2.01 | **0.99** |
+| space | 1.43 | **0.27** |
+| onfoot | 3.03 | **1.76** |
+| complete | 2.27 | **1.43** |
+
+CPU frame cost (SwiftShader; absolute values are meaningless, the *ratio* to the
+rolling median is the stutter signal). Remaining hitches are all transition
+frames (`stage:*`, `warm:compile`, `warm:render`) which happen under the fade:
+
+| stage | median cpu ms | p95 | hitches | of which mid-play |
+|---|---|---|---|---|
+| title | 2.2 | 5.9 | 1 | 1 (14.7 ms, 5.8x) |
+| intro | 5.5 | 9.8 | 4 | 4 (7-11 ms warm slices) |
+| rail | 4.5 | 280 | 2 | **0** |
+| boss | 2.3 | 2071 | 3 | **0** |
+| space | 2.7 | 1810 | 3 | **0** |
+| onfoot | 3.6 | 24.9 | 4 | 2 (16-25 ms) |
+| complete | 2.3 | 3.8 | 1 | **0** |
+
+`renderScale changes: 0` — no adaptive-resolution thrash. `no page errors`.
+
+## Residual / open
+
+- No `begin` warm-builder for boss / space / onfoot (only rail has one), so their
+  `stage:*` transition frames still carry the whole build + compile + warm render
+  (0.9-5.2 s on SwiftShader, ~50-250 ms on real HW — inside the 550 ms fade, but
+  it is the largest remaining block of work). A per-stage warm-builder contract
+  would make this uniform.
+- intro still shows 4 `warm:step` slices at 7-11 ms CPU on SwiftShader (~2-3 ms
+  on real hardware). The pacing keeps them off busy frames but a single terrain
+  chunk / enemy craft is still the granularity floor; splitting `wb.step()` finer
+  would remove them entirely.
+- ~1-1.8 MB/s of allocation remains on onfoot / intro. Next candidates are the
+  cinematic director and `onfoot` gameplay update, not yet audited.
+- SwiftShader cannot measure real FPS. `upd+ren` (`engine.lastCpu`) vs the rolling
+  median is the hardware-independent metric used throughout; a real-GPU capture is
+  still the only way to confirm the 60 FPS target.
