@@ -8,6 +8,7 @@ import { Rng } from './rng.js';
 import { AudioBus } from './audio.js';
 import { Events } from './events.js';
 import { Stats } from './stats.js';
+import { trace } from './trace.js';
 
 /**
  * Engine: owns renderer, post-processing chain, input, audio, fixed/variable
@@ -49,6 +50,7 @@ export class Engine {
     this.composer.addPass(this.bloom);
     this.composer.addPass(this.outputPass);
 
+    this.trace = trace;
     this.input = new Input(autoplay);
     this.audio = new AudioBus();
     this.size = new THREE.Vector2();
@@ -111,18 +113,24 @@ export class Engine {
   _adaptiveScale(dt, frameMs) {
     if (this._scalePinned) return;
     this._scaleCooldown = Math.max(0, this._scaleCooldown - dt);
+    // Hysteresis: "fast" means real headroom (<15 ms, i.e. a full ~90 fps frame),
+    // must hold for 4 s, and every step enforces a multi-second cooldown — the
+    // old 18 ms / 2 s / 1 s constants let the scale oscillate (down on a wave
+    // spike, back up while the spike still ran) which reads as pulsing blur.
     if (frameMs > 30) { this._slowAcc += dt; this._fastAcc = 0; }
-    else if (frameMs < 18) { this._fastAcc += dt; this._slowAcc = 0; }
+    else if (frameMs < 15) { this._fastAcc += dt; this._slowAcc = 0; }
     else { this._slowAcc = Math.max(0, this._slowAcc - dt); this._fastAcc = 0; }
     if (this._scaleCooldown > 0) return;
     if (this._slowAcc >= 1 && this.renderScale > 0.6) {
       this.renderScale = Math.max(0.6, +(this.renderScale - 0.1).toFixed(2));
       this._applyPixelRatio();
-      this._slowAcc = 0; this._scaleCooldown = 1;
-    } else if (this._fastAcc >= 2 && this.renderScale < 1) {
+      trace.mark('scale:down', this.renderScale);
+      this._slowAcc = 0; this._scaleCooldown = 2.5;
+    } else if (this._fastAcc >= 4 && this.renderScale < 1) {
       this.renderScale = Math.min(1, +(this.renderScale + 0.1).toFixed(2));
       this._applyPixelRatio();
-      this._fastAcc = 0; this._scaleCooldown = 1;
+      trace.mark('scale:up', this.renderScale);
+      this._fastAcc = 0; this._scaleCooldown = 4;
     }
   }
 
@@ -159,12 +167,17 @@ export class Engine {
   step(dt) {
     this.time += dt;
     this.frame++;
+    const f0 = performance.now();
+    const wall = this._wall ? f0 - this._wall : dt * 1000;
+    this._wall = f0;
+    trace.begin(this);
     this.input.update(dt, this.time);
     this.piece?.update(dt, this.time);
     this.audio.update(dt);
     const r0 = performance.now();
     this.composer.render(dt);
     const r1 = performance.now();
+    trace.frame(this, wall, r0 - f0, r1 - r0);
     this.stats.update();
     this._adaptiveScale(dt, this.fixedStep ? r1 - r0 : (this.stats._ms || 16));
     this.input.endFrame();

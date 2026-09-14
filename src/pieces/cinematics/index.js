@@ -73,6 +73,28 @@ class Stage {
     this.greatFox = buildGreatFox(this.mats); this.greatFox.visible = false; scene.add(this.greatFox); this.own.push(this.greatFox);
     this.hangar = buildHangar(this.mats); this.hangar.visible = false; scene.add(this.hangar); this.own.push(this.hangar);
 
+    // Interior lights inside per-shot visibility groups (the hangar's 3 bay
+    // lights, the Great Fox bay light, the 2 engine lights in every hero
+    // arwing): a light inside a toggled group changes the scene light count
+    // mid-cinematic, which forces EVERY lit material to recompile a new program
+    // variant on the cut frame (the intro's big mid-shot hitches). Hoist them
+    // to scene level — always mounted, intensity gated by host visibility,
+    // position synced to the host's matrixWorld.
+    this.trackedLights = [];
+    for (const host of [this.hangar, this.greatFox, ...this.arwings]) {
+      const lights = [];
+      host.traverse((o) => { if (o.isLight) lights.push(o); });
+      if (!lights.length) continue;
+      host.updateMatrixWorld(true);
+      for (const l of lights) {
+        const base = l.intensity;                            // authored intensity (before we gate it)
+        const local = host.worldToLocal(l.getWorldPosition(new THREE.Vector3()));
+        l.removeFromParent(); l.intensity = 0; l.position.copy(local);
+        this.scene.add(l); this.own.push(l);
+        this.trackedLights.push({ l, host, base, local });
+      }
+    }
+
     // camera rig state
     this.rig = { pos: new THREE.Vector3(0, 2, 10), look: new THREE.Vector3(0, 0, 0), fov: 50, roll: 0, shake: 0, lambda: 0, cut: true };
     this._p = new THREE.Vector3(); this._l = new THREE.Vector3(); this._dt = 1 / 60;
@@ -154,6 +176,12 @@ class Stage {
     cam.rotateX(n1 * sh * 0.004); cam.rotateY(n2 * sh * 0.004);
     if (Math.abs(cam.fov - this.rig.fov) > 1e-3) { cam.fov = this.rig.fov; cam.updateProjectionMatrix(); }
     cam.updateMatrixWorld();
+    // gated interior lights: full intensity while their host set is on screen
+    for (const lt of this.trackedLights) {
+      const on = lt.host.visible;
+      lt.l.intensity = on ? lt.base : 0;
+      if (on) lt.l.position.copy(lt.local).applyMatrix4(lt.host.matrixWorld);
+    }
     this.arwings.forEach((a) => { if (a.visible) a.userData.tick(dt, t, cam); }); this.greatFox.userData.tick(t);
     this.planet.update(dt, t);
     this.look.update(dt, t);

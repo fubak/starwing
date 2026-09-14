@@ -183,9 +183,11 @@ class Kit {
     return this;
   }
   engine(x, y, z, size = 0.35) { this.engines.push({ p: new THREE.Vector3(x, y, z), size }); return this; }
-  build(mats) {
-    const group = new THREE.Group();
-    const glowMeshes = [];
+  /** Merge every part slot into one world-scaled BufferGeometry. Expensive
+   *  (toNonIndexed + mergeGeometries + computeVertexNormals) — run ONCE per kind
+   *  via kitCache() and assemble() cheap copies after that. */
+  merge() {
+    const parts = {};
     for (const slot of Object.keys(this.parts)) {
       if (!this.parts[slot].length) continue;
       const geoms = this.parts[slot].map((g) => g.index ? g.toNonIndexed() : g);
@@ -197,24 +199,44 @@ class Kit {
       merged.scale(CRAFT_SCALE, CRAFT_SCALE, CRAFT_SCALE);
       merged.computeVertexNormals();
       geoms.forEach((g) => g.dispose());
-      const mesh = new THREE.Mesh(merged, mats[slot]);
-      mesh.userData.slot = slot;
-      mesh.castShadow = mesh.receiveShadow = false;
-      group.add(mesh);
-      if (slot === 'glow') glowMeshes.push(mesh);
+      parts[slot] = merged;
     }
-    const tex = glowSpriteTexture();
-    for (const e of this.engines) {
-      const sm = new THREE.SpriteMaterial({ map: tex, color: mats.glow.color.clone().multiplyScalar(0.3), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.85 });
-      const sp = new THREE.Sprite(sm);
-      sp.position.copy(e.p).multiplyScalar(CRAFT_SCALE); sp.scale.setScalar(e.size * 3.2 * CRAFT_SCALE);
-      sp.userData.slot = 'engineGlow'; sp.userData.baseScale = e.size * 3.2 * CRAFT_SCALE;
-      group.add(sp);
-    }
-    group.userData.engines = this.engines.map((e) => e.p.clone().multiplyScalar(CRAFT_SCALE));
-    group.userData.glowMeshes = glowMeshes;
-    return group;
+    return parts;
   }
+}
+
+/** Per-kind merged geometry cache. Every craft of a kind shares identical
+ *  geometry; only the material set (per-instance damage flash) differs, so the
+ *  hull merge — the entire cost of building a craft — is paid once per kind. */
+const _kitCache = new Map();
+export function kitCache(kind) {
+  let c = _kitCache.get(kind);
+  if (!c) { const kit = new Kit(); const info = (BUILDERS[kind] ?? vulture)(kit); c = { parts: kit.merge(), engines: kit.engines, info }; _kitCache.set(kind, c); }
+  return c;
+}
+/** Assemble a craft from cached merged geometries + a fresh material set. */
+function assembleCraft(kind, cache, mats) {
+  const group = new THREE.Group();
+  const glowMeshes = [];
+  for (const slot of Object.keys(cache.parts)) {
+    const mesh = new THREE.Mesh(cache.parts[slot], mats[slot]);
+    mesh.userData.slot = slot;
+    mesh.userData.sharedGeo = true;          // geometry is the shared cache — disposeCraft skips it
+    mesh.castShadow = mesh.receiveShadow = false;
+    group.add(mesh);
+    if (slot === 'glow') glowMeshes.push(mesh);
+  }
+  const tex = glowSpriteTexture();
+  for (const e of cache.engines) {
+    const sm = new THREE.SpriteMaterial({ map: tex, color: mats.glow.color.clone().multiplyScalar(0.3), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.85 });
+    const sp = new THREE.Sprite(sm);
+    sp.position.copy(e.p).multiplyScalar(CRAFT_SCALE); sp.scale.setScalar(e.size * 3.2 * CRAFT_SCALE);
+    sp.userData.slot = 'engineGlow'; sp.userData.baseScale = e.size * 3.2 * CRAFT_SCALE;
+    group.add(sp);
+  }
+  group.userData.engines = cache.engines.map((e) => e.p.clone().multiplyScalar(CRAFT_SCALE));
+  group.userData.glowMeshes = glowMeshes;
+  return group;
 }
 
 const cyl = (rt, rb, h, n = 8) => new THREE.CylinderGeometry(rt, rb, h, n);
@@ -355,15 +377,14 @@ const BUILDERS = { vulture, hornet, mantis };
  * @param {{ glowColor?: number, mats?: object }} opts
  */
 export function buildEnemyCraft(kind = 'vulture', opts = {}) {
-  const fn = BUILDERS[kind] ?? vulture;
   const glowColor = opts.glowColor ?? (kind === 'hornet' ? PALETTE.eye : kind === 'mantis' ? 0xff8a38 : PALETTE.glow);
-  const kit = new Kit();
-  const info = fn(kit);
+  const cache = kitCache(kind);           // merged hull geometry, cached per kind
+  const info = cache.info;
   // stripe params are in world (post-scale) units
   const style = Object.fromEntries(Object.entries(info.style ?? {}).map(([k, v]) => [k, v * CRAFT_SCALE]));
   style.glowGain = kind === 'hornet' ? 1.7 : 2.6;   // acid-green eyes bloom hard; keep them lenses, not lamps
   const mats = opts.mats ?? makeCraftMaterials(glowColor, style);
-  const group = kit.build(mats);
+  const group = assembleCraft(kind, cache, mats);
   Object.assign(group.userData, { kind, hp: info.hp, mats, glowColor, flashMats: [mats.core, mats.hull, mats.accent, mats.trim] });
   group.userData.radius = info.radius * CRAFT_SCALE;
   return group;
@@ -371,7 +392,7 @@ export function buildEnemyCraft(kind = 'vulture', opts = {}) {
 
 export function disposeCraft(group) {
   group.traverse((o) => {
-    if (o.geometry) o.geometry.dispose();
+    if (o.geometry && !o.userData.sharedGeo) o.geometry.dispose();
     if (o.isSprite) o.material.dispose();
   });
   Object.values(group.userData.mats ?? {}).forEach((m) => m.dispose());

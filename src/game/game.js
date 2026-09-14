@@ -13,6 +13,8 @@
  */
 import * as THREE from 'three';
 import { createGameOverlay } from '../pieces/_shared/overlay.js';
+import { trace } from '../core/trace.js';
+import { compileScene, uploadTextures, warmRender } from '../core/warmup.js';
 
 const ORDER = ['title', 'intro', 'rail', 'boss', 'space', 'onfoot', 'complete'];
 const FADE_OUT = 0.55, FADE_IN = 0.7;
@@ -35,6 +37,13 @@ export async function create(ctx) {
   // preload stage modules up front so stage switches are synchronous (no black frames in the fixed-step harness)
   const mods = { rail: await tryLoad('./rail.js'), boss: await tryLoad('../pieces/boss/index.js'), space: await tryLoad('../pieces/spacesim/index.js'), onfoot: await tryLoad('../pieces/onfoot/index.js') };
   let hud = null; // created lazily per gameplay stage (it is a full-screen canvas; cinematics get their own overlay)
+
+  // Pre-bake the shared procedural textures while the loading fade is still up:
+  // makeNoiseTexture(512^2) is a ~100ms CPU bake shared by terrain/props/sky/
+  // water/boss shaders — if first touched by a warm step mid-cinematic it lands
+  // as a visible hitch there instead.
+  try { const { noiseTexture } = await import('../pieces/world/sky.js'); noiseTexture(); } catch {}
+  try { const { makeWaterNormalTexture } = await import('../pieces/world/noise.js'); makeWaterNormalTexture(THREE ?? (await import('three')), 256); } catch {}
 
   const stats = { score: 0, hits: 0, shots: 0, landed: 0 };
   const defaults = { exposure: renderer.toneMappingExposure, bloom: bloom ? { strength: bloom.strength, radius: bloom.radius, threshold: bloom.threshold } : null, fov: camera.fov, near: camera.near, far: camera.far, passes: composer ? composer.passes.slice() : null };
@@ -257,8 +266,17 @@ export async function create(ctx) {
       warm = b;
     }
     try {
-      if (ctx.engine?.fixedStep) warm.step();              // deterministic: exactly one unit per frame
-      else { const t0 = performance.now(); do { warm.step(); } while (!warm.done && performance.now() - t0 < 5); }
+      if (!warm.done) {
+        trace.mark('warm:step', `${warm.name}:${warm.remaining ?? 0}`);
+        if (ctx.engine?.fixedStep) warm.step();            // deterministic: exactly one unit per frame
+        else {
+          const t0 = performance.now();
+          do {
+            const s0 = performance.now(); warm.step(); const ms = performance.now() - s0;
+            if (ms > 10) trace.mark('warm:slow', `${warm.name}:${warm.stepName ?? warm.remaining ?? 0} ${ms.toFixed(0)}ms`);
+          } while (!warm.done && performance.now() - t0 < 2);
+        }
+      }
     } catch (e) {
       console.warn(`[game] warm "${warm.name}" failed`, e);
       try { warm.abort?.(); } catch {}
@@ -286,6 +304,7 @@ export async function create(ctx) {
     currentName = ORDER[idx];
     stageT = 0;
     events.emit('campaign:stage', currentName);
+    trace.setStage(currentName);
     let piece = null;
     try { piece = await stages[currentName](); } catch (e) { console.error(`[game] stage "${currentName}" failed`, e); resetShared(); }
     if (disposed) { piece?.dispose?.(); return; }
@@ -294,16 +313,17 @@ export async function create(ctx) {
     current = piece;
     overlay.raise();
     overlay.letterbox(false);
-    // Pre-compile the new stage's shaders while the fade is still black so the first
-    // visible frame doesn't pay every program's compile at once. Skipped for
-    // cinematic -> cinematic switches: the shared director's programs are already
-    // warm, so compileAsync would only re-validate them under a black screen.
+    // Full GPU warmup while the fade is still black: compile every material,
+    // then render the whole scene once into a tiny offscreen target with pools
+    // forced visible so pipelines, depth/distance variants, shadow maps and
+    // texture uploads are all paid here — not on a visible gameplay frame.
+    // Skipped only for cinematic -> cinematic switches on the shared director,
+    // which was fully warmed at boot.
     if (!keepCine) {
-      if (renderer.compileAsync) {
-        try { await Promise.race([renderer.compileAsync(scene, piece.camera ?? camera), new Promise((r) => setTimeout(r, 120))]); } catch {}
-      } else if (renderer.compile) {
-        try { renderer.compile(scene, piece.camera ?? camera); } catch {}
-      }
+      const cam = piece.camera ?? camera;
+      try { await compileScene(renderer, scene, cam); } catch (e) { console.warn('[game] warm compile', e); }
+      try { uploadTextures(renderer, scene); } catch (e) { console.warn('[game] warm textures', e); }
+      try { warmRender(renderer, scene, cam); } catch (e) { console.warn('[game] warm render', e); }
     }
     overlay.fadeTo(0, FADE_IN);
     audio?.duck?.(1, FADE_IN);
@@ -328,7 +348,7 @@ export async function create(ctx) {
   const start = ORDER.indexOf(q.get('stage') ?? '');
   startStage(start >= 0 ? start : 0);
   // harness hook (tools / probes): current stage name, fail flag, stats, warm progress
-  if (typeof window !== 'undefined') window.__campaign = { get stage() { return currentName; }, get failed() { return !!failed; }, get paused() { return paused; }, stats, get stageT() { return stageT; }, get warm() { return warm ? { name: warm.name, remaining: warm.remaining ?? 0, done: !!warm.done } : null; } };
+  if (typeof window !== 'undefined') window.__campaign = { get stage() { return currentName; }, get failed() { return !!failed; }, get paused() { return paused; }, stats, get stageT() { return stageT; }, get warm() { return warm ? { name: warm.name, remaining: warm.remaining ?? 0, done: !!warm.done } : null; }, get busy() { return loading || pending !== null; }, skip() { requestStage(idx + 1); } };
 
   return {
     update(dt, t) {

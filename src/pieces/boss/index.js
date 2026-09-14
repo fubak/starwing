@@ -125,7 +125,8 @@ export async function create(ctx, opts = {}) {
     cam: { mode: 'chase', t: 0, pos: new THREE.Vector3(0, 6, 22), look: new THREE.Vector3(0, 0, -60), cut: true },
     fires: [], fireAcc: 0, sparkAcc: 0, score: 0, won: false,
   };
-  const V = { a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3(), d: new THREE.Vector3() };
+  const V = { a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3(), d: new THREE.Vector3(), e: new THREE.Vector3(), beam: new THREE.Vector3() };
+  const RED_LIGHT = new THREE.Color(1, 0.18, 0.1);
 
   const activePoints = () => boss.weakPoints.filter((w) => w.alive && w.phase === S.phase);
   const worldPos = (obj, out) => { obj.updateWorldMatrix(true, false); return out.setFromMatrixPosition(obj.matrixWorld); };
@@ -183,9 +184,10 @@ export async function create(ctx, opts = {}) {
     const em = boss.emitters[idx].mesh;
     const py = S.player.pos.y, px = S.player.pos.x;
     let pathFn;
-    if (style === 'h') { const dir = idx === 0 ? 1 : -1; pathFn = (u) => new THREE.Vector3(-dir * 90 + dir * 180 * u, py + Math.sin(u * 3) * 3, 0); }
-    else if (style === 'v') { pathFn = (u) => new THREE.Vector3(px, 40 - 80 * u, 0); }
-    else { const dir = idx === 0 ? 1 : -1; pathFn = (u) => new THREE.Vector3(-dir * 80 + dir * 160 * u, 30 - 60 * u, 0); }
+    // pathFn(u, out) writes the beam target into `out` — no per-frame Vector3 churn
+    if (style === 'h') { const dir = idx === 0 ? 1 : -1; pathFn = (u, out) => out.set(-dir * 90 + dir * 180 * u, py + Math.sin(u * 3) * 3, 0); }
+    else if (style === 'v') { pathFn = (u, out) => out.set(px, 40 - 80 * u, 0); }
+    else { const dir = idx === 0 ? 1 : -1; pathFn = (u, out) => out.set(-dir * 80 + dir * 160 * u, 30 - 60 * u, 0); }
     beam.start(em, pathFn, S.phase === 3 ? 0.9 : 1.25, S.phase === 3 ? 1.5 : 1.7);
     beam.pathStyle = style; beam.pathY = py; beam.pathX = px;
     hud.warn('LASER SWEEP'); sfx.warn(); setTimeout(() => beam.firing && sfx.beam(), 1250);
@@ -231,7 +233,7 @@ export async function create(ctx, opts = {}) {
     else {
       const pts = activePoints();
       let target = null, best = 1e9;
-      for (const w of pts) { const wp = worldPos(w.mesh, V.a); const d = Math.hypot(wp.x * 0.32 - p.pos.x, wp.y * 0.32 - p.pos.y); if (d < best) { best = d; target = wp.clone(); } }
+      for (const w of pts) { const wp = worldPos(w.mesh, V.a); const d = Math.hypot(wp.x * 0.32 - p.pos.x, wp.y * 0.32 - p.pos.y); if (d < best) { best = d; target = V.e.copy(wp); } }
       if (target) { tx = THREE.MathUtils.clamp(target.x * 0.32, -PLAYER_X, PLAYER_X); ty = THREE.MathUtils.clamp(target.y * 0.32 + 2, PLAYER_Y_MIN + 2, PLAYER_Y_MAX - 2); }
       // dodge: laser sweeps
       for (const b of beams) {
@@ -307,7 +309,7 @@ export async function create(ctx, opts = {}) {
       const muzzle = V.a.set(P.side * 3.2, -0.4, -4.8).applyEuler(ship.rotation).add(P.pos);
       // soft auto-aim toward the current target within a cone
       const pts = activePoints(); let dir = V.b.set(0, 0, -1); let best = 1e9;
-      for (const w of pts) { const wp = worldPos(w.mesh, V.c); const d = V.d.copy(wp).sub(muzzle); const ang = Math.acos(THREE.MathUtils.clamp(-d.z / d.length(), -1, 1)); const score = ang + Math.hypot(wp.x * 0.32 - P.pos.x, wp.y * 0.32 - P.pos.y) * 0.01; if (ang < 0.62 && score < best) { best = score; dir = d.clone().normalize(); } }
+      for (const w of pts) { const wp = worldPos(w.mesh, V.c); const d = V.d.copy(wp).sub(muzzle); const ang = Math.acos(THREE.MathUtils.clamp(-d.z / d.length(), -1, 1)); const score = ang + Math.hypot(wp.x * 0.32 - P.pos.x, wp.y * 0.32 - P.pos.y) * 0.01; if (ang < 0.62 && score < best) { best = score; dir = V.e.copy(d).normalize(); } }
       bolts.fire(muzzle, dir, 300); sfx.laser();
     }
     // hurt / shield regen
@@ -325,7 +327,7 @@ export async function create(ctx, opts = {}) {
     // cannon lenses: ember when idle, white-hot while a beam telegraphs / fires
     { let ch = 0; for (const b of beams) { if (b.state === 'tele') ch = Math.max(ch, Math.min(1, b.t / b.teleDur) * 0.8); else if (b.state === 'fire') ch = 1; } boss.lensMat.uniforms.uCharge.value = ch; }
     worldPos(ship, frontLight.position); frontLight.position.z -= 40; frontLight.position.y += 10;
-    boss.redLightMat.color.setScalar(0.6 + 0.4 * (Math.sin(S.ft * 4) > 0.3 ? 1 : 0)).multiply(new THREE.Color(1, 0.18, 0.1));
+    boss.redLightMat.color.setScalar(0.6 + 0.4 * (Math.sin(S.ft * 4) > 0.3 ? 1 : 0)).multiply(RED_LIGHT);
     // iris
     const irisTarget = S.phase === 3 || S.destruct ? 1 : 0;
     S.iris += (irisTarget - S.iris) * Math.min(1, dtS * 3.5);

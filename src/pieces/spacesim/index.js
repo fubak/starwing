@@ -268,15 +268,18 @@ export async function create(ctx, opts = {}) {
     camShake = Math.max(camShake, type === 'barrel' ? 0.2 : 0.4);
     audio.tone?.({ type: 'sawtooth', f0: 220, f1: type === 'barrel' ? 660 : 440, dur: 0.5, gain: 0.08 });
   }
+  const _pose = { pitch: 0, roll: 0, bank: 0 };   // persistent — a fresh object per frame was GC churn
   function maneuverPose(m, k) {
-    // returns {pitch, roll, bank} angles at normalised progress k with anticipation + overshoot
+    // writes _pose {pitch, roll, bank} angles at normalised progress k with anticipation + overshoot
+    _pose.pitch = _pose.roll = _pose.bank = 0;
     if (m.type === 'somersault') {
       // dip nose briefly (anticipation), full 360 loop, settle with slight overshoot
       const ant = k < 0.1 ? -0.18 * Math.sin((k / 0.1) * Math.PI) : 0;
       const kk = THREE.MathUtils.clamp((k - 0.06) / 0.86, 0, 1);
       let pitch = easeInOutCubic(kk) * Math.PI * 2;
       if (k > 0.92) pitch += 0.10 * Math.sin(((k - 0.92) / 0.08) * Math.PI);
-      return { pitch: pitch + ant, roll: 0, bank: 0 };
+      _pose.pitch = pitch + ant;
+      return _pose;
     }
     if (m.type === 'uturn') {
       const kk = THREE.MathUtils.clamp((k - 0.05) / 0.85, 0, 1);
@@ -284,11 +287,13 @@ export async function create(ctx, opts = {}) {
       const pitch = e * Math.PI;
       let roll = THREE.MathUtils.clamp((k - 0.45) / 0.5, 0, 1); roll = easeInOutCubic(roll) * Math.PI;
       if (k > 0.93) roll += 0.08 * Math.sin(((k - 0.93) / 0.07) * Math.PI);
-      return { pitch, roll, bank: 0 };
+      _pose.pitch = pitch; _pose.roll = roll;
+      return _pose;
     }
     // barrel roll: fast 360 visual roll with a slight lateral hop
     const e = easeInOutCubic(k);
-    return { pitch: 0, roll: 0, bank: e * Math.PI * 2 * m.dir };
+    _pose.bank = e * Math.PI * 2 * m.dir;
+    return _pose;
   }
 
   // ---------------- update

@@ -17,6 +17,7 @@ import { LaserSystem } from './lasers.js';
 const V = () => new THREE.Vector3();
 const _a = V(), _b = V(), _c = V(), _q = new THREE.Quaternion();
 const _col = new THREE.Color(), _col2 = new THREE.Color();
+const WHITE = new THREE.Color(1, 1, 1);
 const UP = new THREE.Vector3(0, 1, 0);
 const DOWN = new THREE.Vector3(0, -1, 0);
 
@@ -461,7 +462,10 @@ export function createVfx(ctx, opts = {}) {
   const particles = new ParticleSystem(opts.particles ?? 6000);
   const debris = new DebrisSystem(opts.debris ?? 400);
   const lasers = new LaserSystem(opts.lasers ?? 128);
-  const light = new THREE.PointLight(0xffffff, 0, 60, 1.6); light.visible = false;
+  // NOTE: this light stays mounted + visible (intensity 0) forever. Toggling a
+  // light's visibility changes the scene light count, which forces EVERY lit
+  // material to recompile a new program variant mid-play (a huge hitch).
+  const light = new THREE.PointLight(0xffffff, 0, 60, 1.6);
   const group = new THREE.Group(); group.name = 'vfx';
   group.add(particles.mesh, debris.mesh, lasers.group, light);
   scene.add(group);
@@ -489,13 +493,13 @@ export function createVfx(ctx, opts = {}) {
       particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.SOFT, colA: color, colB: color, size0: 0.6 * scale, size1: 0.2 * scale, life: 0.1 });
       for (let i = 0; i < 3; i++) {
         _a.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).multiplyScalar(5).addScaledVector(dir, 12);
-        particles.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: _a.x, vy: _a.y, vz: _a.z, type: P.SPARK, colA: new THREE.Color(1, 1, 1), colB: color, size0: 0.12 * scale, size1: 0.02, life: 0.14, drag: 3 });
+        particles.spawn({ x: pos.x, y: pos.y, z: pos.z, vx: _a.x, vy: _a.y, vz: _a.z, type: P.SPARK, colA: WHITE, colB: color, size0: 0.12 * scale, size1: 0.02, life: 0.14, drag: 3 });
       }
     },
 
     hitSparks(pos, normal, o = {}) {
       const color = o.color ?? PALETTE.playerLaser;
-      const hot = o.hot ?? new THREE.Color(1, 1, 1);
+      const hot = o.hot ?? WHITE;
       const s = o.scale ?? 1;
       particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.FLASH, colA: color, size0: 0.8 * s, size1: 2.4 * s, life: 0.14, rot: rng() * 6.28 });
       particles.spawn({ x: pos.x, y: pos.y, z: pos.z, type: P.SOFT, colA: hot, colB: color, size0: 2.0 * s, size1: 0.3 * s, life: 0.28 });
@@ -579,7 +583,7 @@ export function createVfx(ctx, opts = {}) {
     hitStop(sec) { this.hitStopT = Math.max(this.hitStopT, sec); },
     flashLight(pos, color, intensity, dist) {
       light.position.copy(pos); light.color.copy(color); light.intensity = intensity; light.distance = dist;
-      light.visible = true; this._lightT = 0; this._lightPeak = intensity;
+      this._lightT = 0; this._lightPeak = intensity;
     },
     /** Add shake offset to a camera whose base pose was just set this frame. */
     applyShake(camera) {
@@ -595,8 +599,8 @@ export function createVfx(ctx, opts = {}) {
       particles.update(sdt); debris.update(sdt, camera);
       lasers.update(sdt, opts.hitTest);
       charge.update(sdt, camera); bombFx.update(sdt, camera);
-      // light decay
-      if (light.visible) { this._lightT += dt; light.intensity = this._lightPeak * Math.exp(-this._lightT * 7) * (0.8 + 0.2 * Math.sin(this._lightT * 70)); if (light.intensity < 0.05) light.visible = false; }
+      // light decay (intensity only — visibility must never toggle, see above)
+      if (this._lightPeak > 0) { this._lightT += dt; light.intensity = this._lightPeak * Math.exp(-this._lightT * 7) * (0.8 + 0.2 * Math.sin(this._lightT * 70)); if (light.intensity < 0.05) { light.intensity = 0; this._lightPeak = 0; } }
       // trauma-based shake (real time, not hit-stopped)
       this.trauma = Math.max(0, this.trauma - dt * 1.6);
       this.flashAmount = Math.max(0, this.flashAmount - dt * 3.5);
@@ -611,7 +615,7 @@ export function createVfx(ctx, opts = {}) {
       void t;
     },
     dispose() {
-      scene.remove(group);
+      group.removeFromParent();   // may be mounted under a parked warm group reparented at activate
       particles.dispose(); debris.dispose(); lasers.dispose(); charge.dispose(); bombFx.dispose();
       for (const t of trails) t.dispose();
     },

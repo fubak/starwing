@@ -146,7 +146,7 @@ export class Beam {
     this.group.add(this.core, this.glow, this.tele);
     this.group.visible = false;
     this.state = 'idle'; this.t = 0;
-    this.from = new THREE.Vector3(); this.to = new THREE.Vector3();
+    this.from = new THREE.Vector3(); this.to = new THREE.Vector3(); this._pf = new THREE.Vector3();
     this.hitLight = new THREE.PointLight(color, 0, 120, 1.5); scene.add(this.hitLight);
   }
   /** Telegraph for `teleDur`, then fire for `fireDur`. `pathFn(u)` returns target point (u = 0..1 over fire). */
@@ -154,7 +154,7 @@ export class Beam {
     this.pathFn = pathFn; this.teleDur = teleDur; this.fireDur = fireDur; this.t = 0; this.state = 'tele'; this.group.visible = true; this.fromRef = from;
   }
   _aim(radius, mesh) {
-    const d = this.to.clone().sub(this.from); const L = d.length();
+    const d = this._aimV ?? (this._aimV = new this.THREE.Vector3()); const L = d.copy(this.to).sub(this.from).length();
     mesh.position.copy(this.from); mesh.lookAt(this.to); mesh.scale.set(radius, radius, L);
   }
   update(dt, tNow) {
@@ -164,7 +164,7 @@ export class Beam {
     this.glow.material.uniforms.uTime.value = tNow;
     if (this.state === 'tele') {
       const u = this.t / this.teleDur;
-      this.to.copy(this.pathFn(0));
+      this.to.copy(this.pathFn(0, this._pf));
       this.tele.visible = true; this.core.visible = this.glow.visible = false;
       const pulse = 0.35 + 0.65 * Math.abs(Math.sin(u * u * 26));
       this.tele.material.opacity = pulse * (0.3 + 0.6 * u); this._aim(0.25 + u * 0.35, this.tele);
@@ -173,7 +173,7 @@ export class Beam {
     } else if (this.state === 'fire') {
       const u = this.t / this.fireDur;
       this.tele.visible = false; this.core.visible = this.glow.visible = true;
-      this.to.copy(this.pathFn(Math.min(1, u)));
+      this.to.copy(this.pathFn(Math.min(1, u), this._pf));
       const fade = u > 0.85 ? (1 - u) / 0.15 : 1; const ramp = Math.min(1, u * 8);
       const p = fade * ramp;
       this._aim(1.3 * p + 0.2, this.core); this._aim(5.5 * p + 0.5, this.glow);
@@ -213,21 +213,23 @@ export class Missiles {
     return m;
   }
   update(dt, tNow) {
-    const THREE = this.THREE; const tmp = new THREE.Vector3();
+    const tmp = this._tmp ?? (this._tmp = new this.THREE.Vector3());
+    const tmp2 = this._tmp2 ?? (this._tmp2 = new this.THREE.Vector3());
+    const tmp3 = this._tmp3 ?? (this._tmp3 = new this.THREE.Vector3());
     for (const m of this.pool) {
       if (!m.active) continue;
       m.age += dt;
       // homing: steer toward target with limited turn rate, accelerate
       if (m.target && m.age > 0.35) {
         tmp.copy(m.target).sub(m.g.position); const dist = tmp.length(); tmp.normalize();
-        const cur = m.v.clone().normalize(); const k = Math.min(1, m.turn * dt * (1 + (5 - Math.min(5, dist / 20))));
+        const cur = tmp2.copy(m.v).normalize(); const k = Math.min(1, m.turn * dt * (1 + (5 - Math.min(5, dist / 20))));
         cur.lerp(tmp, k).normalize(); m.v.copy(cur).multiplyScalar(Math.min(m.speed * 2.2, m.v.length() + 45 * dt));
         // sideways wobble for character
-        m.v.addScaledVector(new THREE.Vector3(Math.sin(tNow * 9 + m.wobble), Math.cos(tNow * 7 + m.wobble), 0), 2.0 * dt * 30);
+        m.v.addScaledVector(tmp3.set(Math.sin(tNow * 9 + m.wobble), Math.cos(tNow * 7 + m.wobble), 0), 2.0 * dt * 30);
         if (dist < 5 || m.age > m.life) { this.detonate(m); continue; }
       } else if (m.age > m.life) { this.detonate(m); continue; }
       m.g.position.addScaledVector(m.v, dt);
-      m.g.lookAt(m.g.position.clone().add(m.v));
+      m.g.lookAt(tmp3.copy(m.g.position).add(m.v));
       m.flame.scale.setScalar(0.8 + 0.4 * Math.sin(tNow * 60 + m.wobble));
       if (Math.random() < 0.9) this.smoke.emit(m.g.position.clone().addScaledVector(m.v.clone().normalize(), -3), tmp.set((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 3), { life: 1.4 + Math.random(), size: 1.8, grow: 3.5, drag: 1, c0: [0.95, 0.9, 0.85], c1: [0.4, 0.4, 0.45] });
     }

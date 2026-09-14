@@ -86,8 +86,12 @@ export function makeNoiseTexture(THREE, size = 512) {
   return t;
 }
 
+// Memoised: the water normal bake is a fixed ~256² CPU pass shared by every
+// createWater(); building it more than once per session is pure waste.
+let _waterNrm = null;
 /** Tileable water normal map (RGB, tangent space, y-up encoded in G). */
 export function makeWaterNormalTexture(THREE, size = 256) {
+  if (_waterNrm) return _waterNrm;
   const h = new Float32Array(size * size);
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
     const u = x / size, v = y / size;
@@ -105,5 +109,6 @@ export function makeWaterNormalTexture(THREE, size = 256) {
   const t = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter;
   t.generateMipmaps = true; t.needsUpdate = true;
+  _waterNrm = t;
   return t;
 }

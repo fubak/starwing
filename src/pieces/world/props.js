@@ -344,62 +344,89 @@ export class Props {
     if (!arr) return;
     for (const { pool, id } of arr) pool.release(id);
     this.chunkClaims.delete(chunkIndex);
+    this._claimsDirty = true;
   }
 
-  /** Populate props for chunk i (travel range [i*L,(i+1)*L]). world z = -d. */
-  populate(i, schedule) {
-    const rng = this.rng, claims = [];
+  /**
+   * Begin populating props for chunk i (travel range [i*L,(i+1)*L]).
+   * world z = -d. Returns a state for populateNext(), which does one small
+   * slice per call — populate() used to run several hundred heightAt noise
+   * evals on a single frame (a periodic mid-play hitch).
+   */
+  beginPopulate(i, schedule) {
     const d0 = i * CHUNK;
-    const p = schedule.paramsAt(d0 + CHUNK / 2);
+    return { i, schedule, claims: [], d0, p: schedule.paramsAt(d0 + CHUNK / 2), ph: 0, c: 0, k: 0, gz: 20 };
+  }
+
+  /** One slice of populate(); rng consumption order matches the old monolithic call. Returns true when done. */
+  populateNext(st) {
+    const rng = this.rng, claims = st.claims, schedule = st.schedule, d0 = st.d0, p = st.p, i = st.i;
     const claim = (pool, ...a) => { const id = pool.claim(...a); if (id >= 0) claims.push({ pool, id }); return id; };
     const H = (x, d) => heightAt(x, d, schedule.paramsAt(d));
 
     // trees: clustered copses (cluster centres + scatter) mixing three species by altitude
-    const nClusters = Math.floor(9 * p.trees);
-    for (let c = 0; c < nClusters; c++) {
-      const cx = rng.range(-1100, 1100), cd = d0 + rng.range(0, CHUNK), cr = rng.range(25, 90);
-      const species = rng.next();
-      const n = Math.floor(rng.range(5, 14));
-      for (let k = 0; k < n; k++) {
-        const ang = rng.range(0, 6.28), rad = Math.sqrt(rng.next()) * cr;
-        const x = cx + Math.cos(ang) * rad, d = cd + Math.sin(ang) * rad;
-        if (Math.abs(x - riverX(d)) < 90) continue;
-        const h = H(x, d);
-        if (h < 4 || h > 95) continue;
-        const slope = Math.abs(H(x + 3, d) - h) + Math.abs(H(x, d + 3) - h);
-        if (slope > 2.6) continue;
-        const s = rng.range(7, 12);
-        let pool;
-        if (h > 55 || species < 0.45) { pool = this.pines; this.tint.setHSL(0.33 + rng.range(-0.05, 0.03), 0.55, rng.range(0.42, 0.55)); }
-        else if (species < 0.8) { pool = this.broad; this.tint.setHSL(0.24 + rng.range(-0.04, 0.06), 0.6, rng.range(0.45, 0.6)); }
-        else { pool = this.cypress; this.tint.setHSL(0.38 + rng.range(-0.03, 0.03), 0.45, rng.range(0.4, 0.5)); }
-        claim(pool, x, h - 0.5, -d, rng.range(0, 6.28), s, s * rng.range(0.9, 1.35), s, this.tint);
+    if (st.ph === 0) {
+      const nClusters = Math.floor(9 * p.trees);
+      const c = st.c++;
+      if (c < nClusters) {
+        const cx = rng.range(-1100, 1100), cd = d0 + rng.range(0, CHUNK), cr = rng.range(25, 90);
+        const species = rng.next();
+        const n = Math.floor(rng.range(5, 14));
+        for (let k = 0; k < n; k++) {
+          const ang = rng.range(0, 6.28), rad = Math.sqrt(rng.next()) * cr;
+          const x = cx + Math.cos(ang) * rad, d = cd + Math.sin(ang) * rad;
+          if (Math.abs(x - riverX(d)) < 90) continue;
+          const h = H(x, d);
+          if (h < 4 || h > 95) continue;
+          const slope = Math.abs(H(x + 3, d) - h) + Math.abs(H(x, d + 3) - h);
+          if (slope > 2.6) continue;
+          const s = rng.range(7, 12);
+          let pool;
+          if (h > 55 || species < 0.45) { pool = this.pines; this.tint.setHSL(0.33 + rng.range(-0.05, 0.03), 0.55, rng.range(0.42, 0.55)); }
+          else if (species < 0.8) { pool = this.broad; this.tint.setHSL(0.24 + rng.range(-0.04, 0.06), 0.6, rng.range(0.45, 0.6)); }
+          else { pool = this.cypress; this.tint.setHSL(0.38 + rng.range(-0.03, 0.03), 0.45, rng.range(0.4, 0.5)); }
+          claim(pool, x, h - 0.5, -d, rng.range(0, 6.28), s, s * rng.range(0.9, 1.35), s, this.tint);
+        }
+        return false;
       }
+      st.ph = 1;
     }
-    // boulders on slopes and shorelines
-    const nRocks = Math.floor(22 * (0.4 + p.spires) * (1 - p.urban));
-    for (let k = 0; k < nRocks; k++) {
-      const x = rng.range(-1000, 1000), d = d0 + rng.range(0, CHUNK);
-      const h = H(x, d);
-      if (h < -2 || h > 130) continue;
-      const s = rng.range(4, 14);
-      this.tint.setHSL(p.ridged > 0.5 ? 0.07 : 0.6, p.ridged > 0.5 ? 0.35 : 0.06, rng.range(0.5, 0.75));
-      claim(this.rocks, x, h - s * 0.15, -d, rng.range(0, 6.28), s, s * rng.range(0.6, 1.0), s * rng.range(0.7, 1.3), this.tint);
+    // boulders on slopes and shorelines (8 per slice)
+    if (st.ph === 1) {
+      const nRocks = Math.floor(22 * (0.4 + p.spires) * (1 - p.urban));
+      const end = Math.min(st.k + 8, nRocks);
+      for (; st.k < end; st.k++) {
+        const x = rng.range(-1000, 1000), d = d0 + rng.range(0, CHUNK);
+        const h = H(x, d);
+        if (h < -2 || h > 130) continue;
+        const s = rng.range(4, 14);
+        this.tint.setHSL(p.ridged > 0.5 ? 0.07 : 0.6, p.ridged > 0.5 ? 0.35 : 0.06, rng.range(0.5, 0.75));
+        claim(this.rocks, x, h - s * 0.15, -d, rng.range(0, 6.28), s, s * rng.range(0.6, 1.0), s * rng.range(0.7, 1.3), this.tint);
+      }
+      if (st.k < nRocks) return false;
+      st.ph = 2; st.k = 0;
     }
-    // rock spires
-    const nSp = Math.floor(9 * p.spires);
-    for (let k = 0; k < nSp; k++) {
-      const x = rng.range(-1000, 1000), d = d0 + rng.range(0, CHUNK);
-      const r = rng.range(12, 34), hh = rng.range(50, 170) * (p.ridged > 0.5 ? 1.3 : 1);
-      if (Math.abs(x - riverX(d)) < CORRIDOR * 0.8 + r) continue;   // never inside the flight corridor
-      const h = H(x, d);
-      if (h < 2) continue;
-      this.tint.setHSL(0.07 + rng.range(-0.02, 0.02), 0.2, rng.range(0.8, 0.96));
-      claim(this.spires, x, h - 6, -d, rng.range(0, 6.28), r, hh, r * rng.range(0.7, 1.2), this.tint, rng.range(-0.06, 0.06), rng.range(-0.06, 0.06));
+    // rock spires (3 per slice)
+    if (st.ph === 2) {
+      const nSp = Math.floor(9 * p.spires);
+      const end = Math.min(st.k + 3, nSp);
+      for (; st.k < end; st.k++) {
+        const x = rng.range(-1000, 1000), d = d0 + rng.range(0, CHUNK);
+        const r = rng.range(12, 34), hh = rng.range(50, 170) * (p.ridged > 0.5 ? 1.3 : 1);
+        if (Math.abs(x - riverX(d)) < CORRIDOR * 0.8 + r) continue;   // never inside the flight corridor
+        const h = H(x, d);
+        if (h < 2) continue;
+        this.tint.setHSL(0.07 + rng.range(-0.02, 0.02), 0.2, rng.range(0.8, 0.96));
+        claim(this.spires, x, h - 6, -d, rng.range(0, 6.28), r, hh, r * rng.range(0.7, 1.2), this.tint, rng.range(-0.06, 0.06), rng.range(-0.06, 0.06));
+      }
+      if (st.k < nSp) return false;
+      st.ph = 3;
     }
-    // city: massed blocks on a street grid; downtown core is tall, edges are low-rise
-    if (p.towers > 0.05) {
-      for (let gz = 20; gz < CHUNK; gz += 60) for (let gx = -900; gx <= 900; gx += 60) {
+    // city: massed blocks on a street grid — one latitude row per slice
+    if (st.ph === 3) {
+      if (p.towers > 0.05 && st.gz < CHUNK) {
+        const gz = st.gz;
+        for (let gx = -900; gx <= 900; gx += 60) {
         if (rng.next() > p.towers * 0.92) continue;
         const d = d0 + gz + rng.range(-6, 6), x = gx + rng.range(-6, 6);
         // the rail follows the river: keep every lot (plus its widest footprint) outside the corridor
@@ -439,25 +466,42 @@ export class Props {
             if (id >= 0) this.blocks.setExtras(id, seed + b * 3.3, this.accent);
           }
         }
+        }
+        st.gz += 60;
+        return false;
       }
+      st.ph = 4;
     }
-    // ring gates over the river (spaced out: they are a landmark, not a fence)
-    if (i % 3 === 0 && rng.next() < p.arches * 0.8) {
-      const d = d0 + CHUNK / 2;
-      const xr = riverX(d);
-      const dir = Math.atan2(riverX(d + 10) - riverX(d - 10), 20);
-      // ring gates are wide enough that the whole rail envelope (x +-110, y 10..130) passes through the opening
-      const R = rng.range(150, 185);
-      this.tint.setHSL(0.58, 0.2, 0.92);
-      claim(this.arches, xr, -4, -d, dir, R, R, R, this.tint);
+    // ring gates over the river (spaced out: they are a landmark, not a fence) + commit
+    if (st.ph === 4) {
+      if (i % 3 === 0 && rng.next() < p.arches * 0.8) {
+        const d = d0 + CHUNK / 2;
+        const xr = riverX(d);
+        const dir = Math.atan2(riverX(d + 10) - riverX(d - 10), 20);
+        // ring gates are wide enough that the whole rail envelope (x +-110, y 10..130) passes through the opening
+        const R = rng.range(150, 185);
+        this.tint.setHSL(0.58, 0.2, 0.92);
+        claim(this.arches, xr, -4, -d, dir, R, R, R, this.tint);
+      }
+      this.chunkClaims.set(i, claims);
+      this._claimsDirty = true;
+      st.ph = 5;
+      return true;
     }
-    this.chunkClaims.set(i, claims);
+    return true;
   }
+
+  /** Synchronous populate (compat path): run all slices at once. */
+  populate(i, schedule) { const st = this.beginPopulate(i, schedule); while (!this.populateNext(st)); }
 
   flush() {
     // recompute the high-water mark per pool from live claims so released tail slots drop out
-    const hi = new Map();
-    for (const arr of this.chunkClaims.values()) for (const { pool, id } of arr) { const m = hi.get(pool) ?? 0; if (id + 1 > m) hi.set(pool, id + 1); }
-    for (const p of this.pools) { p.hi = hi.get(p) ?? 0; p.flush(); }
+    if (this._claimsDirty) {
+      this._claimsDirty = false;
+      const hi = new Map();
+      for (const arr of this.chunkClaims.values()) for (const { pool, id } of arr) { const m = hi.get(pool) ?? 0; if (id + 1 > m) hi.set(pool, id + 1); }
+      for (const p of this.pools) p.hi = hi.get(p) ?? 0;
+    }
+    for (const p of this.pools) { p.mesh.count = p.hi; if (p.dirty) { p.mesh.instanceMatrix.needsUpdate = true; if (p.mesh.instanceColor) p.mesh.instanceColor.needsUpdate = true; if (p.seed) { p.seed.needsUpdate = true; p.accent.needsUpdate = true; } p.dirty = false; } }
   }
 }

@@ -210,3 +210,91 @@ How:
   props and the pilot rig is the next lever.
 * The PMREM env bake inside `look.install()` is the one unavoidable ~30-60 ms (real GPU)
   cost per look switch; it sits under the fade, but a chunked bake would shave it further.
+
+---
+
+# Pass 3 — stutter hunt
+
+Goal: **60 FPS sustained, never below 30, zero stutter/hitching** — including the opening
+cutscenes and combat. Tooling: `src/core/trace.js` (`?trace`) + `tools/trace.mjs`
+(Playwright campaign walker on the :5174 no-HMR server, real-time not `&fixed`) dumps
+per-frame `update`/`render`/`dt`/programs/draw-calls/heap to `shots/trace.json`.
+`cpu = upd+ren` is the hardware-independent stutter metric (SwiftShader raster pollutes
+`dt`); a "hitch" = cpu > 3x the rolling median.
+
+## Baseline (before pass 3)
+
+43 CPU hitches in 696 frames; late shader compiles inside gameplay: intro +28,
+rail +33, boss +65 (mid-fight), space +57, complete +40; ~349 KB/frame heap churn.
+Single monolithic costs measured via `warm:slow` marks: enemy-manager build ~0.6-1 s,
+`buildArwing` ~1 s (5 uncached 1024² canvas textures incl. a Sobel normal bake),
+`buildEnemyCraft` ~118 ms each (ConvexGeometry + merge per craft), `makeNoiseTexture`
+512² ~116 ms, world chunk `stepBuild` slices ~118 ms.
+
+## Root causes found & fixed
+
+1. **Light-census recompile storms** — toggling a *counted* light (visible && mounted
+   ancestors) changes `numPointLights` in every material's program cacheKey → every lit
+   material recompiled on intro shot cuts. Fix: hoist the hangar/Great-Fox/Arwing-engine
+   lights to scene level, keep `visible`, gate `intensity` only
+   (`cinematics/index.js` `trackedLights`, hosts = `[hangar, greatFox, ...arwings]`).
+
+2. **`warmRender` never drew hidden GROUPS** — it forced `visible`/`frustumCulled` on
+   drawables only; `projectObject` prunes at an invisible *ancestor*, so the whole
+   hangar set, parked enemy-craft pool (`g.visible=false`), vfx groups etc. were never
+   warmed — their first reveal compiled 4-65 programs mid-play. Fix: force
+   `visible=true` on **every** object in the subtree during the warm render.
+
+3. **`compileScene` compiled variants the composer never uses** — `renderer.compile()`
+   keys programs on the *bound* render target: at `null` it builds srgb+ACES screen
+   variants, but the game's EffectComposer RenderPass draws RT-bound
+   (srgb-linear + NoToneMapping). Both paths now compile the RT variant
+   (`warmup.js`: `compileScene` binds a tiny RT during compileAsync). Side effect:
+   dead screen-variant programs no longer double every material's compile cost
+   (live program count 150 -> ~90).
+
+4. **Warm builds touched the LIVE scene** — lazy pool growth (`ExplosionPool`,
+   `SpritePool`, craft pools) added counted lights/meshes to the real scene per warm
+   step. Fix: `rail.js` `buildCtx = { ...ctx, scene: stage }` — all builders write into
+   the parked invisible group; pool constructors are `{lazy}` + `grow(n)`; all
+   removals use `removeFromParent()` since activate() reparents.
+
+5. **Monolithic warm steps** — split/cached: enemy-kit geometry module cache
+   (`craft.js kitCache`, `disposeCraft` skips `sharedGeo`), arwing texture module cache
+   (`arwing.js arwingTextures`, shared textures no longer disposed per-instance),
+   `noise.js` memoized `makeNoiseTexture`/`makeWaterNormalTexture`, world
+   `stepBuild` tracks `stepName` for slow-step attribution, props `flush()` dirty-flagged
+   instead of recomputing pool hi-maps every frame.
+
+6. **Bug found by the trace**: `boss/fx.js` `Beam._aim` used bare `new THREE.Vector3()`
+   where `THREE` is only a constructor param — crashed the boss stage mid-fight.
+   Fixed to `this.THREE`.
+
+## After (shots/trace.json, 1041 frames, full campaign, SwiftShader)
+
+| stage | median cpu ms | p95 | worst | late compiles (>10f in) | note |
+|---|---|---|---|---|---|
+| title   | 1.2 | 5.3 | 3079* | 0 | *boot compile (frame 0) |
+| intro   | 2.9 | 8.8 | 14    | **0** | was: +28 late progs, multi-hundred-ms cut hitches |
+| rail    | 3.9 | 9.8 | 2987* | **0** | *transition build under fade; was +33 mid-play |
+| boss    | 1.9 | 4.6 | 990*  | **0** | was +65 mid-fight |
+| space   | 1.5 | 3.7 | 9.7   | **0** | was +57 mid-play |
+| onfoot  | 2.4 | 5.1 | 21    | 1   | one MeshDepthMaterial ~26 s in (shadow-frustum edge, ~30-40 ms real HW) |
+| complete| 1.5 | 4.2 | 258*  | 0   | *transition |
+
+All program compiles now land inside `stage:*` / `warm:compile` transition frames —
+under the black fade, zero in gameplay. Mid-play frames stay under ~15 ms CPU on
+SwiftShader (~2-4 ms on real hardware). Heap churn 349 -> 278 KB/frame median.
+
+## Residual / open
+
+- The `stage:*` transition frames (rail ~3.0 s, onfoot ~2.7 s, boss ~0.9 s,
+  space ~1.2 s — all SwiftShader) contain the deferred build + compile + warm render;
+  under the fade. On real HW these are ~50-200 ms — inside a 550 ms fade. A `begin`
+  prebuild hook for boss/space/onfoot (rail has one) would shave them further.
+- onfoot: 1 late `MeshDepthMaterial` — a caster entering the spot-shadow frustum that
+  wasn't inside it during warm (depth variants compile per-shadow-frustum coverage).
+- `warm:step` slices during cinematics are 5-10 ms on SwiftShader (~1-3 ms real) —
+  intentional amortized rail-build cost, well under the 33 ms floor.
+- ~280 KB/frame of remaining GC churn (particle vectors, pools) — visible as occasional
+  ~5 ms spikes here, likely sub-ms on real HW. Watch the sawtooth on a real GPU profile.

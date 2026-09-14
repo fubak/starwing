@@ -27,6 +27,20 @@ function grainDirt(g, W, H, n, a = 0.05) {
   }
 }
 
+// Module-level texture cache: all Arwings share identical skin canvases.
+let _arwingTex = null;
+export function arwingTextures() {
+  if (_arwingTex) return _arwingTex;
+  _arwingTex = {
+    hull: hullTexture(),
+    rough: hullRoughnessTexture(),
+    wing: wingTexture(),
+    hullNrm: normalFromHeight(hullHeightCanvas(), 2.2),
+    wingNrm: normalFromHeight(wingHeightCanvas(), 2.2),
+  };
+  return _arwingTex;
+}
+
 /** Sobel a greyscale height canvas into a tangent-space normal map. */
 function normalFromHeight(hc, strength = 2.0) {
   const W = hc.width, H = hc.height;
@@ -476,11 +490,12 @@ export function buildArwing(opts = {}) {
   group.add(rig);
   const envMap = opts.envMap ?? null;
 
-  const hullTex = hullTexture();
-  const roughTex = hullRoughnessTexture();
-  const wingTex = wingTexture();
-  const hullNrm = normalFromHeight(hullHeightCanvas(), 2.2);
-  const wingNrm = normalFromHeight(wingHeightCanvas(), 2.2);
+  // The five procedural textures are deterministic (seeded rng) and shared by
+  // every Arwing instance — memoise them, otherwise each build burns ~a second
+  // of canvas raster + Sobel normal-mapping (the 1024^2 hull pass is the
+  // biggest single construction cost in the whole game).
+  const T = arwingTextures();
+  const hullTex = T.hull, roughTex = T.rough, wingTex = T.wing, hullNrm = T.hullNrm, wingNrm = T.wingNrm;
 
   // Painted metal under a clear-coat: low-ish base roughness so the key light forms
   // a real highlight, panel grooves in the normal map so seams catch specular, and
@@ -789,7 +804,8 @@ export function buildArwing(opts = {}) {
     materials: { matHull, matWing, matBlue, matGrey, matDark, matRed, matCanopy },
     dispose() {
       group.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose()); else o.material.dispose(); } });
-      hullTex.dispose(); roughTex.dispose(); wingTex.dispose(); hullNrm.dispose(); wingNrm.dispose();
+      // the five skin textures are the shared module cache (arwingTextures) —
+      // leave them alive for the next Arwing instance.
     },
   };
 }

@@ -52,7 +52,8 @@ export class Input {
 
   update(dt, t) {
     const prev = this.held;
-    const held = new Set();
+    const held = this._heldSwap ?? (this._heldSwap = new Set());
+    held.clear();
     let x = 0, y = 0;
 
     if (this.autoplay && this.script) {
@@ -85,8 +86,11 @@ export class Input {
     this.axes.x = Math.max(-1, Math.min(1, x));
     this.axes.y = Math.max(-1, Math.min(1, y));
     this.held = held;
-    this.pressed = new Set([...held].filter((b) => !prev.has(b)));
-    this.released = new Set([...prev].filter((b) => !held.has(b)));
+    this._heldSwap = prev;
+    // pressed/released: diff into the persistent sets (no per-frame allocations)
+    this.pressed.clear(); this.released.clear();
+    for (const b of held) if (!prev.has(b)) this.pressed.add(b);
+    for (const b of prev) if (!held.has(b)) this.released.add(b);
   }
 
   endFrame() {}

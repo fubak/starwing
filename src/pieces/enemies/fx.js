@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { glowSpriteTexture } from './craft.js';
 
-const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _v = new THREE.Vector3();
+const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _v = new THREE.Vector3(), _e = new THREE.Euler();
 const UP = new THREE.Vector3(0, 1, 0);
 
 // ---------------------------------------------------------------- bolts
@@ -16,7 +16,8 @@ export class BoltPool {
    */
   constructor(scene, { color, core = 0xffffff, max = 48, length = 5, radius = 0.28 }) {
     this.max = max; this.scene = scene;
-    this.bolts = []; // {p, v, life, owner}
+    this.bolts = []; // live {p, v, life, owner} — slots are pooled, never allocated per shot
+    this.free = [];  for (let i = 0; i < max; i++) this.free.push({ p: new THREE.Vector3(), v: new THREE.Vector3(), prev: new THREE.Vector3(), life: 0, owner: null });
     // crisp bolt: a long thin needle of white-hot core, a slim coloured sheath that fades to a tail
     const halo = new THREE.CylinderGeometry(radius * 0.55, radius, length, 8, 1, true); halo.rotateX(Math.PI / 2);
     const cr = new THREE.CylinderGeometry(radius * 0.22, radius * 0.4, length * 0.9, 6, 1, true); cr.rotateX(Math.PI / 2);
@@ -27,19 +28,23 @@ export class BoltPool {
     scene.add(this.halo, this.core);
     // muzzle glow sprite material
     this.flashMat = new THREE.SpriteMaterial({ map: glowSpriteTexture(), color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true });
-    this.flashes = [];
+    // muzzle flashes: pooled sprites (a `new THREE.Sprite` per shot was pure GC churn)
+    this.flashes = []; this.flashFree = [];
+    for (let i = 0; i < 14; i++) { const sp = new THREE.Sprite(this.flashMat); sp.visible = false; sp.userData.t = 0; scene.add(sp); this.flashFree.push(sp); }
   }
   fire(origin, dir, speed, owner = null) {
-    if (this.bolts.length >= this.max) this.bolts.shift();
-    this.bolts.push({ p: origin.clone(), v: dir.clone().normalize().multiplyScalar(speed), life: 2.6, owner, prev: origin.clone() });
-    const sp = new THREE.Sprite(this.flashMat); sp.position.copy(origin); sp.scale.setScalar(3.5); sp.userData.t = 0;
-    this.scene.add(sp); this.flashes.push(sp);
+    let b = this.free.pop();
+    if (!b) { b = this.bolts.shift(); }            // at cap: steal the oldest slot
+    b.p.copy(origin); b.prev.copy(origin); b.v.copy(dir).normalize().multiplyScalar(speed); b.life = 2.6; b.owner = owner;
+    this.bolts.push(b);
+    const sp = this.flashFree.pop();
+    if (sp) { sp.visible = true; sp.position.copy(origin); sp.scale.setScalar(3.5); sp.userData.t = 0; this.flashes.push(sp); }
   }
   update(dt) {
     const list = this.bolts;
     for (let i = list.length - 1; i >= 0; i--) {
       const b = list[i]; b.prev.copy(b.p); b.p.addScaledVector(b.v, dt); b.life -= dt;
-      if (b.life <= 0) list.splice(i, 1);
+      if (b.life <= 0) { list.splice(i, 1); this.free.push(b); }
     }
     for (let i = 0; i < list.length; i++) {
       const b = list[i];
@@ -51,12 +56,14 @@ export class BoltPool {
     this.halo.instanceMatrix.needsUpdate = this.core.instanceMatrix.needsUpdate = true;
     for (let i = this.flashes.length - 1; i >= 0; i--) {
       const f = this.flashes[i]; f.userData.t += dt * 9; f.scale.setScalar(3.5 * (1 - f.userData.t) + 0.01);
-      if (f.userData.t >= 1) { this.scene.remove(f); this.flashes.splice(i, 1); }
+      if (f.userData.t >= 1) { f.visible = false; this.flashes.splice(i, 1); this.flashFree.push(f); }
     }
   }
-  remove(b) { const i = this.bolts.indexOf(b); if (i >= 0) this.bolts.splice(i, 1); }
+  remove(b) { const i = this.bolts.indexOf(b); if (i >= 0) { this.bolts.splice(i, 1); this.free.push(b); } }
   dispose() {
-    this.scene.remove(this.halo, this.core); this.flashes.forEach((f) => this.scene.remove(f));
+    // removeFromParent: warm builds mount pools under a parked group that is
+    // reparented on activate, so `this.scene` may not be the current parent.
+    this.halo.removeFromParent(); this.core.removeFromParent(); this.flashes.forEach((f) => f.removeFromParent()); this.flashFree.forEach((f) => f.removeFromParent());
     this.halo.geometry.dispose(); this.halo.material.dispose(); this.core.geometry.dispose(); this.core.material.dispose(); this.flashMat.dispose();
   }
 }
@@ -136,11 +143,14 @@ class Explosion {
     this.vel = new Float32Array(N * 3);
     this.group.add(this.fire, this.core, this.flash, this.ring, this.shards, this.sparks);
     scene.add(this.group);
-    this.light = new THREE.PointLight(0xffa050, 0, 90, 1.6); this.group.add(this.light);
+    // The light lives at scene level, always visible with intensity 0 while idle.
+    // A light inside a visibility-toggled group changes the scene light count
+    // mid-play -> every lit material recompiles a new program variant (hitch).
+    this.light = new THREE.PointLight(0xffa050, 0, 90, 1.6); scene.add(this.light);
   }
   spawn(p, size = 1, seed = 0) {
     this.active = true; this.t = 0; this.size = size;
-    this.group.visible = true; this.group.position.copy(p);
+    this.group.visible = true; this.group.position.copy(p); this.light.position.copy(p);
     this.fire.material.uniforms.uSeed.value = seed;
     this.fire.rotation.set(Math.random() * 6, Math.random() * 6, 0);
     const pa = this.sparks.geometry.attributes.position.array, ca = this.sparks.geometry.attributes.color.array;
@@ -162,7 +172,7 @@ class Explosion {
   update(dt, camera) {
     if (!this.active) return;
     this.t += dt; const u = this.t / this.dur, S = this.size;
-    if (u >= 1) { this.active = false; this.group.visible = false; return; }
+    if (u >= 1) { this.active = false; this.group.visible = false; this.light.intensity = 0; return; }
     // fireball: fast pop with overshoot, then slow expansion while it erodes
     const pop = 1 - Math.pow(1 - Math.min(u * 2.6, 1), 3);
     const over = 1 + 0.18 * Math.sin(Math.min(u * 2.6, 1) * Math.PI);
@@ -188,7 +198,7 @@ class Explosion {
       this.shardV[i * 3 + 1] -= 22 * dt;
       this.shardP[i * 3] += this.shardV[i * 3] * dt; this.shardP[i * 3 + 1] += this.shardV[i * 3 + 1] * dt; this.shardP[i * 3 + 2] += this.shardV[i * 3 + 2] * dt;
       this.shardR[i * 3] += dt * 9; this.shardR[i * 3 + 1] += dt * 6;
-      _q.setFromEuler(new THREE.Euler(this.shardR[i * 3], this.shardR[i * 3 + 1], this.shardR[i * 3 + 2]));
+      _q.setFromEuler(_e.set(this.shardR[i * 3], this.shardR[i * 3 + 1], this.shardR[i * 3 + 2]));
       const sc = this.shardS[i] * (1 - u * 0.6);
       _m.compose(_v.set(this.shardP[i * 3], this.shardP[i * 3 + 1], this.shardP[i * 3 + 2]), _q, _s.set(sc, sc, sc * 2.2));
       this.shards.setMatrixAt(i, _m);
@@ -206,7 +216,7 @@ class Explosion {
     this.light.intensity = 260 * S * fl + 90 * S * heat;
   }
   dispose() {
-    this.scene.remove(this.group);
+    this.group.removeFromParent(); this.light.removeFromParent();
     this.fire.geometry.dispose(); this.fire.material.dispose(); this.flash.material.dispose(); this.core.geometry.dispose(); this.core.material.dispose();
     this.ring.geometry.dispose(); this.ring.material.dispose(); this.sparks.geometry.dispose(); this.sparks.material.dispose();
     this.shards.geometry.dispose(); this.shards.material.dispose();
@@ -214,8 +224,11 @@ class Explosion {
 }
 
 export class ExplosionPool {
-  constructor(scene, n = 8) { this.items = Array.from({ length: n }, () => new Explosion(scene)); this.i = 0; }
-  spawn(p, size = 1) { const e = this.items[this.i++ % this.items.length]; e.spawn(p, size, Math.random() * 10); return e; }
+  /** `lazy: true` defers construction: grow() materialises `n` items per call so
+   *  a warm build can spread the ~8 Explosion rigs across frames. */
+  constructor(scene, n = 8, { lazy = false } = {}) { this.scene = scene; this.items = []; this.i = 0; if (!lazy) this.grow(n); }
+  grow(n = 1) { for (let i = 0; i < n; i++) this.items.push(new Explosion(this.scene)); }
+  spawn(p, size = 1) { if (!this.items.length) this.grow(1); const e = this.items[this.i++ % this.items.length]; e.spawn(p, size, Math.random() * 10); return e; }
   update(dt, cam) { for (const e of this.items) e.update(dt, cam); }
   dispose() { this.items.forEach((e) => e.dispose()); }
 }
@@ -225,7 +238,8 @@ const _c = new THREE.Vector3(), _d = new THREE.Vector3(), _w = new THREE.Vector3
 export class Trail {
   /** Camera-facing ribbon behind a moving point. push(worldPos) each frame, update(camera). */
   constructor(scene, color, { n = 12, width = 0.55, opacity = 0.75 } = {}) {
-    this.n = n; this.width = width; this.pts = []; this.scene = scene;
+    // pts is a preallocated ring of Vector3 — push() rotates slots, never allocates
+    this.n = n; this.width = width; this.pts = []; for (let i = 0; i < n; i++) this.pts.push(new THREE.Vector3()); this.live = 0; this.scene = scene;
     const g = new THREE.BufferGeometry();
     this.pos = new Float32Array(n * 2 * 3); this.alpha = new Float32Array(n * 2);
     g.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
@@ -242,23 +256,23 @@ export class Trail {
     this.mesh.frustumCulled = false; this.mesh.visible = false;
     scene.add(this.mesh);
   }
-  reset() { this.pts.length = 0; this.mesh.visible = false; }
+  reset() { this.live = 0; this.mesh.visible = false; }
   push(p) {
-    if (this.pts.length >= this.n) this.pts.pop();
-    this.pts.unshift(p.clone());
+    const last = this.pts.pop(); last.copy(p); this.pts.unshift(last);   // O(1), no alloc
+    if (this.live < this.n) this.live++;
   }
   update(camera, boost = 1) {
-    const P = this.pts; if (P.length < 2) { this.mesh.visible = false; return; }
+    const P = this.pts; if (this.live < 2) { this.mesh.visible = false; return; }
     this.mesh.visible = true;
-    const n = this.n;
+    const n = this.n, plen = this.live;
     for (let i = 0; i < n; i++) {
-      const k = Math.min(i, P.length - 1), p = P[k];
-      const q = P[Math.min(k + 1, P.length - 1)], r = P[Math.max(k - 1, 0)];
+      const k = Math.min(i, plen - 1), p = P[k];
+      const q = P[Math.min(k + 1, plen - 1)], r = P[Math.max(k - 1, 0)];
       _d.copy(r).sub(q); if (_d.lengthSq() < 1e-6) _d.set(0, 0, 1);
       _c.copy(camera.position).sub(p);
       _w.crossVectors(_d, _c).normalize();
       const u = i / (n - 1), w = this.width * boost * (1 - u) * (0.4 + 0.6 * Math.min(1, i * 0.5));
-      const a = (1 - u) * (k < P.length - 1 ? 1 : 0);
+      const a = (1 - u) * (k < plen - 1 ? 1 : 0);
       const o = i * 6;
       this.pos[o] = p.x + _w.x * w; this.pos[o + 1] = p.y + _w.y * w; this.pos[o + 2] = p.z + _w.z * w;
       this.pos[o + 3] = p.x - _w.x * w; this.pos[o + 4] = p.y - _w.y * w; this.pos[o + 5] = p.z - _w.z * w;
@@ -267,7 +281,7 @@ export class Trail {
     this.mesh.geometry.attributes.position.needsUpdate = true;
     this.mesh.geometry.attributes.aA.needsUpdate = true;
   }
-  dispose() { this.scene.remove(this.mesh); this.mesh.geometry.dispose(); this.mesh.material.dispose(); }
+  dispose() { this.mesh.removeFromParent(); this.mesh.geometry.dispose(); this.mesh.material.dispose(); }
 }
 
 // ---------------------------------------------------------------- smoke / hit sparks (sprite pool)
@@ -292,18 +306,24 @@ export function smokeTexture() {
 }
 
 export class SpritePool {
-  constructor(scene, n = 120) {
+  /** `lazy: true` defers the sprite construction: grow() adds `n` sprites per
+   *  call so a warm build can spread the pool across frames. */
+  constructor(scene, n = 120, { lazy = false } = {}) {
     this.scene = scene; this.items = [];
     this.glowTex = glowSpriteTexture(); this.smokeTex = smokeTexture();
+    if (!lazy) this.grow(n);
+    this.i = 0;
+  }
+  grow(n = 1) {
     for (let i = 0; i < n; i++) {
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glowTex, transparent: true, depthWrite: false, opacity: 0 }));
       sp.visible = false; sp.userData = { life: 0, dur: 1, vel: new THREE.Vector3(), grow: 0, s0: 1, a0: 1, additive: false, delay: 0, rot: 0 };
-      scene.add(sp); this.items.push(sp);
+      this.scene.add(sp); this.items.push(sp);
     }
-    this.i = 0;
   }
   /** emit({p, vel, size, grow, dur, color, additive, opacity, smoke, delay}) */
   emit({ p, vel, size = 1, grow = 1.5, dur = 1, color = 0x222222, additive = false, opacity = 0.6, smoke = false, delay = 0 }) {
+    if (!this.items.length) this.grow(1);
     const sp = this.items[this.i++ % this.items.length];
     sp.visible = true; sp.position.copy(p); sp.scale.setScalar(delay > 0 ? 0.001 : size);
     const d = sp.userData; d.life = -delay; d.dur = dur; d.vel.copy(vel); d.grow = grow; d.s0 = size; d.a0 = opacity;
@@ -327,5 +347,5 @@ export class SpritePool {
       sp.material.opacity = d.a0 * (1 - u) * (1 - u);
     }
   }
-  dispose() { this.items.forEach((s) => { this.scene.remove(s); s.material.dispose(); }); }
+  dispose() { this.items.forEach((s) => { s.removeFromParent(); s.material.dispose(); }); }
 }

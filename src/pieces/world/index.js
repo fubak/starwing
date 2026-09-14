@@ -110,34 +110,50 @@ export function beginWorld(ctx, opts = {}) {
   let sky = null, mountains = null, water = null, clouds = null, motes = null;
 
   const steps = [
-    () => { sky = createSky(); if (opts.sky !== false) statics.add(sky.mesh); },
-    () => { mountains = createMountains(rng); statics.add(mountains); },
+    () => { stepName = 'sky'; sky = createSky(); if (opts.sky !== false) statics.add(sky.mesh); },
+    () => { stepName = 'mountains'; mountains = createMountains(rng); statics.add(mountains); },
     () => {
+      stepName = 'water';
       water = createWater({ width: rw, height: rh });
       water.uniforms.uReflOn.value = useReflection ? 1 : 0;
       water.uniforms.uFogDensity.value = FOG_DENSITY;
       statics.add(water.mesh);
     },
     () => {
+      stepName = 'clouds+motes';
       clouds = createClouds(rng);
       clouds.uniforms.uFogDensity.value = FOG_DENSITY * 0.8;
       motes = createMotes(rng);
       statics.add(clouds.mesh, motes.mesh);
     },
-  ];
+  ];   // (chunk steps are appended below — one TerrainChunk per two step entries)
+  // Each chunk is built incrementally: startBuild, then ~6 vertex rows or one
+  // prop slice per step() — a full chunk's noise+colour pass used to cost
+  // hundreds of ms on a single frame.
+  let chunkCur = null;   // { c, idx, st } — the chunk being built by steps
+  let stepName = '';
   for (let i = 0; i < NUM_CHUNKS; i++) {
     const idx = i - 1;
     steps.push(() => {
+      stepName = `chunk#${idx}:create`;
       const c = new TerrainChunk(terrainMat);
-      c.build(idx, schedule, rng);   // one chunk behind the start so the ground under the camera exists
-      props.populate(idx, schedule);
+      c.startBuild(idx, schedule, rng);   // one chunk behind the start so the ground under the camera exists
       chunks.push(c); group.add(c.mesh);
+      chunkCur = { c, idx, st: null };
+    });
+    steps.push(() => {
+      const bc = chunkCur;
+      stepName = `chunk#${bc.idx}:${bc.st ? 'props' : `rows${bc.c._brow ?? 0}`}`;
+      if (!bc.st) { if (bc.c.stepBuild(3)) bc.st = props.beginPopulate(bc.idx, schedule); return 'again'; }
+      if (!props.populateNext(bc.st)) return 'again';
+      chunkCur = null;
     });
   }
-  steps.push(() => { props.flush(); });
+  steps.push(() => { stepName = 'props-flush'; props.flush(); });
 
   let stepI = 0;
   let nextIndex = NUM_CHUNKS - 2;
+  const recycling = [];              // in-flight chunk rebuilds: { c, idx, st|null }
   let dist = 0, time = 0, reflFresh = false;
   const camPos = new THREE.Vector3();
   // deferred builds re-capture at install() — while warming, the live stage's
@@ -146,10 +162,10 @@ export function beginWorld(ctx, opts = {}) {
   let reflTick = 0;
   const doReflection = () => {
     if (!useReflection || !water) return;
-    // Reflection runs at third frame rate: the 640x360 mirror is heavily ripple-distorted
-    // so two frames of lag are invisible, and this cuts the mirrored scene's draw calls
-    // (the mirror pass is also what re-renders the shadow maps, so they update at 20 Hz).
-    if (reflTick++ % 3) { reflFresh = true; return; }
+    // Reflection runs at quarter frame rate: the 640x360 mirror is heavily ripple-distorted
+    // so the lag is invisible, and this quarters the mirrored scene's draw calls
+    // (the mirror pass is also what re-renders the shadow maps, so they update at 15 Hz).
+    if (reflTick++ % 4) { reflFresh = true; return; }
     water.renderReflection(renderer, scene, camera, [motes.mesh]);
     reflFresh = true;
   };
@@ -184,15 +200,22 @@ export function beginWorld(ctx, opts = {}) {
       reflFresh = false;
       time += dt; dist += speed * dt;
       group.position.z = dist;
-      // recycle chunks that fell behind the camera
+      // recycle chunks that fell behind the camera. The rebuild is spread across
+      // frames: ~6 vertex rows or one prop slice per update, so the periodic
+      // resurface never lands on one frame (it used to be a ~10-40 ms hitch).
       for (const c of chunks) {
         const farEdge = (c.index + 1) * CHUNK;
-        if (farEdge < dist - CHUNK * 1.2) {
+        if (farEdge < dist - CHUNK * 1.2 && !recycling.some((r) => r.c === c)) {
           props.release(c.index);
           nextIndex++;
-          c.build(nextIndex, schedule, rng);
-          props.populate(nextIndex, schedule);
+          c.startBuild(nextIndex, schedule, rng);
+          recycling.push({ c, idx: nextIndex, st: null });
         }
+      }
+      if (recycling.length) {
+        const r = recycling[0];
+        if (!r.st) { if (r.c.stepBuild(4)) r.st = props.beginPopulate(r.idx, schedule); }
+        else if (props.populateNext(r.st)) recycling.shift();
       }
       props.flush();
       // backdrop follows the camera
@@ -232,9 +255,10 @@ export function beginWorld(ctx, opts = {}) {
   return {
     world,
     get done() { return stepI >= steps.length; },
-    /** Build one unit (a backdrop or one terrain chunk + props). Returns done. */
-    step() { if (stepI < steps.length) steps[stepI++](); if (this.done && typeof window !== 'undefined') window.__world = world; return this.done; },
+    /** Build one unit (a backdrop, or one terrain slice / prop slice). Returns done. */
+    step() { if (stepI < steps.length) { if (steps[stepI]() !== 'again') stepI++; } if (this.done && typeof window !== 'undefined') window.__world = world; return this.done; },
     get remaining() { return steps.length - stepI; },
+    get stepName() { return stepName || 'init'; },
   };
 }
 

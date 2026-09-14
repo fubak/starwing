@@ -91,6 +91,11 @@ export function beginRail(ctx, game, hudMod) {
   // (visible=false) until activate() reparents it, so a warm build during the
   // previous stage renders nothing and costs no draw calls.
   const stage = new THREE.Group(); stage.name = 'rail-warm'; stage.visible = false;
+  // Warm-built content must NEVER enter the live scene: a pooled light landing
+  // under a visible parent changes the scene light census for one frame, which
+  // recompiles every lit material mid-cinematic (the intro's compile storms).
+  // buildCtx hands every builder the parked group as its "scene".
+  const buildCtx = { ...ctx, scene: stage };
   const preOwned = new Set(scene.children);
   const sweep = () => { for (const o of scene.children.slice()) if (!preOwned.has(o)) { preOwned.add(o); stage.add(o); } };
 
@@ -100,6 +105,7 @@ export function beginRail(ctx, game, hudMod) {
   let keyLight = null, rimLight = null, underLight = null, boostLight = null;
   let em = null, vfx = null, trail = null, wingL = null, wingR = null, hud = null;
 
+  const STEP_NAMES = ['look', 'world-init', 'world', 'ship', 'enemies', 'enemy-pool', 'sweep', 'vfx', 'hud'];
   const S = {
     x: 0, y: 4, vx: 0, vy: 0, pitch: 0, yaw: 0, bank: 0,
     speed: CRUISE, boost: 0, brake: 0, gauge: 1,
@@ -112,6 +118,7 @@ export function beginRail(ctx, game, hudMod) {
   const camPos = new THREE.Vector3(0, 7, 12), camLook = new THREE.Vector3(0, 3, -60);
   const shipWorld = new THREE.Vector3(), aimDir = new THREE.Vector3(0, 0, -1), muzzleW = new THREE.Vector3();
   const offs = [];
+  const radarBlips = [];
   let timeline = null, evt = 0;
 
   function hitTest(b) {
@@ -164,9 +171,14 @@ export function beginRail(ctx, game, hudMod) {
       stage.add(keyLight, keyLight.target, rimLight, rimLight.target, underLight, underLight.target);
       boostLight = new THREE.PointLight(0x5a9cff, 0, 26, 2); boostLight.position.set(0, 0, 6); arwing.rig.add(boostLight);
     },
-    () => { player = new THREE.Object3D(); stage.add(player); em = createEnemyManager(ctx, player); sweep(); },
+    () => { player = new THREE.Object3D(); stage.add(player); em = createEnemyManager(buildCtx, player); sweep(); },
+    // enemy craft pool: one craft (+ engine trails) per step — ConvexGeometry +
+    // merged hulls are too heavy for a single frame, and mid-play they must
+    // never be built at all (spawnWave borrows from the pool)
+    () => (em.prewarmStep() ? undefined : 'again'),
+    () => sweep(),
     () => {
-      vfx = createVfx(ctx, { hitTest });
+      vfx = createVfx(buildCtx, { hitTest });
       vfx.setSun(SUN_DIR);
       trail = vfx.trail({ color: VFX.boost, hot: VFX.boostHot, width: 0.7, segments: 30, spacing: 0.035 });
       wingL = vfx.trail({ color: new THREE.Color(0.35, 0.8, 1.0), width: 0.16, segments: 22, spacing: 0.035 });
@@ -376,8 +388,15 @@ export function beginRail(ctx, game, hudMod) {
     wingL.update(dt, arwing.rig.localToWorld(tmp.set(-2.75, -0.6, 1.3)), fwd, S.boost * 0.9 + Math.abs(S.bank) * 0.25);
     wingR.update(dt, arwing.rig.localToWorld(tmp.set(2.75, -0.6, 1.3)), fwd, S.boost * 0.9 + Math.abs(S.bank) * 0.25);
 
-    // --- radar + zone card
-    hud.setRadar(em.list.filter((e) => e.state === 'fly').map((e) => ({ x: clamp((e.pos.x - shipWorld.x) / 160, -1, 1), y: clamp(-(e.pos.z - 60) / 260, -1, 1), kind: e.kind === 'mantis' ? 'boss' : 'enemy' })));
+    // --- radar + zone card (blip objects are reused — no per-frame alloc)
+    let nb = 0;
+    for (const e of em.list) {
+      if (e.state !== 'fly') continue;
+      const b = radarBlips[nb] ?? (radarBlips[nb] = { x: 0, y: 0, kind: 'enemy' });
+      b.x = clamp((e.pos.x - shipWorld.x) / 160, -1, 1); b.y = clamp(-(e.pos.z - 60) / 260, -1, 1); b.kind = e.kind === 'mantis' ? 'boss' : 'enemy';
+      nb++;
+    }
+    radarBlips.length = nb; hud.setRadar(radarBlips);
     const zn = world.zoneName();
     if (zn !== zone) { if (zone) { overlay.caption('CORNERIA', zn.toUpperCase(), 'SECTOR ' + (zn === 'city' ? '2' : zn === 'canyon' ? '3' : zn === 'ocean' ? '4' : '1'), 2.4); } zone = zn; }
 
@@ -436,6 +455,7 @@ export function beginRail(ctx, game, hudMod) {
   return {
     get done() { return stepI >= steps.length; },
     get remaining() { return Math.max(0, steps.length - stepI); },
+    get stepName() { const n = STEP_NAMES[Math.min(stepI, STEP_NAMES.length - 1)] ?? '?'; return stepI === 2 && wb ? `world:${wb.stepName}` : n; },
     /** Build one unit; 'again' steps (world chunks) repeat until that unit finishes. */
     step() { if (stepI >= steps.length) return true; if (steps[stepI]() !== 'again') stepI++; return this.done; },
     activate, abort,

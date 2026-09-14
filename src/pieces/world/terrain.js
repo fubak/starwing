@@ -204,17 +204,30 @@ export class TerrainChunk {
     this.index = -1;
   }
 
-  /** Build for chunk index i: covers travel distance [i*L, (i+1)*L]. Placed at z = -(i*L + L/2). */
-  build(i, schedule, rng) {
+  /**
+   * Begin an (incremental) build for chunk index i: covers travel distance
+   * [i*L, (i+1)*L]. Call stepBuild() until it returns true, then the chunk is
+   * committed (attributes flagged, bounds computed, mesh placed at
+   * z = -(i*L + L/2)). Splitting the ~1.8k-vertex noise + colour pass into row
+   * slices keeps chunk recycling (and warm prebuilds) below a millisecond.
+   */
+  startBuild(i, schedule, rng) {
     this.index = i;
-    const d0 = i * CHUNK;
+    this._bd0 = i * CHUNK; this._bs = schedule; this._brow = 0;
+  }
+
+  /** Build `rows` more vertex rows; returns true once the chunk is committed. */
+  stepBuild(rows = 6) {
+    const i = this.index, schedule = this._bs;
+    const d0 = this._bd0;
     const pos = this.geometry.attributes.position;
     const col = this.geometry.attributes.color;
     const nor = this.geometry.attributes.normal;
-    const p = {};
+    const p = this._bp ?? (this._bp = {});
     const e = 2.0;
     const sx = this.segX + 1, sz = this.segZ + 1;
-    for (let row = 0; row < sz; row++) {
+    const end = Math.min(this._brow + rows, sz);
+    for (let row = this._brow; row < end; row++) {
       // rows go from -z (row 0, far edge, d = d0+L) to +z (near edge, d = d0); keeps winding up-facing
       const lz = -CHUNK / 2 + (row / this.segZ) * CHUNK;
       const d = d0 + (CHUNK / 2 - lz);
@@ -281,8 +294,14 @@ export class TerrainChunk {
         col.setXYZ(vi, tmp.r, tmp.g, tmp.b);
       }
     }
+    this._brow = end;
+    if (end < sz) return false;
     pos.needsUpdate = true; col.needsUpdate = true; nor.needsUpdate = true;
     this.geometry.computeBoundingSphere();
     this.mesh.position.set(0, 0, -(d0 + CHUNK / 2));
+    return true;
   }
+
+  /** Whole-chunk build (synchronous path / harness). */
+  build(i, schedule, rng) { this.startBuild(i, schedule, rng); this.stepBuild(1e9); }
 }

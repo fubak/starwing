@@ -18,10 +18,11 @@
 import * as THREE from 'three';
 import { buildEnemyCraft, disposeCraft, CRAFT_KINDS, CRAFT_SCALE } from './craft.js';
 import { BoltPool, ExplosionPool, SpritePool, Trail } from './fx.js';
+import { trace } from '../../core/trace.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _t = new THREE.Vector3(), _r = new THREE.Vector3(), _u = new THREE.Vector3(), _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _m = new THREE.Matrix4(), _e = new THREE.Euler();
-const _a = new THREE.Vector3(), _b = new THREE.Vector3();
+const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _vel = new THREE.Vector3();
 
 export const FORMATIONS = ['v', 'snake', 'circle', 'line'];
 
@@ -68,10 +69,47 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
   };
   const enemyBolts = new BoltPool(scene, { color: 0xff4a30, core: 0xfff2d0, max: 64, length: 11, radius: 0.2 });
   const playerBolts = new BoltPool(scene, { color: 0x53ff7a, core: 0xeaffee, max: 40, length: 12, radius: 0.15 });
-  const explosions = new ExplosionPool(scene, 8);
-  const sprites = new SpritePool(scene, 160);
+  const explosions = new ExplosionPool(scene, 8, { lazy: true });
+  const sprites = new SpritePool(scene, 160, { lazy: true });
   let waveId = 0, time = 0;
   const stats = { spawned: 0, kills: 0, playerHits: 0 };
+
+  // ---- craft pool -----------------------------------------------------------
+  // buildEnemyCraft does ConvexGeometry + mergeGeometries + a full material set
+  // per craft — far too expensive to run inside spawnWave during play (merged
+  // geometry is cached per kind so a pool-miss rebuild is only assembly). Every
+  // craft (and its engine trails) is prebuilt into a pool, mounted in the scene
+  // hidden, so stage warmup covers its programs/textures and spawnWave is a
+  // borrow, not a build. prewarmStep() constructs one pooled item per call so
+  // the campaign's incremental build can spread it across frames; explosion and
+  // sprite pool items interleave on the same queue.
+  const POOL_SIZES = { vulture: 12, hornet: 12, mantis: 8 };
+  const pool = {}; const prewarmQ = [];
+  for (const k of CRAFT_KINDS) { pool[k] = []; for (let i = 0; i < (POOL_SIZES[k] ?? 8); i++) prewarmQ.push(k); }
+  for (let i = 0; i < 8; i++) prewarmQ.push('boom');
+  for (let i = 0; i < 16; i++) prewarmQ.push('sprites');
+  const trailW = { mantis: 0.7, vulture: 0.75 };
+  function buildPooled(kind) {
+    const g = buildEnemyCraft(kind);
+    g.visible = false; scene.add(g);
+    const trails = g.userData.engines.map(() => new Trail(scene, g.userData.glowColor, { n: 11 }));
+    return { g, trails };
+  }
+  /** Build one pooled item per call (warm step). Returns true when the pool is full. */
+  function prewarmStep() {
+    const k = prewarmQ.pop();
+    if (k === 'boom') explosions.grow(1);
+    else if (k === 'sprites') sprites.grow(10);
+    else if (k !== undefined) pool[k].push(buildPooled(k));
+    return prewarmQ.length === 0;
+  }
+  function obtainCraft(kind) {
+    const p = pool[kind];
+    if (p && p.length) return p.pop();
+    trace.mark('em:pool-miss', kind);   // pool exhausted: building inline costs a few ms — visible in traces
+    return buildPooled(kind);
+  }
+  function freeCraft(item) { const g = item.g; g.visible = false; g.scale.set(1, 1, 1); g.quaternion.identity(); for (const m of g.userData.flashMats ?? []) { m.emissive.setRGB(0, 0, 0); m.emissiveIntensity = 0; } for (const t of item.trails) t.reset(); }
 
   function spawnWave(kind = rng.pick(FORMATIONS), o = {}) {
     if (!FORMATIONS.includes(kind)) kind = rng.pick(FORMATIONS);
@@ -88,18 +126,20 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
     // per-wave fire budget: at most fireCap*difficulty shots per second across the whole wave
     const wave = { id: waveId, kind, craft, path, n, speed, t0: time, ringR: (craft === 'mantis' ? 30 : 22) * rs, ringW: rng.sign() * 1.4, difficulty: diff, fireGap: 1 / (cfg.fireCap * diff), nextFire: time + rng.range(0.6, 1.4) };
     for (let i = 0; i < n; i++) {
-      const g = buildEnemyCraft(craft);
+      const item = obtainCraft(craft);
+      const g = item.g;
       g.userData.rs = rs;
       const slot = formationSlot(kind, i, n, time);
       const e = {
-        group: g, kind: craft, wave, slot, hp: g.userData.hp, radius: g.userData.radius * rs, rs,
+        group: g, item, kind: craft, wave, slot, hp: g.userData.hp, radius: g.userData.radius * rs, rs,
         dist: -slot.back - 3 * i, speed, state: 'fly', flash: 0, punch: 0, fireCd: rng.range(0.8, 2.4), age: 0, phase: rng.range(0, 6.28),
         vel: new THREE.Vector3(), spin: new THREE.Vector3(), dieT: 0, smokeCd: 0, pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, 1),
         scaleIn: 0,
-        trails: g.userData.engines.map(() => new Trail(scene, g.userData.glowColor, { n: 11, width: (craft === 'mantis' ? 0.7 : craft === 'vulture' ? 0.75 : 0.55) * rs, opacity: 0.38 })),
+        trails: item.trails,
       };
+      for (const t of e.trails) { t.width = (trailW[craft] ?? 0.55) * rs; t.reset(); }
       g.visible = false;
-      scene.add(g); list.push(e); stats.spawned++;
+      list.push(e); stats.spawned++;
     }
     events?.emit('enemy:spawn', { wave: kind, craft, count: n });
     return wave;
@@ -182,8 +222,8 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
   function damage(e, n = 1, hitPos = e.pos) {
     if (e.state !== 'fly') return false;
     e.hp -= n; e.flash = 1; e.punch = 1;
-    for (let i = 0; i < 8; i++) sprites.emit({ p: hitPos, vel: new THREE.Vector3(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).multiplyScalar(26), size: 1.6, grow: -0.6, dur: 0.35, color: 0xfff0a0, additive: true, opacity: 1 });
-    sprites.emit({ p: hitPos, vel: new THREE.Vector3(), size: 5, grow: 1.2, dur: 0.18, color: 0xffffff, additive: true, opacity: 0.9 });
+    for (let i = 0; i < 8; i++) sprites.emit({ p: hitPos, vel: _vel.set(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).multiplyScalar(26), size: 1.6, grow: -0.6, dur: 0.35, color: 0xfff0a0, additive: true, opacity: 1 });
+    sprites.emit({ p: hitPos, vel: _vel.set(0, 0, 0), size: 5, grow: 1.2, dur: 0.18, color: 0xffffff, additive: true, opacity: 0.9 });
     events?.emit('enemy:hit', { enemy: e, position: hitPos.clone() });
     if (e.hp <= 0) kill(e);
     return true;
@@ -191,7 +231,7 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
 
   function kill(e) {
     e.state = 'dying'; e.dieT = 0; e.dieDur = rng.range(0.7, 1.2);
-    e.vel.copy(e.fwd).multiplyScalar(e.speed * 0.6).add(new THREE.Vector3(rng.range(-10, 10), rng.range(4, 12), rng.range(-10, 10)));
+    e.vel.copy(e.fwd).multiplyScalar(e.speed * 0.6).add(_vel.set(rng.range(-10, 10), rng.range(4, 12), rng.range(-10, 10)));
     e.spin.set(rng.range(-4, 4), rng.range(-2, 2), rng.sign() * rng.range(7, 12));
     explosions.spawn(e.pos, 0.7);
     stats.kills++;
@@ -211,8 +251,8 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
     e.smokeCd -= dt;
     if (e.smokeCd <= 0) {
       e.smokeCd = 0.03;
-      sprites.emit({ p: e.pos, vel: new THREE.Vector3(rng.range(-3, 3), rng.range(0, 4), rng.range(-3, 3)), size: 4, grow: 2.5, dur: 1.1, color: 0x26242a, opacity: 0.7, smoke: true });
-      sprites.emit({ p: e.pos, vel: new THREE.Vector3(rng.range(-2, 2), rng.range(0, 2), rng.range(-2, 2)), size: 3, grow: 0.5, dur: 0.3, color: 0xff7a30, additive: true, opacity: 0.9 });
+      sprites.emit({ p: e.pos, vel: _vel.set(rng.range(-3, 3), rng.range(0, 4), rng.range(-3, 3)), size: 4, grow: 2.5, dur: 1.1, color: 0x26242a, opacity: 0.7, smoke: true });
+      sprites.emit({ p: e.pos, vel: _vel.set(rng.range(-2, 2), rng.range(0, 2), rng.range(-2, 2)), size: 3, grow: 0.5, dur: 0.3, color: 0xff7a30, additive: true, opacity: 0.9 });
     }
     // flicker glow
     setFlash(e, 0.4 + 0.6 * Math.random());
@@ -221,7 +261,7 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
       const dCam = e.pos.distanceTo(ctx.camera.position);
       const near = THREE.MathUtils.clamp((dCam - 22) / 70, 0.22, 1);
       explosions.spawn(e.pos, (e.kind === 'mantis' ? 2.4 : 1.7) * near);
-      for (let i = 0; i < 12; i++) sprites.emit({ p: e.pos, vel: new THREE.Vector3(rng.range(-1, 1), rng.range(-0.5, 1), rng.range(-1, 1)).multiplyScalar(26), size: 7 * Math.max(near, 0.5), grow: 2.2, dur: 1.8, color: 0x2a2530, opacity: 0.75, smoke: true, delay: 0.12 });
+      for (let i = 0; i < 12; i++) sprites.emit({ p: e.pos, vel: _vel.set(rng.range(-1, 1), rng.range(-0.5, 1), rng.range(-1, 1)).multiplyScalar(26), size: 7 * Math.max(near, 0.5), grow: 2.2, dur: 1.8, color: 0x2a2530, opacity: 0.75, smoke: true, delay: 0.12 });
       remove(e);
     }
   }
@@ -232,24 +272,26 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
 
   function remove(e) {
     const i = list.indexOf(e); if (i >= 0) list.splice(i, 1);
-    scene.remove(e.group); disposeCraft(e.group);
-    e.trails.forEach((t) => t.dispose());
+    if (e.item) { freeCraft(e.item); pool[e.kind]?.push(e.item); }
+    else { e.group.removeFromParent(); disposeCraft(e.group); e.trails.forEach((t) => t.dispose()); }
   }
 
   function updateBolts(dt) {
     enemyBolts.update(dt); playerBolts.update(dt);
     // enemy bolts vs player
     if (playerRef?.position) {
-      for (const b of [...enemyBolts.bolts]) {
+      for (let i = enemyBolts.bolts.length - 1; i >= 0; i--) {
+        const b = enemyBolts.bolts[i];
         if (b.p.distanceTo(playerRef.position) < cfg.playerRadius) {
           enemyBolts.remove(b); stats.playerHits++;
           events?.emit('player:hit', { position: b.p.clone() });
-          for (let i = 0; i < 8; i++) sprites.emit({ p: b.p, vel: new THREE.Vector3(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).multiplyScalar(12), size: 1.2, grow: 0.5, dur: 0.4, color: 0xff6a80, additive: true, opacity: 1 });
+          for (let i = 0; i < 8; i++) sprites.emit({ p: b.p, vel: _vel.set(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).multiplyScalar(12), size: 1.2, grow: 0.5, dur: 0.4, color: 0xff6a80, additive: true, opacity: 1 });
         }
       }
     }
     // player bolts vs enemies (swept sphere: sample along segment)
-    for (const b of [...playerBolts.bolts]) {
+    for (let i = playerBolts.bolts.length - 1; i >= 0; i--) {
+      const b = playerBolts.bolts[i];
       let hit = null, best = 1e9;
       for (const e of list) {
         if (e.state !== 'fly' || !e.group.visible) continue;
@@ -301,6 +343,8 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
 
   function dispose() {
     for (const e of [...list]) remove(e);
+    for (const k in pool) for (const it of pool[k]) { it.g.removeFromParent(); disposeCraft(it.g); it.trails.forEach((t) => t.dispose()); }
+    for (const k in pool) pool[k].length = 0;
     enemyBolts.dispose(); playerBolts.dispose(); explosions.dispose(); sprites.dispose();
   }
 
@@ -310,7 +354,7 @@ export function createEnemyManager(ctx, playerRef, opts = {}) {
   function setOrigin(v) { cfg.origin.copy(v); }
 
   return {
-    update, spawnWave, list, damage, kill, playerFire, dispose, stats, setDifficulty, setOrigin, cfg,
+    update, spawnWave, list, damage, kill, playerFire, dispose, stats, setDifficulty, setOrigin, cfg, prewarmStep,
     get difficulty() { return cfg.difficulty; }, set difficulty(v) { setDifficulty(v); },
     get radiusScale() { return cfg.radiusScale; }, set radiusScale(v) { cfg.radiusScale = v; },
     bolts: enemyBolts, playerBolts, explosions, sprites, PATHS, FORMATIONS,
