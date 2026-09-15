@@ -1,8 +1,8 @@
 {
  "started": "2026-09-06T11:14:08.452495+00:00",
- "updated": 1789439305,
+ "updated": 1789442265,
  "wave": 2,
- "phase": "polish wave 2: perf2",
+ "phase": "finished",
  "pieces": {
   "lookdev": {
    "status": "lose",
@@ -114,8 +114,6 @@
   }
  },
  "log": [
-  "12:18:14 world: builder round 1 done \u2014 WORLD piece (src/pieces/world/) \u2014 round 1, committed as 6a7a4d5.\n\nState found: partial prior work that rendered almost n",
-  "12:18:14 world: critic round 1 start",
   "12:21:15 spacesim: builder round 1 done \u2014 spacesim rewritten and committed (2cffcd3 'spacesim: round 1', files: src/pieces/spacesim/{index.js,asteroids.js,sky.js,",
   "12:21:15 spacesim: critic round 1 start",
   "12:37:16 flight: critic r1 -> starfox 5/10 \u2014 gap: The Arwing is a tiny, blown-out or silhouetted grey speck with no key/rim light, no glowing G-diffus",
@@ -313,7 +311,9 @@
   "01:47:22 === POLISH WAVE 2: art/vfx/audio, then perf ===",
   "01:47:22 art2 agent start",
   "02:28:25 art2 done \u2014 Second art/vfx/audio polish pass on STARWING, committed as beea6c9 \"polish: art/vfx/audio round 2\". Surveyed all 7 campaign stages plus the vfx/enemies/spacesim standalone pieces v",
-  "02:28:25 perf2 agent start"
+  "02:28:25 perf2 agent start",
+  "03:17:45 perf2 done \u2014 Pass 5 post-polish verification complete; the Pass-4 residual (4 mid-play programs ~22s into rail) is ELIMINATED \u2014 the full campaign trace shows 0 unmarked program compiles on any ",
+  "03:17:45 polish wave 2 done"
  ],
  "playtest": {
   "round": 3,
