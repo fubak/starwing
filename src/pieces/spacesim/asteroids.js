@@ -253,17 +253,22 @@ const ROCK_FRAG = /* glsl */ `
     float diff = smoothstep(-0.04, 0.32, ndl) * (0.55 + 0.45 * max(ndl, 0.0));
     // crater walls facing away from the sun fall into shadow even on the lit hemisphere
     diff *= mix(1.0, smoothstep(-0.15, 0.25, ndl), smoothstep(0.0, -0.05, relief) * 0.8);
-    diff *= smoothstep(-0.25, 0.05, ndlG);                  // geometric terminator (no light leaking round the back)
+    diff *= smoothstep(-0.42, 0.04, ndlG);                  // geometric terminator (no light leaking round the back)
     vec3 H = normalize(uSunDir + V);
     float shin = mix(90.0, 14.0, rough);
     float fres = pow(1.0 - max(dot(N, V), 0.0), 4.0);
     float spec = pow(max(dot(Nb, H), 0.0), shin) * specK * (0.35 + fres * 1.6) * smoothstep(0.0, 0.2, ndl) * (shin + 8.0) / 60.0;
-    vec3 amb = mix(uHemiGround, uHemiSky, N.y * 0.5 + 0.5) * 0.20;
+    // Ambient: the shadow side used to sit at ~2-7% reflectance — whole rock faces
+    // read as flat black masses, especially the colossal heroes that fill a frame.
+    // Lift the hemisphere + counter-sun fill so basins/rims still read in shade,
+    // and add a small flat floor for the deep-space bounce off the belt itself.
+    vec3 amb = mix(uHemiGround, uHemiSky, N.y * 0.5 + 0.5) * 0.34;
     float fd = max(dot(Nb, uFillDir), 0.0);
-    vec3 col = albedo * (uSunCol * diff * 1.55 + amb + uFillCol * fd * 0.16) * ao;
+    vec3 col = albedo * (uSunCol * diff * 1.55 + amb + uFillCol * fd * 0.24 + vec3(0.018, 0.020, 0.030)) * ao;
     col += uSunCol * spec * (0.7 + 0.3 * fleck) * (1.0 - hollow * 0.5) * ao;
-    // rim: warm on the lit limb, faint cool sky rim on the dark limb
-    col += fres * (uSunCol * 0.9 * smoothstep(-0.1, 0.4, ndlG) + uHemiSky * 0.18) * (albedo * 0.8 + 0.12);
+    // rim: warm on the lit limb, cool sky rim on the dark limb (a touch stronger
+    // so a backlit rock still separates from the nebula behind it)
+    col += fres * (uSunCol * 0.9 * smoothstep(-0.1, 0.4, ndlG) + uHemiSky * 0.30) * (albedo * 0.8 + 0.12);
     col += emis;
     // depth haze toward the nebula so far rocks recede and heroes wrap unseen
     col = mix(col, uHaze, 1.0 - exp(-dist * uHazeDensity));

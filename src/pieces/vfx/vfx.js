@@ -344,7 +344,9 @@ class ChargeShot {
       if (tgt && this.pos.distanceTo(tgt.pos) < (tgt.radius ?? 1.5) + this.radius) hit = true;
       if (hit || this.age > 2.5) {
         if (hit && this.onHit) this.onHit(tgt, this.pos);
-        vfx.explode(this.pos, 3.2, { color: this.color, hot: PALETTE.boostHot });
+        // a mid-air expiry should fizzle, not screen-fill: full layered boom
+        // only when the bolt actually connects
+        vfx.explode(this.pos, hit ? 3.2 : 1.3, { color: this.color, hot: PALETTE.boostHot });
         this.cancel();
       }
     }

@@ -24,14 +24,22 @@ export const SFX = {
   charge: {
     label: 'CHARGE SHOT', key: 'charge', color: '#8cf7ff', duck: 0.2,
     play(s, t) {
+      // rising whine while the ball builds — the launch is 'charged', played
+      // separately so the release lands when the player actually lets go
       s.note({ inst: A(SIN, 0.05, 0.9, 1, 0.25, 0.22), f0: 180, f1: 1400, t, dur: 0.9, out: 'sfx', unison: 1 });
       s.note({ inst: A(SAW, 0.1, 0.9, 1, 0.25, 0.1, { band: [400, 5000] }), f0: 90, f1: 700, t, dur: 0.9, out: 'sfx', unison: 3, detune: 20, vib: 40 });
       s.noise({ t, dur: 1.1, lo: 300, hi: 1200, lo1: 3000, hi1: 9000, gain: 0.12, out: 'sfx', a: 0.3 });
-      // release: big bolt
-      const r = t + 0.95;
-      s.note({ inst: A(SQ, 0.003, 0.25, 0, 0.12, 0.3, { band: [3000, 800] }), f0: 1400, f1: 120, t: r, dur: 0.28, out: 'sfx', unison: 2, detune: 15 });
-      s.noise({ t: r, dur: 0.3, lo: 200, hi: 6000, lo1: 80, hi1: 900, gain: 0.3, out: 'sfx' });
-      s.hit('laser', 1, r);
+    },
+  },
+  charged: {
+    label: 'CHARGE RELEASE', key: 'charged', color: '#b8faff', duck: 0.35,
+    play(s, t) {
+      // homing bolt launch: hot chirp + air burst + sub punch so it reads
+      // heavier than the twin-laser 'laser'
+      s.note({ inst: A(SQ, 0.003, 0.25, 0, 0.12, 0.3, { band: [3000, 800] }), f0: 1400, f1: 120, t, dur: 0.28, out: 'sfx', unison: 2, detune: 15 });
+      s.noise({ t, dur: 0.3, lo: 200, hi: 6000, lo1: 80, hi1: 900, gain: 0.3, out: 'sfx' });
+      s.note({ inst: A(SIN, 0.002, 0.22, 0, 0.1, 0.45, { sweep: 2.2 }), f0: 160, f1: 55, t, dur: 0.2, out: 'sfx', unison: 1 });
+      s.hit('laser', 1, t);
     },
   },
   lockon: {
@@ -103,6 +111,17 @@ export const SFX = {
       s.note({ inst: A(SQ, 0.001, 0.07, 0, 0.04, 0.2, { band: [3000, 1500] }), f0: 2600, f1: 900, t, dur: 0.06, out: 'sfx', unison: 1 });
       s.note({ inst: A(SIN, 0.001, 0.09, 0, 0.05, 0.3, { sweep: 1.8 }), f0: 140, t, dur: 0.08, out: 'sfx', unison: 1 });
       s.hit('hit', 0.6, t);
+    },
+  },
+  hurt: {
+    label: 'HULL HIT', key: 'hurt', color: '#ff7a5a', duck: 0.3,
+    play(s, t) {
+      // the PLAYER takes damage — darker and heavier than 'hit' (which is the
+      // pew-pew impact on an enemy), so damage reads even mid-dogfight
+      s.noise({ t, dur: 0.16, lo: 400, hi: 4000, lo1: 100, hi1: 800, gain: 0.45, out: 'sfx' });
+      s.note({ inst: A(SAW, 0.002, 0.18, 0, 0.1, 0.28, { band: [1500, 300] }), f0: 340, f1: 70, t, dur: 0.2, out: 'sfx', unison: 2, detune: 25 });
+      s.note({ inst: A(SIN, 0.002, 0.3, 0, 0.15, 0.5, { sweep: 2.6 }), f0: 95, f1: 38, t, dur: 0.3, out: 'sfx', unison: 1 });
+      s.hit('boom', 0.4, t);
     },
   },
   alarm: {
@@ -188,4 +207,4 @@ export const SFX = {
   },
 };
 
-export const SFX_ORDER = ['laser', 'charge', 'lockon', 'boost', 'brake', 'roll', 'explosionS', 'explosionM', 'explosionL', 'hit', 'alarm', 'select', 'confirm', 'comm', 'victory', 'jump', 'land', 'ring', 'door'];
+export const SFX_ORDER = ['laser', 'charge', 'charged', 'lockon', 'boost', 'brake', 'roll', 'explosionS', 'explosionM', 'explosionL', 'hit', 'hurt', 'alarm', 'select', 'confirm', 'comm', 'victory', 'jump', 'land', 'ring', 'door'];

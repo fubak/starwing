@@ -15,9 +15,9 @@ const CSS = `
 .gm-cap .t{font:900 clamp(34px,6vw,84px)/1 ${FONT};letter-spacing:.14em;margin-top:14px;font-style:italic;text-shadow:0 3px 0 rgba(0,0,0,.45),0 0 28px rgba(150,200,255,.35)}
 .gm-cap .s{font:600 clamp(11px,1.1vw,15px)/1 ${FONT};letter-spacing:.4em;opacity:.75;margin-top:16px}
 .gm-cap .rule{height:2px;width:0;margin:18px auto 0;background:linear-gradient(90deg,rgba(143,198,255,0),#8fc6ff,rgba(143,198,255,0))}
-.gm-obj{position:absolute;left:50%;top:5.5%;transform:translateX(-50%) skewX(-8deg);text-align:center;opacity:0;transition:opacity .35s}
-.gm-obj .l{font:800 clamp(9px,.9vw,12px)/1 ${FONT};letter-spacing:.5em;color:#ffd27a;text-shadow:0 0 10px rgba(255,190,90,.7)}
-.gm-obj .v{font:900 clamp(16px,2vw,26px)/1.1 ${FONT};letter-spacing:.22em;margin-top:6px;text-shadow:0 2px 4px rgba(0,0,0,.6),0 0 18px rgba(255,220,150,.35)}
+.gm-obj{position:absolute;left:50%;top:5.5%;transform:translateX(-50%) skewX(-8deg);text-align:center;opacity:0;transition:opacity .35s;padding:9px 34px;background:linear-gradient(90deg,rgba(5,10,22,0) 0%,rgba(5,10,22,.6) 14%,rgba(5,10,22,.6) 86%,rgba(5,10,22,0) 100%)}
+.gm-obj .l{font:800 clamp(9px,.9vw,12px)/1 ${FONT};letter-spacing:.5em;color:#ffd27a;text-shadow:0 1px 3px rgba(0,0,0,.8),0 0 10px rgba(255,190,90,.7)}
+.gm-obj .v{font:900 clamp(16px,2vw,26px)/1.1 ${FONT};letter-spacing:.22em;margin-top:6px;text-shadow:0 2px 5px rgba(0,0,0,.85),0 0 18px rgba(255,220,150,.35)}
 .gm-pause{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(4,10,26,.72),rgba(0,0,0,.9));display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;backdrop-filter:blur(3px)}
 .gm-pause .t{font:900 clamp(40px,7vw,96px)/1 ${FONT};letter-spacing:.3em;font-style:italic;text-shadow:0 0 30px rgba(120,190,255,.5)}
 .gm-pause .h{font:600 clamp(11px,1.1vw,15px)/2 ${FONT};letter-spacing:.35em;opacity:.7;margin-top:22px;text-align:center}

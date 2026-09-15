@@ -8,16 +8,18 @@
  *   audio.update(dt)                       // call once per frame (drives scheduler + ducking + analysis)
  *
  * SFX NAMES (canonical):
- *   'laser'      twin laser bolt          'charge'     charge-up + big bolt (1s)
- *   'lockon'     lock-on triple beep      'boost'      boost whoosh
- *   'brake'      brake whine              'roll'       barrel roll
+ *   'laser'      twin laser bolt          'charge'     charge-up whine
+ *   'charged'    charge-release launch    'lockon'     lock-on triple beep
+ *   'boost'      boost whoosh             'brake'      brake whine
+ *   'roll'       barrel roll
  *   'explosionS' / 'explosionM' / 'explosionL'  small / medium / large explosion
- *   'hit'        player hit               'alarm'      danger alarm (4 pulses)
+ *   'hit'        bolt impact on enemy     'hurt'       player hull damage
+ *   'alarm'      danger alarm (4 pulses)
  *   'select'     UI cursor move           'confirm'    UI confirm chime
  *   'comm'       incoming-transmission chirp
  * ALIASES (also accepted): menu/cursor/ui -> select, ok/accept/start -> confirm, lock/target -> lockon,
  *   fire/shot/shoot -> laser, bomb/nova -> explosionL, explosion -> explosionM, barrel/barrelroll -> roll,
- *   damage/hurt -> hit, radio/transmission -> comm, warning -> alarm.
+ *   damage/hurt -> hurt, impact -> hit, radio/transmission -> comm, warning -> alarm.
  */
 import { createAudio as createSynth } from './synth.js';
 import { createSequencer, SONGS } from './music.js';
@@ -31,7 +33,7 @@ export const SFX_ALIASES = {
   fire: 'laser', shot: 'laser', shoot: 'laser', twinlaser: 'laser',
   bomb: 'explosionL', nova: 'explosionL', explosion: 'explosionM', explode: 'explosionM', explosionSmall: 'explosionS', explosionLarge: 'explosionL',
   barrel: 'roll', barrelroll: 'roll', barrelRoll: 'roll',
-  damage: 'hit', hurt: 'hit', impact: 'hit',
+  damage: 'hurt', hull: 'hurt', impact: 'hit',
   radio: 'comm', transmission: 'comm', chirp: 'comm',
   warning: 'alarm', danger: 'alarm',
   win: 'victory', fanfare: 'victory', sting: 'victory',

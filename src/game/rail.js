@@ -117,6 +117,12 @@ export function beginRail(ctx, game, hudMod) {
     time: 0, done: false, ending: false,
   };
   let railX = 0, railVX = 0, lockE = null, lockT = 0, zone = '', laserSfxT = 0;
+  // charge shot (hold fire ~0.55s): plasma ball builds at the nose, paints the
+  // locked target with a beam, and homes on release. lockProxy re-exposes the
+  // enemy the ChargeShot is tracking (its contract wants { pos, radius, dead }).
+  let chargeHold = 0;
+  const lockProxy = { pos: new THREE.Vector3(), radius: 2.5, dead: true, enemy: null };
+  const chargeMuzzle = { pos: new THREE.Vector3(), dir: new THREE.Vector3(0, 0, -1) };
   const camPos = new THREE.Vector3(0, 7, 12), camLook = new THREE.Vector3(0, 3, -60);
   const shipWorld = new THREE.Vector3(), aimDir = new THREE.Vector3(0, 0, -1), muzzleW = new THREE.Vector3();
   const offs = [];
@@ -232,7 +238,7 @@ export function beginRail(ctx, game, hudMod) {
     offs.push(events.on('player:hit', ({ position }) => {
       if (S.invuln > 0 || S.ending) { vfx.hitSparks(position, tmp.set(0, 0, 1), { color: new THREE.Color(0.4, 0.8, 1), scale: 1.2 }); return; }
       S.shield = Math.max(0, S.shield - 0.07); hud.damage(0.07); S.shake = Math.max(S.shake, 0.7); vfx.shake(0.35); look.flash(0.12); S.invuln = 0.4;
-      audio?.sfx('hit');
+      audio?.sfx('hurt');
       if (S.shield <= 0) {
         vfx.explode(shipWorld, S.lives > 0 ? 1.2 : 2.6, { flash: S.lives === 0 });
         audio?.sfx('explosionM'); look.flash(0.8); vfx.shake(1.0);
@@ -374,9 +380,32 @@ export function beginRail(ctx, game, hudMod) {
     } else hud.setLock(null);
     hud.setAim(ax * 0.7 + S.yaw * -1.5, ay * 0.55 + S.pitch * 1.2);
 
-    // --- fire
+    // --- fire: tap = twin laser stream; hold ~0.55s+ charges a homing plasma ball
     S.fireCool -= dt;
-    if (input.isHeld('fire') && S.fireCool <= 0 && !S.ending) {
+    const fireHeld = input.isHeld('fire') && !S.ending && !S.dead;
+    const charge = vfx.charge;
+    if (fireHeld) {
+      chargeHold += dt;
+      if (chargeHold > 0.55 && charge.state === 'idle') { charge.begin(() => chargeMuzzle); audio?.sfx('charge'); }
+    } else {
+      chargeHold = 0;
+      if (charge.state === 'charging') {
+        charge.release((tgt, pos) => {
+          const e = tgt && tgt.enemy;
+          if (e && e.state === 'fly') em.damage(e, 6, pos);
+          audio?.sfx('charged'); vfx.shake(0.4); look.flash(0.15);
+        });
+      }
+    }
+    if (charge.state === 'charging') {
+      chargeMuzzle.pos.copy(shipWorld).addScaledVector(aimDir, 1.6);
+      chargeMuzzle.dir.copy(aimDir);
+      if (lockE && lockE.state === 'fly') {
+        lockProxy.pos.copy(lockE.pos); lockProxy.radius = Math.max(2, lockE.radius ?? 2);
+        lockProxy.dead = lockE.state !== 'fly'; lockProxy.enemy = lockE; charge.lock(lockProxy);
+      } else charge.lock(null);
+    }
+    if (fireHeld && S.fireCool <= 0 && charge.state === 'idle') {
       S.fireCool = 0.13; S.recoil = 1; S.shake = Math.max(S.shake, 0.15); S.shots += 2;
       arwing.rig.updateWorldMatrix(true, false);
       // aim assist: lead the locked target if the reticle is near it

@@ -195,27 +195,68 @@ export function* createSteps(ctx, opts = {}) {
   }
 
   // ---------------- explosions
+  // Layered like the rail kit: hard white flash -> orange fireball core ->
+  // twin shockwave rings -> additive spark debris + dark rock chunks ->
+  // blotchy smoke puffs that linger after the light dies. The old pool was a
+  // single flash sprite + ring + sparks, which read as a smooth orange blob.
   const exTex = (() => {
     const cv = document.createElement('canvas'); cv.width = cv.height = 128; const g = cv.getContext('2d');
     const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.25, 'rgba(255,220,120,0.9)'); gr.addColorStop(0.6, 'rgba(255,110,40,0.35)'); gr.addColorStop(1, 'rgba(255,60,20,0)');
     g.fillStyle = gr; g.fillRect(0, 0, 128, 128); const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
   })();
+  const smokeTex = (() => {
+    // blotchy alpha puff built from offset radial blobs (local LCG — deterministic
+    // and, unlike ctx.rng, drawing it doesn't shift the gameplay random stream)
+    let sd = 977; const sr = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+    const cv = document.createElement('canvas'); cv.width = cv.height = 128; const g = cv.getContext('2d');
+    for (let i = 0; i < 30; i++) {
+      const a = sr() * 6.28, r = sr() * 30, x = 64 + Math.cos(a) * r, y = 64 + Math.sin(a) * r, rad = 12 + sr() * 20;
+      const gr = g.createRadialGradient(x, y, 0, x, y, rad);
+      gr.addColorStop(0, `rgba(255,255,255,${0.10 + sr() * 0.12})`); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(x, y, rad, 0, 6.29); g.fill();
+    }
+    const m = g.createRadialGradient(64, 64, 26, 64, 64, 62);
+    m.addColorStop(0, 'rgba(0,0,0,1)'); m.addColorStop(1, 'rgba(0,0,0,0)');
+    g.globalCompositeOperation = 'destination-in'; g.fillStyle = m; g.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(cv);
+  })();
   const explosions = [];
+  const _exFireCol = new THREE.Color(), _exEmber = new THREE.Color(0x6a2410);
   const exLight = new THREE.PointLight(0xffa050, 0, 120, 2); scene.add(exLight);
   for (let i = 0; i < 8; i++) {
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: exTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false }));
+    const fire = new THREE.Sprite(new THREE.SpriteMaterial({ map: exTex, color: 0xff9040, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, toneMapped: false }));
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.86, 1, 48), new THREE.MeshBasicMaterial({ color: 0xffc070, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+    const ring2 = new THREE.Mesh(new THREE.RingGeometry(0.92, 1, 48), new THREE.MeshBasicMaterial({ color: 0xfff0c0, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
     const debris = new THREE.Points(
       (() => { const g = new THREE.BufferGeometry(); const p = new Float32Array(60 * 3); const d = new Float32Array(60 * 3); for (let k = 0; k < 60; k++) { const v = new THREE.Vector3(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).normalize().multiplyScalar(0.4 + rng.next()); d[k * 3] = v.x; d[k * 3 + 1] = v.y; d[k * 3 + 2] = v.z; } g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('dir', new THREE.BufferAttribute(d, 3)); return g; })(),
       new THREE.PointsMaterial({ color: 0xffd090, size: 1.2, sizeAttenuation: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
     );
-    s.visible = ring.visible = debris.visible = false; scene.add(s, ring, debris);
-    explosions.push({ s, ring, debris, t: 1, dur: 0.9, scale: 1 });
+    const chunks = new THREE.Points(
+      (() => { const g = new THREE.BufferGeometry(); const p = new Float32Array(18 * 3); const d = new Float32Array(18 * 3); for (let k = 0; k < 18; k++) { const v = new THREE.Vector3(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).normalize().multiplyScalar(0.15 + rng.next() * 0.5); d[k * 3] = v.x; d[k * 3 + 1] = v.y; d[k * 3 + 2] = v.z; } g.setAttribute('position', new THREE.BufferAttribute(p, 3)); g.setAttribute('dir', new THREE.BufferAttribute(d, 3)); return g; })(),
+      new THREE.PointsMaterial({ color: 0x241f18, size: 2.6, sizeAttenuation: true, transparent: true, depthWrite: false, toneMapped: false }),
+    );
+    const smokes = [];
+    for (let k = 0; k < 3; k++) {
+      const sm = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTex, color: 0x171410, transparent: true, depthWrite: false, opacity: 0 }));
+      sm.material.rotation = rng.range(0, 6.28);
+      smokes.push(sm);
+    }
+    s.visible = fire.visible = ring.visible = ring2.visible = debris.visible = chunks.visible = false;
+    for (const sm of smokes) { sm.visible = false; }
+    scene.add(s, fire, ring, ring2, debris, chunks, ...smokes);
+    explosions.push({ s, fire, ring, ring2, debris, chunks, smokes, t: 1, dur: 1.7, scale: 1, offs: [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()] });
   }
   function explode(p, scale = 1) {
     const e = explosions.find((x) => x.t >= x.dur) ?? explosions[0];
-    e.t = 0; e.scale = scale; e.s.position.copy(p); e.ring.position.copy(p); e.debris.position.copy(p); e.ring.quaternion.copy(camera.quaternion);
-    e.s.visible = e.ring.visible = e.debris.visible = true;
+    e.t = 0; e.scale = scale; e.dur = 1.35 + scale * 0.3;
+    e.s.position.copy(p); e.fire.position.copy(p); e.ring.position.copy(p); e.ring2.position.copy(p);
+    e.debris.position.copy(p); e.chunks.position.copy(p);
+    e.ring.quaternion.copy(camera.quaternion); e.ring2.quaternion.copy(camera.quaternion);
+    for (let k = 0; k < 3; k++) { e.offs[k].set(rng.range(-1, 1), rng.range(-1, 1), rng.range(-1, 1)).multiplyScalar(scale * 4); e.smokes[k].position.copy(p).add(e.offs[k]); }
+    e.s.visible = e.fire.visible = e.ring.visible = e.ring2.visible = e.debris.visible = e.chunks.visible = true;
+    e.fire.material.color.setHex(0xff9040);
+    for (const sm of e.smokes) sm.visible = true;
     if (scale > 1) { exLight.position.copy(p); exLight.intensity = 900 * scale; }
     if (!(ctx.sfx && ctx.sfx(scale > 1.4 ? 'explosionM' : 'explosionS'))) audio.noise?.({ dur: 0.5, gain: 0.25, cutoff: 600 });
   }
@@ -496,19 +537,49 @@ export function* createSteps(ctx, opts = {}) {
     hud.state.remaining = drones.filter((d) => d.dead <= 0).length; hud.state.total = drones.length; hud.state.score = mission.score;
     hud.state.targets = drones.filter((d) => d.dead <= 0).map((d) => ({ pos: d.obj.position, dist: d.obj.position.distanceTo(ship.pos), name: d.name, locked: drones.indexOf(d) === lockedIdx }));
 
-    // ---- explosions
+    // ---- explosions: each layer runs its own envelope over a shared clock
     exLight.intensity *= 1 - damp(6, dt);
     for (const e of explosions) {
       if (e.t >= e.dur) continue;
       e.t += dt; const k = e.t / e.dur;
-      const sc = e.scale * (8 + 26 * (1 - Math.pow(1 - k, 3)));
-      e.s.scale.setScalar(sc); e.s.material.opacity = Math.pow(1 - k, 1.6) * 1.4;
+      // flash: white-hot core, gone by k~0.28
+      const kf = Math.min(1, k / 0.28);
+      e.s.scale.setScalar(e.scale * (8 + 30 * (1 - Math.pow(1 - kf, 3))));
+      e.s.material.opacity = Math.pow(1 - kf, 1.5) * 1.5; e.s.visible = kf < 1;
+      // fireball: orange core swelling then cooling to embers (~k<0.7)
+      const kf2 = Math.min(1, k / 0.7);
+      e.fire.scale.setScalar(e.scale * (10 + 30 * Math.sin(kf2 * Math.PI * 0.55)));
+      e.fire.material.opacity = Math.pow(1 - kf2, 1.4) * 0.9;
+      e.fire.material.color.copy(_exFireCol).setHex(0xff9040).lerp(_exEmber, kf2);
+      e.fire.visible = kf2 < 1;
+      // twin shockwaves: primary + delayed thin trail ring
       e.ring.scale.setScalar(e.scale * (2 + 60 * (1 - Math.pow(1 - k, 2)))); e.ring.material.opacity = (1 - k) * 0.8;
+      const k2 = Math.max(0, (k - 0.08) / 0.92);
+      e.ring2.scale.setScalar(e.scale * (2 + 78 * (1 - Math.pow(1 - k2, 2)))); e.ring2.material.opacity = (1 - k2) * 0.45;
+      e.ring2.visible = k2 > 0 && k2 < 1;
+      // additive sparks outracing the fireball
       const pa = e.debris.geometry.attributes.position, da = e.debris.geometry.attributes.dir;
       const r = e.scale * 30 * (1 - Math.pow(1 - k, 2));
       for (let i = 0; i < pa.count; i++) pa.setXYZ(i, da.getX(i) * r, da.getY(i) * r, da.getZ(i) * r);
       pa.needsUpdate = true; e.debris.material.opacity = 1 - k; e.debris.material.size = e.scale * (0.5 + k);
-      if (e.t >= e.dur) e.s.visible = e.ring.visible = e.debris.visible = false;
+      // dark rock chunks sail a bit further, lit only by silhouette
+      const pc = e.chunks.geometry.attributes.position, dc = e.chunks.geometry.attributes.dir;
+      const rc = e.scale * 22 * (1 - Math.pow(1 - k, 2));
+      for (let i = 0; i < pc.count; i++) pc.setXYZ(i, dc.getX(i) * rc, dc.getY(i) * rc, dc.getZ(i) * rc);
+      pc.needsUpdate = true; e.chunks.material.opacity = Math.max(0, 1 - k * 1.4);
+      // smoke: puffs that bloom late and drift, masking the additive layers' cutoff
+      for (let i = 0; i < 3; i++) {
+        const ks = Math.max(0, Math.min(1, (k - 0.06 * i) / (1 - 0.06 * i)));
+        const sm = e.smokes[i];
+        sm.scale.setScalar(e.scale * (8 + ks * 30));
+        sm.material.opacity = Math.sin(Math.min(1, ks * 1.5) * Math.PI * 0.5) * (1 - ks) * 0.62;
+        sm.visible = sm.material.opacity > 0.01;
+        sm.position.copy(e.s.position).addScaledVector(e.offs[i], 1 + ks);
+      }
+      if (e.t >= e.dur) {
+        e.s.visible = e.fire.visible = e.ring.visible = e.ring2.visible = e.debris.visible = e.chunks.visible = false;
+        for (const sm of e.smokes) sm.visible = false;
+      }
     }
 
     // ---- belt wrap + spin, planet spin

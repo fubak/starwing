@@ -19,7 +19,7 @@ export function makeHud(ui, opts = {}) {
     .of-key{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;padding:0 8px;border:2px solid #57d6ff;border-radius:6px;background:rgba(10,30,50,.7);color:#bff2ff;font-weight:800;box-shadow:0 0 14px rgba(87,214,255,.5)}
     .of-ctl{position:absolute;left:36px;bottom:30px;display:flex;gap:18px;font-size:11px;letter-spacing:.22em;opacity:.65}
     .of-ctl span b{display:inline-block;padding:1px 6px;border:1px solid rgba(160,220,255,.6);border-radius:4px;margin-right:6px;font-weight:600}
-    .of-flash{position:absolute;left:50%;top:22%;transform:translateX(-50%);font-size:22px;font-weight:700;letter-spacing:.3em;color:#bfffd8;text-shadow:0 0 18px rgba(64,255,128,.8);opacity:0;transition:opacity .3s}
+    .of-flash{position:absolute;left:50%;top:22%;transform:translateX(-50%);font-size:22px;font-weight:700;letter-spacing:.3em;color:#bfffd8;padding:12px 30px;background:rgba(4,16,10,.74);border:1px solid rgba(64,255,128,.4);border-radius:6px;box-shadow:0 4px 24px rgba(0,0,0,.55),inset 0 0 18px rgba(64,255,128,.08);text-shadow:0 2px 6px rgba(0,0,0,.8),0 0 18px rgba(64,255,128,.8);opacity:0;transition:opacity .3s;white-space:nowrap}
     .of-flash.on{opacity:1}
     .of-reticle{position:absolute;left:50%;top:50%;width:46px;height:46px;transform:translate(-50%,-50%);opacity:0;transition:opacity .15s}
     .of-reticle.on{opacity:.9}

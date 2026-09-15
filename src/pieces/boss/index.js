@@ -165,6 +165,7 @@ export function* createSteps(ctx, opts = {}) {
     hit: () => { if (!bank('hit')) audio.tone({ type: 'triangle', f0: 800, f1: 300, dur: 0.06, gain: 0.05 }); },
     boom: (g = 0.4) => { if (bank(g > 0.7 ? 'explosionL' : g > 0.4 ? 'explosionM' : 'explosionS')) return; audio.noise({ dur: 1.2, gain: g, cutoff: 500 }); audio.tone({ type: 'sine', f0: 90, f1: 30, dur: 0.8, gain: g * 0.6 }); },
     warn: () => { if (bank('alarm')) return; audio.tone({ type: 'square', f0: 660, f1: 660, dur: 0.14, gain: 0.08 }); setTimeout(() => audio.tone({ type: 'square', f0: 660, f1: 660, dur: 0.14, gain: 0.08 }), 200); },
+    hurt: () => { if (!bank('hurt')) { audio.tone({ type: 'sawtooth', f0: 320, f1: 60, dur: 0.22, gain: 0.2 }); audio.noise({ dur: 0.15, gain: 0.3, cutoff: 900 }); } },
     beam: () => { if (!bank('charge')) audio.noise({ dur: 1.6, gain: 0.25, cutoff: 2400, q: 2 }); },
     shatter: () => { if (bank('explosionM')) return; audio.noise({ dur: 0.6, gain: 0.35, cutoff: 3000 }); audio.tone({ type: 'sawtooth', f0: 300, f1: 60, dur: 0.5, gain: 0.2 }); },
   };
@@ -425,7 +426,7 @@ export function* createSteps(ctx, opts = {}) {
     // missiles vs player
     missiles.onDetonate = (m) => {
       const d = m.g.position.distanceTo(P.pos);
-      if (d < 10 && P.roll <= 0) { P.shield -= 0.12; P.hurt = 1; S.shake = Math.max(S.shake, 0.7); S.flash = Math.max(S.flash, 0.15); }
+      if (d < 10 && P.roll <= 0) { P.shield -= 0.12; P.hurt = 1; S.shake = Math.max(S.shake, 0.7); S.flash = Math.max(S.flash, 0.15); sfx.hurt(); }
     };
     // barrel roll deflects nearby missiles
     if (P.roll > 0) for (const m of missiles.pool) if (m.active && m.g.position.distanceTo(P.pos) < 9) { missiles.detonate(m); S.hits++; }
@@ -435,7 +436,7 @@ export function* createSteps(ctx, opts = {}) {
       if (b.firing) {
         const seg = V.a.copy(b.to).sub(b.from); const tt = THREE.MathUtils.clamp(V.b.copy(P.pos).sub(b.from).dot(seg) / seg.lengthSq(), 0, 1);
         const d = V.c.copy(b.from).addScaledVector(seg, tt).distanceTo(P.pos);
-        if (d < 5) { P.shield -= dtS * 0.35; P.hurt = 1; S.shake = Math.max(S.shake, 0.5); }
+        if (d < 5) { if (P.hurt < 0.2) sfx.hurt(); P.shield -= dtS * 0.35; P.hurt = 1; S.shake = Math.max(S.shake, 0.5); }
         // beam impact sparks along the far end
         if (Math.random() < 0.7) sparks.emit(b.to, V.d.set((Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, 30 + Math.random() * 30), { life: 0.5, size: 2.5, drag: 2, c0: [2.5, 1.2, 0.6], c1: [1, 0.2, 0.1] });
       }

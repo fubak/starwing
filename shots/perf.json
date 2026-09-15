@@ -1,61 +1,21 @@
 [
   {
-    "stage": "title",
-    "ms": 573.5,
-    "calls": 69,
-    "tris": 73404,
-    "geo": 441,
-    "tex": 37,
-    "scale": 1,
-    "errs": 0
-  },
-  {
-    "stage": "intro",
-    "ms": 465.2,
-    "calls": 268,
-    "tris": 41401,
-    "geo": 441,
-    "tex": 37,
+    "stage": "space",
+    "ms": 3811.6,
+    "calls": 161,
+    "tris": 214154,
+    "geo": 318,
+    "tex": 55,
     "scale": 1,
     "errs": 0
   },
   {
     "stage": "rail",
-    "ms": 518.5,
+    "ms": 561.4,
     "calls": 112,
-    "tris": 198543,
-    "geo": 367,
+    "tris": 190507,
+    "geo": 368,
     "tex": 39,
-    "scale": 1,
-    "errs": 0
-  },
-  {
-    "stage": "boss",
-    "ms": 757,
-    "calls": 224,
-    "tris": 102415,
-    "geo": 365,
-    "tex": 41,
-    "scale": 1,
-    "errs": 0
-  },
-  {
-    "stage": "space",
-    "ms": 3668,
-    "calls": 132,
-    "tris": 213293,
-    "geo": 302,
-    "tex": 54,
-    "scale": 1,
-    "errs": 0
-  },
-  {
-    "stage": "onfoot",
-    "ms": 678.6,
-    "calls": 292,
-    "tris": 97918,
-    "geo": 212,
-    "tex": 43,
     "scale": 1,
     "errs": 0
   }
