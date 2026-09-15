@@ -108,7 +108,11 @@ export function warmRender(renderer, scene, camera) {
     if (o.isMesh || o.isPoints || o.isLine || o.isSprite || o.isSkinnedMesh) {
       if (o.frustumCulled) { culls.push(o); o.frustumCulled = false; }
       const g = o.geometry;
-      if (o.isInstancedMesh && o.count < o.instanceMatrix.count) { counts.push([o, o.count]); o.count = o.instanceMatrix.count; }
+      if (o.isInstancedMesh) {
+        if (o.count < o.instanceMatrix.count) { counts.push([o, o.count]); o.count = o.instanceMatrix.count; }
+        // see warmSteps: instanceColor flips a program-key bit on first setColorAt
+        if (!o.instanceColor) o.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(o.instanceMatrix.count * 3).fill(1), 3);
+      }
       if (g && g.drawRange && g.drawRange.count < Infinity) { ranges.push([g, { ...g.drawRange }]); g.setDrawRange(0, Infinity); }
     }
   });
@@ -252,7 +256,17 @@ function* warmSteps(renderer, scene, camera, chunk, texChunk, root, matBudget = 
       if (o.visible) vis.push([o, true]);
       o.visible = false;
       if (o.frustumCulled) { culls.push(o); o.frustumCulled = false; }
-      if (o.isInstancedMesh && o.count < o.instanceMatrix.count) { counts.push([o, o.count]); o.count = o.instanceMatrix.count; }
+      if (o.isInstancedMesh) {
+        if (o.count < o.instanceMatrix.count) { counts.push([o, o.count]); o.count = o.instanceMatrix.count; }
+        // `instancingColor` is part of the program cache key — and instanceColor
+        // is created lazily by the first setColorAt(). A pool whose first TINTED
+        // claim lands mid-play (world props claim instances per chunk; the ring
+        // gates can stay unclaimed for a minute) would otherwise compile a NEW
+        // program on a visible frame. Pre-create the white buffer exactly as
+        // setColorAt() sizes/fills it so the warmed variant is the tinted one
+        // (white = identity for never-tinted instances).
+        if (!o.instanceColor) o.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(o.instanceMatrix.count * 3).fill(1), 3);
+      }
       const g = o.geometry;
       if (g && g.drawRange && g.drawRange.count < Infinity) { ranges.push([g, { ...g.drawRange }]); g.setDrawRange(0, Infinity); }
     }

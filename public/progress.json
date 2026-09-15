@@ -1,8 +1,8 @@
 {
  "started": "2026-09-06T11:14:08.452495+00:00",
- "updated": 1789436842,
+ "updated": 1789439305,
  "wave": 2,
- "phase": "polish wave 2: art2",
+ "phase": "polish wave 2: perf2",
  "pieces": {
   "lookdev": {
    "status": "lose",
@@ -114,8 +114,6 @@
   }
  },
  "log": [
-  "12:15:29 audio: builder round 1 done \u2014 AUDIO piece (src/pieces/audio/) completed and committed as aae083f ('audio: round 1').\n\nWhat exists / was built on: the ",
-  "12:15:29 audio: critic round 1 start",
   "12:18:14 world: builder round 1 done \u2014 WORLD piece (src/pieces/world/) \u2014 round 1, committed as 6a7a4d5.\n\nState found: partial prior work that rendered almost n",
   "12:18:14 world: critic round 1 start",
   "12:21:15 spacesim: builder round 1 done \u2014 spacesim rewritten and committed (2cffcd3 'spacesim: round 1', files: src/pieces/spacesim/{index.js,asteroids.js,sky.js,",
@@ -313,7 +311,9 @@
   "12:42:49 perf-verify done \u2014 Pass 4 final performance verification is complete, documented in shots/perf.md and committed as 58c2bb0 \"perf: final verification\" (tree clean apart from untracked shot artifacts).",
   "12:42:49 polish wave done",
   "01:47:22 === POLISH WAVE 2: art/vfx/audio, then perf ===",
-  "01:47:22 art2 agent start"
+  "01:47:22 art2 agent start",
+  "02:28:25 art2 done \u2014 Second art/vfx/audio polish pass on STARWING, committed as beea6c9 \"polish: art/vfx/audio round 2\". Surveyed all 7 campaign stages plus the vfx/enemies/spacesim standalone pieces v",
+  "02:28:25 perf2 agent start"
  ],
  "playtest": {
   "round": 3,

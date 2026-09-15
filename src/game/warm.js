@@ -232,6 +232,11 @@ export function parkedGpuWarm(ctx, stage, globals = null) {
     /** Run one unit; returns true when the whole warm is finished. */
     step() {
       if (!gw) gw = createStageWarm(renderer, scene, camera, { root: stage });
+      // The parked root must be a scene child or the render below draws an
+      // empty scene (it renders `scene`, not `stage`). resetShared() sweeps
+      // non-keep children on every stage switch, which can detach a parked
+      // build mid-warm (e.g. the rail warm still parked through title->intro).
+      if (stage.parent !== scene) scene.add(stage);
       const live = snap(), liveScene = snapScene();
       if (globals) apply(globals);
       applyScene(stageScene());

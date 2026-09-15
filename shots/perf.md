@@ -662,3 +662,79 @@ program counts and draw-call counts are the signal.
 - Unchanged from pass 3: **a real-GPU capture is still the only way to confirm the
   60 FPS / no-stutter target.** SwiftShader forces `starveLimit = 1` (every frame
   is over budget), which is not the pacing path real hardware takes.
+
+## Pass 5 — post-polish verification
+
+Verification of the art round-2 polish (`beea6c9`), plus a surgical fix for the
+pass-4 residual and two warm-pipeline bugs it exposed.
+`shots/trace_p5final.json` (512 frames, campaign route, no HMR, seed 1).
+
+### Numbers (after the fixes)
+
+| stage | cpu med | p95 | p99 | worst | hitches | calls med |
+|---|---|---|---|---|---|---|
+| title | 4.4 | 581.1 | 940.8 | 941 | 0 | 66 |
+| intro | 5.9 | 13.2 | 18.0 | 18 | 6 | 188 |
+| rail | 7.1 | 1155.3 | 3545.6 | 3546 | 18 | 115 |
+| boss | 3.7 | 417.6 | 958.6 | 1979 | 14 | 259 |
+| space | 3.3 | 804.1 | 2428.9 | 2429 | 24 | 102 |
+| onfoot | 3.4 | 6.2 | 8.0 | 10 | 2 | 268 |
+| complete | 3.4 | 12.1 | 854.2 | 854 | 3 | 179 |
+
+- **Unmarked program compiles mid-play: 0.** Every program-count growth sits on a
+  `warm:*` or `stage:*` frame — no residual. A standalone `?stage=rail` soak
+  (~110 s wall ≈ 60 s game — through the mantis wave, first lock-on, and the first
+  recycled city chunk that claims a ring-gate arch) shows zero compiles after the
+  mount frame. The pass-4 residual (4 programs, ~22 s into rail) is **gone**.
+- **Draw calls (pure gameplay frames):** rail max 125, boss 265, space 102,
+  onfoot **300** (med 268) — at the cap, not over. vs pass 4: intro 179→188,
+  rail 104→115, onfoot 239→268, complete 199→179 — the art round-2 additions
+  (city blocks, lock-on reticle, vfx) land under the ≤300 budget everywhere.
+  Tris max 0.17 M (vs ≤1.5 M budget).
+- **renderScale changes: 0.** No page errors. Programs live at end: 62.
+- **Heap:** median 578 KB/frame during warm; post-warm slopes flat to negative
+  (rail −0.10, boss +0.04, space −0.37, onfoot −0.27 MB/s over each stage's
+  second half) — no leak, unchanged from the pass-3b alloc audit.
+- Transitions: rail mount 44→90 and onfoot warm drain during space play are the
+  dominant p95/p99 frames — all marked `warm:step(...)`/`warm:slow(...)`, i.e.
+  compiles+uploads under the black fade or in paced mid-play slices, not
+  unexplained hitches. On real hardware each unit is ~5–20 ms.
+
+### Fixes in this pass (all three are warm-pipeline holes, not art work)
+
+1. **The rail parked stage was never in the scene.** `beginRail` built its
+   parked group but never `scene.add`ed it, while `parkedGpuWarm` renders the
+   *scene* — so every rail gpu-warm unit rendered an empty scene and compiled
+   nothing (measured: 0 rail-census programs during title/intro, then +32 on the
+   first rendered rail frame). `src/game/rail.js` now mounts the parked group
+   (`stage.name='rail-warm'`, `visible=false`) and removes it in `activate()` /
+   `abort()` once the scene children are reparented. → rail-census programs
+   compile inside paced warm units (`enemy-panels`, `arch-atmos`, depth variants)
+   and the mount drain shrinks to whatever the SwiftShader runway could not pace.
+2. **`parkedGpuWarm.step()` re-mounts a detached parked root.** `resetShared()`
+   sweeps non-keep scene children on every stage switch, and the lookahead warm
+   spans switches (rail warm survives the title→intro switch) — it could detach a
+   parked stage mid-warm, reproducing bug 1 silently. `src/game/warm.js`
+   (~line 236) now re-adds `stage` to `scene` if it was swept, before rendering.
+3. **`instanceColor` flips the program key on first `setColorAt`.**
+   `instancingColor` is part of the cache key; `setColorAt` creates the attribute
+   lazily, so an `InstancedMesh` pool whose first *tinted* claim lands mid-play
+   compiles a brand-new variant on a visible frame — exactly what the ring-gate
+   arches did (~52 s in: `arch-atmos` +1, because no arch had been claimed during
+   the build-window chunk population). `createStageWarm`'s census (and the legacy
+   `warmRender`) now pre-create a white-filled `instanceColor` on every
+   `InstancedMesh` under the warmed root — same sizing/fill as `setColorAt`
+   itself — so the warmed variant is the tinted one (white = identity for
+   never-tinted instances). `src/core/warmup.js`.
+
+### Notes for the next pass
+
+- onfoot is exactly at the 300-call cap on its heaviest frames (3 calls of
+  headroom). If art round-3 adds scene objects there, spend them first.
+- The mount-frame compile drain is a SwiftShader artifact of warm-unit cost —
+  the `warm:staged` marks show the rail build+warm needs ~2.7 s of runway on SW.
+  It is fully under the 0.55 s-out / 0.7 s-in fades and attributed.
+- Traps from pass 4 still apply: canvas-space `renderer.render` probes compile a
+  second (srgb) keyspace; `?stage=` routes skip the parked build entirely.
+- Still open: real-GPU capture to confirm the 60 FPS target; SwiftShader can
+  only verify attribution/counts, not wall-time budget.

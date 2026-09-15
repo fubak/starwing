@@ -92,6 +92,14 @@ export function beginRail(ctx, game, hudMod) {
   // (visible=false) until activate() reparents it, so a warm build during the
   // previous stage renders nothing and costs no draw calls.
   const stage = new THREE.Group(); stage.name = 'rail-warm'; stage.visible = false;
+  // The parked group must be a CHILD of the live scene: parkedGpuWarm draws it
+  // by toggling stage.visible around each unit's render() — a detached root is
+  // never reached by projectObject, so the whole GPU warm would render an empty
+  // scene and every program would still compile on the mount frame (measured:
+  // prog +33 on stage:rail and +4 more mid-play at the first pool reveal).
+  // visible=false keeps it parked: no draws, no light-census pollution, and
+  // resetShared() may detach it — parkedGpuWarm.step() re-attaches if so.
+  scene.add(stage);
   // Warm-built content must NEVER enter the live scene: a pooled light landing
   // under a visible parent changes the scene light census for one frame, which
   // recompiles every lit material mid-cinematic (the intro's compile storms).
@@ -220,6 +228,7 @@ export function beginRail(ctx, game, hudMod) {
   function activate() {
     if (!hud) { abort(); return null; }
     for (const o of stage.children.slice()) scene.add(o);
+    stage.removeFromParent();       // parked group is empty now — don't leave it mounted
     scene.add(world.group);
     world.group.position.set(0, -ALT, 0);
     look.install();                 // deferred rig goes live (lights / env / grade / fog / exposure)
@@ -500,6 +509,7 @@ export function beginRail(ctx, game, hudMod) {
   /** Tear down a partial build (the warm target changed mid-build). */
   function abort() {
     try { pg?.abort?.(); } catch {}
+    stage.removeFromParent();       // it is a live scene child while parked
     for (const o of stage.children.slice()) stage.remove(o);
     try { hud?.dispose(); } catch {}
     try { trail?.dispose?.(); wingL?.dispose?.(); wingR?.dispose?.(); } catch {}
