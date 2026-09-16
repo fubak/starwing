@@ -16,6 +16,16 @@ export class Stats {
     this.el.style.display = this.visible ? 'block' : 'none';
     document.body.appendChild(this.el);
 
+    // Always-on FPS counter (top-right). Hide with `?nofps`.
+    this.fpsEl = document.createElement('div');
+    this.fpsEl.style.cssText =
+      'position:fixed;top:8px;right:8px;z-index:9999;padding:3px 7px;' +
+      'font:700 12px/1.4 ui-monospace,Menlo,Consolas,monospace;' +
+      'background:rgba(4,10,20,.55);border:1px solid rgba(110,180,255,.25);' +
+      'border-radius:4px;pointer-events:none;text-shadow:0 1px 2px #000';
+    this.fpsEl.style.display = new URLSearchParams(location.search).has('nofps') ? 'none' : 'block';
+    document.body.appendChild(this.fpsEl);
+
     this._frames = 0;
     this._acc = 0;      // accumulated frame ms
     this._max = 0;      // worst frame in the current 250ms window
@@ -47,6 +57,8 @@ export class Stats {
       this._ms = this._acc / this._frames;
       this._maxSeen = Math.max(this._max, this._maxSeen * 0.8); // sticky, decays ~4s
       this._frames = 0; this._acc = 0;
+      this.fpsEl.textContent = `${this._fps.toFixed(0)} FPS`;
+      this.fpsEl.style.color = this._fps >= 55 ? '#7dff9a' : this._fps >= 30 ? '#ffd97d' : '#ff7d7d';
       if (this.visible) this._draw();
       this._max = 0;
     }
@@ -68,5 +80,6 @@ export class Stats {
   dispose() {
     removeEventListener('keydown', this._onKey);
     this.el.remove();
+    this.fpsEl.remove();
   }
 }
