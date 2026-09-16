@@ -1,0 +1,20 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const page = await browser.newPage({ viewport: { width: 480, height: 270 } });
+page.on('console', (m) => { if (m.type() !== 'debug' && !m.text().includes('Driver')) console.log('[' + m.type() + ']', m.text().slice(0, 1200)); });
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+await page.goto('http://localhost:5173/?piece=vfx&seed=1&mute&autoplay&fixed', { waitUntil: 'networkidle' });
+await page.waitForFunction(() => window.__engine?.piece, null, { timeout: 120000 });
+await page.evaluate(() => cancelAnimationFrame(window.__engine._raf));
+page.setDefaultTimeout(300000);
+const n = Number(process.argv[2] ?? 30);
+const r = await page.evaluate((n) => {
+  const e = window.__engine; e.stepFrames(n);
+  const cam = e.renderPass.camera;
+  const bad = [];
+  e.scene.traverse((o) => { const p = o.position, s = o.scale; if (![p.x, p.y, p.z, s.x, s.y, s.z].every(Number.isFinite)) bad.push(o.name || o.type); });
+  return { cam: cam.position.toArray().map((v) => v.toFixed(2)), q: cam.quaternion.toArray().map((v) => v.toFixed(2)), fov: cam.fov, bad, exposure: e.renderer.toneMappingExposure, passes: e.composer.passes.map((p) => p.constructor.name + ':' + p.enabled), kids: e.scene.children.map((k) => k.name || k.type) };
+}, n);
+console.log(JSON.stringify(r, null, 1));
+await page.screenshot({ path: 'shots/vfx_dbg.png' });
+await browser.close();

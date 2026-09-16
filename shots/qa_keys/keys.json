@@ -1,0 +1,54 @@
+{
+  "results": {
+    "title": {
+      "stage": "title",
+      "failed": false,
+      "paused": false,
+      "calls": 1,
+      "tris": 1
+    },
+    "intro": {
+      "stage": "intro",
+      "failed": false,
+      "paused": false,
+      "calls": 1,
+      "tris": 1
+    },
+    "rail": {
+      "stage": "rail",
+      "failed": false,
+      "paused": false,
+      "calls": 1,
+      "tris": 1
+    },
+    "boss": {
+      "stage": "boss",
+      "failed": false,
+      "paused": false,
+      "calls": 1,
+      "tris": 1
+    },
+    "space": {
+      "stage": "space",
+      "failed": false,
+      "paused": false,
+      "calls": 1,
+      "tris": 1
+    },
+    "onfoot": {
+      "stage": "onfoot",
+      "failed": false,
+      "paused": false,
+      "calls": 1,
+      "tris": 1
+    },
+    "complete": {
+      "stage": "complete",
+      "failed": false,
+      "paused": false,
+      "calls": 1,
+      "tris": 1
+    }
+  },
+  "errors": []
+}

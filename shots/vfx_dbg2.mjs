@@ -1,0 +1,15 @@
+import { chromium } from 'playwright';
+const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+page.on('console', (m) => { if (m.type() !== 'debug') console.log('[' + m.type() + ']', m.text().slice(0, 1500)); });
+page.on('pageerror', (e) => console.log('PAGEERROR', e.message));
+await page.goto('http://localhost:5173/?piece=ship&seed=1&mute&autoplay&fixed', { waitUntil: 'networkidle' });
+await page.waitForFunction(() => window.__engine?.piece, null, { timeout: 30000 });
+await page.evaluate(() => cancelAnimationFrame(window.__engine._raf));
+let t0 = Date.now();
+await page.evaluate((n) => window.__engine.stepFrames(n), Number(process.argv[2] ?? 60));
+console.log('step ms', Date.now() - t0); t0 = Date.now();
+await page.evaluate(() => new Promise(r => requestAnimationFrame(() => r())));
+await page.screenshot({ path: 'shots/vfx_dbg.png', timeout: 120000 });
+console.log('shot ms', Date.now() - t0);
+await browser.close();

@@ -27,7 +27,10 @@ export class Engine {
     this.rng = new Rng(seed);
     this.events = new Events();
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    // antialias off: the scene renders into composer targets, so canvas MSAA
+    // never touched geometry anyway — it only added resolve cost to the final
+    // blit. stencil/alpha off likewise save a buffer no pass reads.
+    this.renderer = new THREE.WebGLRenderer({ antialias: false, stencil: false, alpha: false, powerPreference: 'high-performance' });
     this.basePixelRatio = Math.min(devicePixelRatio || 1, 1.5); // cap DPR: 2x+ is pure fill cost
     this.renderScale = 1;                                     // adaptive resolution scaler [0.6, 1]
     this.renderer.setPixelRatio(this.basePixelRatio);
@@ -35,7 +38,10 @@ export class Engine {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // PCF (single-tap neighbourhood) over PCFSoft: meaningfully fewer shadow
+    // taps on every lit pixel of every frame; edge quality difference is
+    // subtle at the map sizes the pieces use.
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
@@ -45,6 +51,11 @@ export class Engine {
     this.composer = new EffectComposer(this.renderer);
     this.renderPass = new RenderPass(this.scene, this.camera);
     this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.6, 0.6, 0.85);
+    // Quarter-res bloom chain: UnrealBloom already halves internally, so feed
+    // it half the size again. ~4x less fill across all ~10 mip blur passes —
+    // the softest part of the frame cost — for an almost identical glow.
+    const bloomSetSize = this.bloom.setSize.bind(this.bloom);
+    this.bloom.setSize = (w, h) => bloomSetSize(w / 2, h / 2);
     this.outputPass = new OutputPass();
     this.composer.addPass(this.renderPass);
     this.composer.addPass(this.bloom);

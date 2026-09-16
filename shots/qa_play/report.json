@@ -1,0 +1,73 @@
+{
+  "backToTitle": true,
+  "completeSeen": true,
+  "totalSecs": 208,
+  "stats": {
+    "score": 0,
+    "hits": 0,
+    "shots": 0,
+    "landed": 0
+  },
+  "seen": {
+    "title": {
+      "count": 2,
+      "maxCalls": 1,
+      "maxTris": 1,
+      "firstFrame": 120,
+      "shots": 2
+    },
+    "intro": {
+      "count": 1,
+      "maxCalls": 1,
+      "maxTris": 1,
+      "firstFrame": 480,
+      "shots": 1
+    },
+    "rail": {
+      "count": 1,
+      "maxCalls": 1,
+      "maxTris": 1,
+      "firstFrame": 1320,
+      "shots": 6
+    },
+    "boss": {
+      "count": 1,
+      "maxCalls": 1,
+      "maxTris": 1,
+      "firstFrame": 6240,
+      "shots": 3
+    },
+    "space": {
+      "count": 1,
+      "maxCalls": 1,
+      "maxTris": 1,
+      "firstFrame": 8760,
+      "shots": 2
+    },
+    "onfoot": {
+      "count": 1,
+      "maxCalls": 1,
+      "maxTris": 1,
+      "firstFrame": 10560,
+      "shots": 2
+    },
+    "complete": {
+      "count": 1,
+      "maxCalls": 1,
+      "maxTris": 1,
+      "firstFrame": 11880,
+      "shots": 1
+    }
+  },
+  "log": [
+    "stage -> title at 2.0s game-time",
+    "stage -> intro at 8.0s game-time",
+    "stage -> rail at 22.0s game-time",
+    "stage -> boss at 104.0s game-time",
+    "stage -> space at 146.0s game-time",
+    "stage -> onfoot at 176.0s game-time",
+    "stage -> complete at 198.0s game-time",
+    "stage -> title at 208.0s game-time"
+  ],
+  "errors": []
+}
