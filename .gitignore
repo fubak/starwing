@@ -8,3 +8,12 @@ shots/_*.mjs
 shots/_*.sh
 shots/*.log
 shots/*_probe/
+
+# generated captures — keep only perf docs, latest trace, and probe scripts
+shots/**/*.png
+shots/**/*.webm
+shots/**/errors.txt
+shots/**/*.json
+!shots/perf.json
+!shots/trace.json
+!shots/transition_rail.png
