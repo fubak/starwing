@@ -29,10 +29,13 @@ export async function create(ctx) {
   overlay.setFade(1);
 
   // ---------- optional shared systems (skipped gracefully if a piece is broken)
-  const tryLoad = async (path) => { try { return await import(path); } catch (e) { console.warn(`[game] piece unavailable: ${path}`, e?.message ?? e); return null; } };
-  const hudMod = await tryLoad('../pieces/hud/index.js');
-  const audioMod = await tryLoad('../pieces/audio/index.js');
-  const cine = await tryLoad('../pieces/cinematics/index.js');
+  // NOTE: every import() must sit on a literal path at its own call site —
+  // `import(path)` through a helper survives bundling and 404s in production
+  // (dev serves the real /src tree, so it only ever works locally).
+  const tryLoad = async (load, name) => { try { return await load(); } catch (e) { console.warn(`[game] piece unavailable: ${name}`, e?.message ?? e); return null; } };
+  const hudMod = await tryLoad(() => import('../pieces/hud/index.js'), 'hud');
+  const audioMod = await tryLoad(() => import('../pieces/audio/index.js'), 'audio');
+  const cine = await tryLoad(() => import('../pieces/cinematics/index.js'), 'cinematics');
   let audio = null;
   try { audio = audioMod?.createAudio ? audioMod.createAudio(ctx) : null; } catch (e) { console.warn('[game] audio disabled', e); }
   // Give child stages the rich sfx bank. ctx.audio is only the raw AudioBus
@@ -41,7 +44,7 @@ export async function create(ctx) {
   // their tone/noise calls as the standalone fallback.
   ctx.sfx = (n, p) => audio?.sfx?.(n, p) ?? false;
   // preload stage modules up front so stage switches are synchronous (no black frames in the fixed-step harness)
-  const mods = { rail: await tryLoad('./rail.js'), boss: await tryLoad('../pieces/boss/index.js'), space: await tryLoad('../pieces/spacesim/index.js'), onfoot: await tryLoad('../pieces/onfoot/index.js') };
+  const mods = { rail: await tryLoad(() => import('./rail.js'), 'rail'), boss: await tryLoad(() => import('../pieces/boss/index.js'), 'boss'), space: await tryLoad(() => import('../pieces/spacesim/index.js'), 'spacesim'), onfoot: await tryLoad(() => import('../pieces/onfoot/index.js'), 'onfoot') };
   let hud = null; // created lazily per gameplay stage (it is a full-screen canvas; cinematics get their own overlay)
 
   // Pre-bake the shared procedural textures while the loading fade is still up:
